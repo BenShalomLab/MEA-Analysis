@@ -1,8 +1,5 @@
-# I was told that this file is necessary for the package to work properly, but it's fine that it's empty.
+"""IPNAnalysis subpackage.
 
-#Here's a haiku:
-#    haikus are easy
-#    but sometimes they don't make sense
-#    refrigerator
-
-# AW 2024-01-24
+This repo is packaged via a small setuptools shim so it can be installed in
+editable mode for development.
+"""
