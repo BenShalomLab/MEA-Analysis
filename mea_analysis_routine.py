@@ -255,7 +255,7 @@ class MEAPipeline:
         
         # Define Directory Structure: Output / Pattern / Well
         self.relative_pattern = self.metadata.get('relative_pattern', 'UnknownPattern')
-        # Default output_root: local "AnalyzedData" directory beside this script
+        # Default output_root: repository-level "AnalyzedData" directory
         default_output_root = Path(__file__).resolve().parent / "AnalyzedData"
         effective_output_root = Path(output_root) if output_root is not None else default_output_root
         self.output_root = effective_output_root
