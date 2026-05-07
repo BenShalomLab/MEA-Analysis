@@ -1101,40 +1101,40 @@ class MEAPipeline:
                 plt.close(fig)
 
     def _run_burst_analysis(self, ids_list=None, plot_mode='separate', plot_debug=False, raster_sort='none', fixed_y = False):
-            self.logger.info("Running Network Burst Analysis...")
-            
-            spike_times = {}
-            
-            # 1. Load Spike Times
-            if self.sorting:
-                fs = self.recording.get_sampling_frequency()
-                if ids_list is None:
-                    ids_list = self.analyzer.unit_ids
+        self.logger.info("Running Network Burst Analysis...")
 
-                missing_unit_ids = []
-                for uid in ids_list:
-                    try:
-                        spike_times[uid] = self.sorting.get_unit_spike_train(uid) / fs
-                    except KeyError:
-                        missing_unit_ids.append(uid)
+        spike_times = {}
 
-                if missing_unit_ids:
-                    self.logger.warning(
-                        "Skipping %d unit(s) not present in active sorting during burst analysis: %s",
-                        len(missing_unit_ids),
-                        missing_unit_ids[:20],
-                    )
+        # 1. Load Spike Times
+        if self.sorting:
+            fs = self.recording.get_sampling_frequency()
+            if ids_list is None:
+                ids_list = self.analyzer.unit_ids
 
-                if not spike_times:
-                    self.logger.error(
-                        "No valid units left for burst analysis after filtering missing unit IDs."
-                    )
-                    return
+            missing_unit_ids = []
+            for uid in ids_list:
+                try:
+                    spike_times[uid] = self.sorting.get_unit_spike_train(uid) / fs
+                except KeyError:
+                    missing_unit_ids.append(uid)
 
-                np.save(self.output_dir / "spike_times.npy", spike_times)
-            else:
-                self.logger.error("No spike times found for burst analysis.")
+            if missing_unit_ids:
+                self.logger.warning(
+                    "Skipping %d unit(s) not present in active sorting during burst analysis: %s",
+                    len(missing_unit_ids),
+                    missing_unit_ids[:20],
+                )
+
+            if not spike_times:
+                self.logger.error(
+                    "No valid units left for burst analysis after filtering missing unit IDs."
+                )
                 return
+
+            np.save(self.output_dir / "spike_times.npy", spike_times)
+        else:
+            self.logger.error("No spike times found for burst analysis.")
+            return
 
         if not spike_times:
             self.logger.warning("Spike times dictionary is empty. Skipping burst analysis.")
@@ -1153,7 +1153,26 @@ class MEAPipeline:
                 self.logger.error(f"Burst detector returned error: {network_data['error']}")
                 return
 
-            # B. Save clean JSON
+            # B. Extract array and tabular data before JSON serialization
+            plot_data  = network_data.pop("plot_data", {})
+            unit_stats = network_data.pop("unit_stats", {})
+
+            # C. Save plot_data as npz — large float arrays, not suited for JSON
+            if plot_data:
+                np.savez(
+                    self.output_dir / "network_plot_data.npz",
+                    **{k: np.asarray(v) for k, v in plot_data.items()}
+                )
+                self.logger.info("Saved network_plot_data.npz")
+
+            # D. Save unit_stats as CSV — tabular, one row per unit
+            if unit_stats:
+                df_units = pd.DataFrame.from_dict(unit_stats, orient="index")
+                df_units.index.name = "unit_id"
+                df_units.to_csv(self.output_dir / "unit_stats.csv")
+                self.logger.info("Saved unit_stats.csv")
+
+            # E. Save lean JSON — burst events, metrics, diagnostics only
             network_data_clean = helper.recursive_clean(network_data)
             network_data_clean["n_units"] = len(spike_times)
 
@@ -1189,7 +1208,7 @@ class MEAPipeline:
 
                 ax_network, ax_network_red = helper.plot_clean_network(
                     ax_network,
-                    **network_data["plot_data"],
+                    **plot_data,
                     use_twinx=True
                 )
 
@@ -1210,7 +1229,7 @@ class MEAPipeline:
 
                 ax_network, ax_network_red = helper.plot_clean_network(
                     ax_network,
-                    **network_data["plot_data"],
+                    **plot_data,
                     use_twinx=False
                 )
 
@@ -1288,51 +1307,47 @@ class MEAPipeline:
 
             self.logger.info("Burst analysis plots saved successfully.")
 
-                # Fixed Y Logic 
-                if fixed_y:
-                    summary_file = self.output_root / self.project_name / f"{self.project_name}_y_max_summary.json"
-                    if not summary_file.exists():
-                        self.logger.error(f"No y-max summary found at {summary_file}. Run without --fixed-y first.")
-                    else:
-                        with open(summary_file, 'r') as f:
-                            summary = json.load(f)
-                        # Flatten all values and find global max
-                        all_maxima = [
-                            v for date in summary.values()
-                            for chip in date.values()
-                            for v in chip.values()
-                        ]
-                        global_max = max(all_maxima)
-                        self.logger.info(f"Applying fixed y-max: {global_max:.4f}")
+            # Fixed Y Logic
+            if fixed_y:
+                summary_file = self.output_root / self.project_name / f"{self.project_name}_y_max_summary.json"
+                if not summary_file.exists():
+                    self.logger.error(f"No y-max summary found at {summary_file}. Run without --fixed-y first.")
+                else:
+                    with open(summary_file, 'r') as f:
+                        summary = json.load(f)
+                    all_maxima = [
+                        v for date in summary.values()
+                        for chip in date.values()
+                        for v in chip.values()
+                    ]
+                    global_max = max(all_maxima)
+                    self.logger.info(f"Applying fixed y-max: {global_max:.4f}")
 
-                        # Replot with fixed y
-                        fig2, axs2 = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-                        ax_raster2, ax_network2 = axs2
-                        helper.plot_clean_raster(ax_raster2, spike_times, color='gray', markersize=4, markeredgewidth=0.5, alpha=1.0)
-                        helper.plot_clean_network(ax_network2, **network_data["plot_data"])
-                        ax_network2.set_ylim(0, global_max)
-                        plt.tight_layout()
-                        plt.subplots_adjust(hspace=0.05)
-                        for start, end in sb_intervals: 
-                            ax_network2.axvspan(start, end, color='gray', alpha=0.3)
-                        plt.savefig(self.output_dir / "fixed_y_raster_burst_plot.svg")
-                        plt.savefig(self.output_dir / "fixed_y_raster_burst_plot.png", dpi=300)
-                        ax_raster2.set_xlim(0, 60)
-                        ax_network2.set_xlim(0, 60)
-                        plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_60s.svg")
-                        ax_raster2.set_xlim(0, 30)
-                        ax_network2.set_xlim(0, 30)
-                        ax_network2.set_xlabel("Time (s)")
-                        plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_30s.svg")
-                        plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_30s.png", dpi=300)
-            
-                        plt.close(fig2)
-                
+                    fig2, axs2 = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+                    ax_raster2, ax_network2 = axs2
+                    helper.plot_clean_raster(ax_raster2, spike_times, color='gray', markersize=4, markeredgewidth=0.5, alpha=1.0)
+                    helper.plot_clean_network(ax_network2, **plot_data)
+                    ax_network2.set_ylim(0, global_max)
+                    plt.tight_layout()
+                    plt.subplots_adjust(hspace=0.05)
+                    for start, end in [(sb["start"], sb["end"]) for sb in superburst_events]:
+                        ax_network2.axvspan(start, end, color='gray', alpha=0.3)
+                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot.svg")
+                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot.png", dpi=300)
+                    ax_raster2.set_xlim(0, 60)
+                    ax_network2.set_xlim(0, 60)
+                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_60s.svg")
+                    ax_raster2.set_xlim(0, 30)
+                    ax_network2.set_xlim(0, 30)
+                    ax_network2.set_xlabel("Time (s)")
+                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_30s.svg")
+                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_30s.png", dpi=300)
+                    plt.close(fig2)
 
-            except Exception as e:
-                self.logger.error(f"Burst analysis error: {e}")
-                traceback.print_exc()
-                raise e
+        except Exception as e:
+            self.logger.error(f"Burst analysis error: {e}")
+            traceback.print_exc()
+            raise e
 
     def _sort_units_for_raster(self, spike_times, raster_sort):
         """Returns ordered list of unit keys for raster y-axis."""
