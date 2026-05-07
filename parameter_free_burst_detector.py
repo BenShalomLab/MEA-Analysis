@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
+from scipy.stats import skew, kurtosis as sp_kurtosis
 
 
 def compute_network_bursts(
@@ -31,17 +32,77 @@ def compute_network_bursts(
     # ---------------------------------------------------------
     # 1. Biological calibration
     # ---------------------------------------------------------
-    all_log_isis = []
+    all_log_isis    = []
+    bursty_log_isis = []
+    unit_stats      = {}
 
     for u in units:
         t = np.unique(np.sort(SpikeTimes[u]))
-        if len(t) >= 2:
-            isi = np.diff(t)
-            isi = isi[isi > 0]
-            if isi.size > 0:
-                all_log_isis.extend(np.log10(isi))
+        if len(t) < 2:
+            unit_stats[u] = {"mean_firing_rate_hz": len(SpikeTimes[u]) / total_dur}
+            continue
 
-    biological_isi_s = 10 ** np.median(all_log_isis) if all_log_isis else 0.1
+        isi = np.diff(t)
+        isi = isi[isi > 0]
+        if isi.size == 0:
+            unit_stats[u] = {"mean_firing_rate_hz": len(t) / total_dur}
+            continue
+
+        log_isi = np.log10(isi)
+        all_log_isis.extend(log_isi)
+
+        mean_fr = len(t) / total_dur
+        cv_isi  = float(np.std(isi) / np.mean(isi)) if np.mean(isi) > 0 else np.nan
+
+        # CV2 — local irregularity, robust to rate non-stationarity (Holt 1996)
+        if len(isi) >= 2:
+            cv2 = float(np.mean(2 * np.abs(np.diff(isi)) / (isi[:-1] + isi[1:])))
+        else:
+            cv2 = np.nan
+
+        # Lv — local variation (Shinomoto 2009)
+        if len(isi) >= 2:
+            lv = float(3 * np.mean(((isi[:-1] - isi[1:]) / (isi[:-1] + isi[1:]))**2))
+        else:
+            lv = np.nan
+
+        # Bimodality coefficient on log-ISI
+        n = len(log_isi)
+        if n >= 4:
+            g1 = skew(log_isi)
+            g2 = sp_kurtosis(log_isi, fisher=True)
+            bc = (g1**2 + 1) / (g2 + 3 * ((n - 1)**2 / ((n - 2) * (n - 3))))
+        else:
+            bc = np.nan
+
+        is_bursty = bool((not np.isnan(bc)) and bc > 0.555 and (np.isnan(lv) or lv > 1.0))
+
+        unit_stats[u] = {
+            "mean_firing_rate_hz": mean_fr,
+            "cv_isi":              cv_isi,
+            "cv2":                 cv2,
+            "lv":                  lv,
+            "bimodality_coeff":    float(bc) if not np.isnan(bc) else None,
+            "is_bursty":           is_bursty,
+        }
+
+        if is_bursty:
+            bursty_log_isis.extend(log_isi)
+
+    if len(bursty_log_isis) > 50:
+        hist, edges = np.histogram(bursty_log_isis, bins=100)
+        centers     = (edges[:-1] + edges[1:]) / 2
+        hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
+        peaks, _    = find_peaks(hist_smooth, prominence=5)
+        if len(peaks) > 0:
+            biological_isi_s = float(10 ** centers[peaks[0]])   # short-mode peak
+        else:
+            biological_isi_s = float(10 ** np.percentile(bursty_log_isis, 15))
+    elif all_log_isis:
+        # Fallback: no bursty units detected (young / sparse culture)
+        biological_isi_s = float(10 ** np.percentile(all_log_isis, 15))
+    else:
+        biological_isi_s = 0.05
 
     adaptive_bin_ms = np.clip(biological_isi_s * 1000, 10, 30)
     bin_size = adaptive_bin_ms / 1000.0
@@ -52,8 +113,8 @@ def compute_network_bursts(
     # ---------------------------------------------------------
     # 2. Population signals
     # ---------------------------------------------------------
-    n_bins = len(t_centers)
-    n_units = len(units)
+    n_bins  = len(t_centers)
+    n_units = sum(1 for u in units if len(SpikeTimes[u]) > 0)
 
     active_unit_counts = np.zeros(n_bins)
     spike_counts_total = np.zeros(n_bins)
@@ -101,7 +162,6 @@ def compute_network_bursts(
     # ---------------------------------------------------------
     # 5. Peak detection (FIXED)
     # ---------------------------------------------------------
-    #min_distance = int(max(1, biological_isi_s / bin_size))
     min_prominence = max(0.5 * spread_mad, 0.02)
 
 
@@ -180,8 +240,6 @@ def compute_network_bursts(
     # ---------------------------------------------------------
     # 7. Merge logic (RELAXED ONLY WHERE NECESSARY)
     # ---------------------------------------------------------
-    #max_valley_duration = 2 * biological_isi_s
-
     def finalize(evs, s, e):
 
         best = max(evs, key=lambda x: x["peak_synchrony"])
@@ -369,17 +427,21 @@ def compute_network_bursts(
         "superbursts": {"events": superbursts, "metrics": level_metrics(superbursts)},
 
         "diagnostics": {
-            "adaptive_bin_ms": adaptive_bin_ms,
-            "biological_isi_s": biological_isi_s,
-            "baseline_value": baseline_val,
-            "spread_mad": spread_mad,
-            "merge_floor": relative_threshold_val,
-            "burstlet_merge_gap_s": burstlet_merge_gap_s,
-            "network_merge_gap_s": network_merge_gap_s,
-            "n_units": n_units,
-            "sigma_fast_bins": sigma_fast,
-            "sigma_slow_bins": sigma_slow
+            "adaptive_bin_ms":       adaptive_bin_ms,
+            "biological_isi_s":      biological_isi_s,
+            "biological_isi_source": "bursty_peak" if len(bursty_log_isis) > 50 else ("all_percentile15" if all_log_isis else "default"),
+            "baseline_value":        baseline_val,
+            "spread_mad":            spread_mad,
+            "merge_floor":           relative_threshold_val,
+            "burstlet_merge_gap_s":  burstlet_merge_gap_s,
+            "network_merge_gap_s":   network_merge_gap_s,
+            "n_units":               n_units,
+            "n_bursty_units":        sum(1 for s in unit_stats.values() if s.get("is_bursty")),
+            "sigma_fast_bins":       sigma_fast,
+            "sigma_slow_bins":       sigma_slow
         },
+
+        "unit_stats": unit_stats,
 
         "plot_data": {
             "t": t_centers,
