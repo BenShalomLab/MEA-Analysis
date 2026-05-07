@@ -7,6 +7,7 @@ IPNAnalysis/Sorting_Intermediate_files/*
 IPNAnalysis/sorting/*
 IPNAnalysis/Electrodes/*
 AnalyzedData/*
+!AnalyzedData/.gitkeep
 AxonReconPipeline/data/*
 **.mat
 .vscode
@@ -44,4 +45,3 @@ pip-wheel-metadata/
 .ruff_cache/
 __pycache__/
 *.py[cod]
-
