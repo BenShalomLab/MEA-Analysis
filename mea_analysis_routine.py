@@ -255,8 +255,9 @@ class MEAPipeline:
         
         # Define Directory Structure: Output / Pattern / Well
         self.relative_pattern = self.metadata.get('relative_pattern', 'UnknownPattern')
-        # Default output_root: "AnalyzedData" sibling of the recording file directory
-        effective_output_root = Path(output_root) if output_root is not None else (self.file_path.parent / "AnalyzedData")
+        # Default output_root: local "AnalyzedData" directory beside this script
+        default_output_root = Path(__file__).resolve().parent / "AnalyzedData"
+        effective_output_root = Path(output_root) if output_root is not None else default_output_root
         self.output_root = effective_output_root
         base_output_dir = effective_output_root / self.relative_pattern / self.stream_id
         self.output_dir = (
@@ -1591,7 +1592,7 @@ def main():
     io_group.add_argument("--rec", type=str, default=None,
         help="Recording name inside HDF5 file (default: rec0000)")
     io_group.add_argument("--output-dir", type=str, default=None,
-        help="Output directory for results")
+        help="Output directory for results (default: <repo>/AnalyzedData)")
     io_group.add_argument("--checkpoint-dir", type=str, default=None,
         help="Checkpoint directory (default: <output-dir>/checkpoints)")
     io_group.add_argument("--output-subdir-after-well", type=str, default=None,

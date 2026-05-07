@@ -108,7 +108,7 @@ def main():
     io_group.add_argument("--config", type=str, default=None,
         help="Path to config JSON file (CLI flags always override config)")
     io_group.add_argument("--output-dir", type=str, default=None,
-        help="Output directory for all results")
+        help="Output directory for all results (default: <repo>/AnalyzedData)")
     io_group.add_argument("--checkpoint-dir", type=str, default=None,
         help="Checkpoint directory (default: <output-dir>/checkpoints)")
     io_group.add_argument("--output-subdir-after-well", type=str, default=None,

@@ -246,7 +246,7 @@ python run_pipeline_driver.py /data/experiment --config mea_config.json --force-
 |-------|----------|-------------|
 | positional | `path` | File or directory path containing MEA data |
 | input/output | `--config` | Path to config JSON (CLI flags always override) |
-| input/output | `--output-dir` | Output directory for all results |
+| input/output | `--output-dir` | Output directory for all results (default: `<repo>/AnalyzedData`) |
 | input/output | `--checkpoint-dir` | Checkpoint directory (default: output-dir/checkpoints) |
 | input/output | `--export-to-phy` | Export results to Phy format |
 | input/output | `--clean-up` | Remove intermediate files after processing |
