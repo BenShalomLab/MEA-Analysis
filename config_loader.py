@@ -206,7 +206,9 @@ def build_extra_args(resolved, cli_args):
         try:
             extra.append(f"--n-jobs {int(resolved['n_jobs'])}")
         except (TypeError, ValueError):
-            raise ValueError("Invalid runtime.n_jobs/--n-jobs value; expected integer")
+            raise ValueError(
+                f"Invalid runtime.n_jobs/--n-jobs value: {resolved['n_jobs']!r}. Expected integer."
+            )
     if resolved["chunk_duration"]:     extra.append(f"--chunk-duration {resolved['chunk_duration']}")
 
     # CLI-only flags - passed through directly, never in config

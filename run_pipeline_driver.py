@@ -75,7 +75,7 @@ def setup_driver_logger(log_path=None):
 # ----------------------------------------------------------
 # Subprocess launcher
 # ----------------------------------------------------------
-def launch_sorting_subprocess(file_path, rec_name, stream_id, extra_args=""):
+def launch_sorting_subprocess(file_path, rec_name, stream_id, extra_args="") -> bool:
     
     # Calculate rec_name for 24-well MaxTwo plates
     well_id = int(stream_id[-3:])
@@ -101,7 +101,9 @@ def _determine_max_concurrency(args, resolved, logger):
         try:
             requested = int(requested)
         except (TypeError, ValueError):
-            raise ValueError("--max-concurrent-wells must be an integer")
+            raise ValueError(
+                f"Invalid value for --max-concurrent-wells/runtime.max_concurrent_wells: {requested!r}. Must be an integer."
+            )
         if requested < 1:
             raise ValueError("--max-concurrent-wells must be >= 1")
 
@@ -398,7 +400,7 @@ def main():
                     sys.exit(1)
                 for recording, wells in recording_map.items():
                     for well in wells:
-                        tasks.append((str(file_path), recording, well))
+                        tasks.append((Path(file_path), recording, well))
                             
             elif suffix == ".nwb":
                 logger.info(f"[PLACEHOLDER] NWB file support not implemented yet: {file_path}")
@@ -431,7 +433,7 @@ def main():
                 sys.exit(1)
             for recording, wells in recording_map.items():
                 for well in wells:
-                    tasks.append((str(path), recording, well))
+                    tasks.append((path, recording, well))
             _run_well_tasks(tasks, args, resolved, extra_arg_string, logger)
         elif path.suffix == ".nwb":
             logger.info(f"[PLACEHOLDER] NWB file support not implemented yet: {path}")
