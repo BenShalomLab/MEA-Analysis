@@ -256,7 +256,7 @@ def format_checkpoint_option(path_value):
     try:
         p = Path(path_value)
         return f"{p.name} — {path_value}"
-    except Exception:
+    except TypeError:
         return str(path_value)
 
 # ============================================================
@@ -378,6 +378,7 @@ def run_app(checkpoint_dir):
                 else:
                     target_path.unlink()
                     st.cache_data.clear()
+                    st.session_state["delete_checkpoint_confirm"] = False
                     st.success(f"Deleted checkpoint: {target_path.name}")
                     st.rerun()
             except Exception as exc:
