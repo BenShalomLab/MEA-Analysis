@@ -251,6 +251,14 @@ def stage_badge(stage):
 def badge(text, bg):
     return f"<span style='padding:3px 8px;border-radius:6px;background:{bg}'>{text}</span>"
 
+
+def format_checkpoint_option(path_value):
+    try:
+        p = Path(path_value)
+        return f"{p.name} — {path_value}"
+    except Exception:
+        return str(path_value)
+
 # ============================================================
 # STREAMLIT APP
 # ============================================================
@@ -340,7 +348,7 @@ def run_app(checkpoint_dir):
     sel_path = st.selectbox(
         "Select file",
         checkpoint_paths,
-        format_func=lambda p: f"{Path(p).name} — {p}",
+        format_func=format_checkpoint_option,
     )
     row = df[df["path"] == sel_path].iloc[0]
 
@@ -355,7 +363,7 @@ def run_app(checkpoint_dir):
         "I understand this permanently deletes the selected checkpoint JSON file.",
         key="delete_checkpoint_confirm",
     )
-    if st.button("Delete selected checkpoint", type="primary", disabled=not delete_confirmed):
+    if st.button("Delete selected checkpoint", type="secondary", disabled=not delete_confirmed):
         target_path = Path(sel_path).resolve()
         try:
             target_path.relative_to(checkpoint_root)
