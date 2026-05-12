@@ -39,6 +39,8 @@ except ImportError as e:
     print(f"Current sys.path: {sys.path}")
     sys.exit(1)
 BASE_FILE_PATH = str(Path(__file__).resolve().parent)
+DEFAULT_SKIP_SORTING_CONCURRENCY = 2
+RECOMMENDED_INITIAL_MAX_CONCURRENT_WELLS = 3
 
 # ----------------------------------------------------------
 # Logger setup
@@ -103,13 +105,13 @@ def _determine_max_concurrency(args, resolved, logger):
         if requested < 1:
             raise ValueError("--max-concurrent-wells must be >= 1")
 
-    if bool(args.skip_spikesorting):
-        effective = requested if requested is not None else 2
+    if bool(resolved.get("skip_spikesorting")):
+        effective = requested if requested is not None else DEFAULT_SKIP_SORTING_CONCURRENCY
         logger.info(
             "Execution profile: --skip-spikesorting enabled (CPU-bound); max concurrent wells=%d",
             effective,
         )
-        if effective > 3:
+        if effective > RECOMMENDED_INITIAL_MAX_CONCURRENT_WELLS:
             logger.warning(
                 "Configured max concurrent wells=%d. Recommended initial range is 2-3, then tune upward carefully.",
                 effective,

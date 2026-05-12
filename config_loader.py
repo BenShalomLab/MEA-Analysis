@@ -22,6 +22,7 @@ DEFAULTS = {
     "sorting": {
         "sorter":           "kilosort4",
         "docker_image":     None,
+        "skip_spikesorting": False,
     },
     "merging": {
         "unitmatch_scored_dry_run": True,
@@ -60,8 +61,11 @@ DEFAULTS = {
         }
     },
     "runtime": {
+        # Driver-level max worker pool size for concurrent wells.
         "max_concurrent_wells": None,
+        # Per-well CPU workers for SpikeInterface-heavy operations.
         "n_jobs": None,
+        # Per-well SpikeInterface chunk duration (e.g., "1s").
         "chunk_duration": None,
     }
 }
@@ -133,6 +137,7 @@ def resolve_args(args, config):
         # sorting
         "sorter":           _resolve(getattr(args, "sorter", None),          _cfg(config, "sorting", "sorter"),           DEFAULTS["sorting"]["sorter"]),
         "docker_image":     _resolve(getattr(args, "docker", None),          _cfg(config, "sorting", "docker_image"),     DEFAULTS["sorting"]["docker_image"]),
+        "skip_spikesorting": _resolve(_bool(args, "skip_spikesorting"),      _cfg(config, "sorting", "skip_spikesorting"), DEFAULTS["sorting"]["skip_spikesorting"]),
         # merging (UnitMatch)
         "unitmatch_scored_dry_run":             _resolve(_bool(args, "unitmatch_scored_dry_run"),                       _cfg(config, "merging", "unitmatch_scored_dry_run"),                DEFAULTS["merging"]["unitmatch_scored_dry_run"]),
         "unitmatch_output_subdir_name":         _resolve(getattr(args, "unitmatch_output_subdir_name", None),           _cfg(config, "merging", "unitmatch_output_subdir_name"),            DEFAULTS["merging"]["unitmatch_output_subdir_name"]),
@@ -207,7 +212,7 @@ def build_extra_args(resolved, cli_args):
     # CLI-only flags - passed through directly, never in config
     if getattr(cli_args, "force_restart", False):     extra.append("--force-restart")
     if getattr(cli_args, "debug", False):             extra.append("--debug")
-    if getattr(cli_args, "skip_spikesorting", False): extra.append("--skip-spikesorting")
+    if resolved["skip_spikesorting"]: extra.append("--skip-spikesorting")
     if getattr(cli_args, "reanalyze_bursts", False):  extra.append("--reanalyze-bursts")
     if getattr(cli_args, "resume_from", None):         extra.append(f"--resume-from {getattr(cli_args, 'resume_from')}")
     if getattr(cli_args, "unitmatch_merge_units", False): extra.append("--unitmatch-merge-units")
