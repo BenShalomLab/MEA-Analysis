@@ -377,14 +377,16 @@ def run_app(checkpoint_dir):
                 elif not target_path.is_file():
                     st.error(f"Path is not a file: {target_path}")
                 else:
+                    deleted = False
                     try:
                         target_path.unlink()
+                        deleted = True
                     except FileNotFoundError:
                         st.warning(f"File was already deleted: {target_path}")
-                        return
                     st.cache_data.clear()
                     st.session_state[DELETE_CONFIRM_KEY] = False
-                    st.success(f"Deleted checkpoint: {target_path}")
+                    if deleted:
+                        st.success(f"Deleted checkpoint: {target_path}")
                     st.rerun()
             except Exception as exc:
                 st.error(f"Failed to delete checkpoint: {exc}")
