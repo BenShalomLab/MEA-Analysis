@@ -243,18 +243,19 @@ python run_pipeline_driver.py /data/experiment --config mea_config.json --force-
 Use the Streamlit app to inspect checkpoint JSON status across runs.
 
 ```bash
-cd streamlit_checkpoint_analyzer
-streamlit run checkpoint_dashboard.py -- --checkpoint-dir /path/to/checkpoints
+streamlit run streamlit_checkpoint_analyzer/checkpoint_dashboard.py -- \
+  --checkpoint-dir /path/to/checkpoints
 ```
 
 You can also pass a top-level `AnalyzedData` directory as a positional argument (legacy-compatible mode):
 
 ```bash
-cd streamlit_checkpoint_analyzer
-streamlit run checkpoint_dashboard.py /path/to/AnalyzedData
+streamlit run streamlit_checkpoint_analyzer/checkpoint_dashboard.py -- \
+  /path/to/AnalyzedData
 ```
 
-By default (no argument), the app uses `./AnalyzedData/checkpoints`.
+By default (no argument), the app uses `./AnalyzedData/checkpoints` relative to the
+current working directory (recommended: run from the repository root).
 
 ## Command-Line Reference
 
