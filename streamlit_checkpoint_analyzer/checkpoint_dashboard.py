@@ -252,7 +252,7 @@ def badge(text, bg):
     return f"<span style='padding:3px 8px;border-radius:6px;background:{bg}'>{text}</span>"
 
 
-def format_checkpoint_option(path_value):
+def format_checkpoint_label(path_value):
     try:
         p = Path(path_value)
         return f"{p.name} — {path_value}"
@@ -348,7 +348,7 @@ def run_app(checkpoint_dir):
     sel_path = st.selectbox(
         "Select file",
         checkpoint_paths,
-        format_func=format_checkpoint_option,
+        format_func=format_checkpoint_label,
     )
     row = df[df["path"] == sel_path].iloc[0]
 
@@ -360,7 +360,7 @@ def run_app(checkpoint_dir):
     st.divider()
     st.subheader("Delete checkpoint")
     delete_confirmed = st.checkbox(
-        "I understand this permanently deletes the selected checkpoint JSON file.",
+        "I understand this action permanently deletes the selected checkpoint JSON file and cannot be undone.",
         key="delete_checkpoint_confirm",
     )
     if st.button("Delete selected checkpoint", type="secondary", disabled=not delete_confirmed):
@@ -379,7 +379,7 @@ def run_app(checkpoint_dir):
                     target_path.unlink()
                     st.cache_data.clear()
                     st.session_state["delete_checkpoint_confirm"] = False
-                    st.success(f"Deleted checkpoint: {target_path.name}")
+                    st.success(f"Deleted checkpoint: {target_path}")
                     st.rerun()
             except Exception as exc:
                 st.error(f"Failed to delete checkpoint: {exc}")
