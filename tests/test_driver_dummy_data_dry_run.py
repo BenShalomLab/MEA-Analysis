@@ -7,8 +7,6 @@ import pytest
 
 def test_driver_dry_run_with_dummy_h5(tmp_path):
     h5py = pytest.importorskip("h5py")
-    if not callable(getattr(h5py, "File", None)):
-        pytest.skip("real h5py is unavailable in this environment")
 
     dummy_file = tmp_path / "data.raw.h5"
     with h5py.File(dummy_file, "w") as h5f:
