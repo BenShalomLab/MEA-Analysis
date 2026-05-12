@@ -333,6 +333,10 @@ def run_app(checkpoint_dir):
         return
 
     checkpoint_paths = df["path"].dropna().tolist()
+    if not checkpoint_paths:
+        st.info("No checkpoint files with valid paths to inspect.")
+        return
+
     sel_path = st.selectbox(
         "Select file",
         checkpoint_paths,
@@ -365,7 +369,7 @@ def run_app(checkpoint_dir):
                     st.error(f"Path is not a file: {target_path}")
                 else:
                     target_path.unlink()
-                    load_checkpoints_dataframe.clear()
+                    st.cache_data.clear()
                     st.success(f"Deleted checkpoint: {target_path.name}")
                     st.rerun()
             except Exception as exc:
