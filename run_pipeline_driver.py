@@ -98,7 +98,7 @@ def _determine_max_concurrency(args, resolved, logger):
     if requested is not None:
         try:
             requested = int(requested)
-        except Exception:
+        except (TypeError, ValueError):
             raise ValueError("--max-concurrent-wells must be an integer")
         if requested < 1:
             raise ValueError("--max-concurrent-wells must be >= 1")
@@ -157,6 +157,7 @@ def _run_well_tasks(tasks, args, resolved, extra_arg_string, logger):
                 try:
                     ok = future.result()
                 except Exception:
+                    # Catch any unexpected worker exception so other wells can continue.
                     ok = False
                     logger.error(f"Unexpected failure for {file_path} / {recording} / {well}")
                     logger.error(traceback.format_exc())
@@ -274,7 +275,7 @@ def main():
     ctrl_group.add_argument("--debug", action="store_true",
         help="Enable verbose logging")
     ctrl_group.add_argument("--max-concurrent-wells", type=int, default=None,
-        help="Driver worker-pool width for well subprocesses.\nAuto-profile: sorting=>1, --skip-spikesorting=>default 2")
+        help="Driver worker-pool width for well subprocesses. Auto-profile: sorting=>1, --skip-spikesorting=>default 2")
     ctrl_group.add_argument("--n-jobs", type=int, default=None,
         help="Per-well CPU worker count passed to SpikeInterface-heavy steps")
     ctrl_group.add_argument("--chunk-duration", type=str, default=None,

@@ -197,7 +197,11 @@ def build_extra_args(resolved, cli_args):
 
     # curation
     if resolved["no_curation"]:     extra.append("--no-curation")
-    if resolved["n_jobs"] is not None: extra.append(f"--n-jobs {int(resolved['n_jobs'])}")
+    if resolved["n_jobs"] is not None:
+        try:
+            extra.append(f"--n-jobs {int(resolved['n_jobs'])}")
+        except (TypeError, ValueError):
+            raise ValueError("Invalid runtime.n_jobs/--n-jobs value; expected integer")
     if resolved["chunk_duration"]:     extra.append(f"--chunk-duration {resolved['chunk_duration']}")
 
     # CLI-only flags - passed through directly, never in config
