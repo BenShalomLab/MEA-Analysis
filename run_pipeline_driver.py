@@ -11,6 +11,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import sys
 import argparse
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import h5py
 import json
 from pathlib import Path
@@ -38,6 +39,8 @@ except ImportError as e:
     print(f"Current sys.path: {sys.path}")
     sys.exit(1)
 BASE_FILE_PATH = str(Path(__file__).resolve().parent)
+DEFAULT_SKIP_SORTING_CONCURRENCY = 2
+RECOMMENDED_INITIAL_MAX_CONCURRENT_WELLS = 3
 
 # ----------------------------------------------------------
 # Logger setup
@@ -72,7 +75,7 @@ def setup_driver_logger(log_path=None):
 # ----------------------------------------------------------
 # Subprocess launcher
 # ----------------------------------------------------------
-def launch_sorting_subprocess(file_path, rec_name, stream_id, extra_args=""):
+def launch_sorting_subprocess(file_path, rec_name, stream_id, extra_args="", cuda_visible_devices=None) -> bool:
     
     # Calculate rec_name for 24-well MaxTwo plates
     well_id = int(stream_id[-3:])
@@ -83,11 +86,152 @@ def launch_sorting_subprocess(file_path, rec_name, stream_id, extra_args=""):
     logger.info(f"[DRIVER] Launching: {command}")
     
     try:
-        subprocess.run(shlex.split(command), check=True)
+        env = os.environ.copy()
+        if cuda_visible_devices is not None:
+            env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices)
+            logger.info(
+                "[DRIVER] Assigned GPU %s to %s/%s",
+                cuda_visible_devices,
+                rec_name,
+                stream_id,
+            )
+        subprocess.run(shlex.split(command), check=True, env=env)
+        return True
     except subprocess.CalledProcessError as e:
         logger.error(f"Subprocess failed for {stream_id} in {file_path}")
         logger.error(f"Exit Code: {e.returncode}")
         logger.error(traceback.format_exc())
+        return False
+
+
+def _parse_gpu_ids(value):
+    if value is None:
+        return None
+
+    tokens = []
+    if isinstance(value, (list, tuple)):
+        tokens = [str(v).strip() for v in value if str(v).strip()]
+    else:
+        tokens = [t.strip() for t in str(value).split(",") if t.strip()]
+
+    if not tokens:
+        return None
+
+    gpu_ids = []
+    for token in tokens:
+        try:
+            gid = int(token)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid GPU id '{token}'. Expected comma-separated non-negative integers.")
+        if gid < 0:
+            raise ValueError(f"Invalid GPU id '{token}'. Expected comma-separated non-negative integers.")
+        gpu_ids.append(gid)
+
+    # Stable de-duplication.
+    return list(dict.fromkeys(gpu_ids))
+
+
+def _determine_max_concurrency(args, resolved, logger):
+    requested = resolved.get("max_concurrent_wells")
+    if requested is not None:
+        try:
+            requested = int(requested)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Invalid value for --max-concurrent-wells/runtime.max_concurrent_wells: {requested!r}. Must be an integer."
+            )
+        if requested < 1:
+            raise ValueError("--max-concurrent-wells must be >= 1")
+
+    if bool(resolved.get("skip_spikesorting")):
+        effective = requested if requested is not None else DEFAULT_SKIP_SORTING_CONCURRENCY
+        logger.info(
+            "Execution profile: --skip-spikesorting enabled (CPU-bound); max concurrent wells=%d",
+            effective,
+        )
+        if effective > RECOMMENDED_INITIAL_MAX_CONCURRENT_WELLS:
+            logger.warning(
+                "Configured max concurrent wells=%d. Recommended initial range is 2-3, then tune upward carefully.",
+                effective,
+            )
+        return effective, None
+
+    gpu_ids = _parse_gpu_ids(resolved.get("gpu_ids"))
+    if gpu_ids:
+        if requested is None:
+            effective = len(gpu_ids)
+        else:
+            effective = min(requested, len(gpu_ids))
+            if requested > len(gpu_ids):
+                logger.warning(
+                    "Requested max concurrent wells=%d but only %d GPU id(s) configured. Capping to %d.",
+                    requested,
+                    len(gpu_ids),
+                    effective,
+                )
+        logger.info(
+            "Execution profile: spike sorting enabled (GPU-bound); using %d concurrent wells across GPU IDs %s",
+            effective,
+            gpu_ids,
+        )
+        return effective, gpu_ids
+
+    if requested not in (None, 1):
+        logger.warning(
+            "Spike sorting is enabled; auto-capping --max-concurrent-wells from %d to 1 to avoid GPU contention.",
+            requested,
+        )
+    logger.info("Execution profile: spike sorting enabled (GPU-bound); max concurrent wells=1")
+    return 1, None
+
+
+def _run_well_tasks(tasks, args, resolved, extra_arg_string, logger):
+    if not tasks:
+        logger.info("No well tasks discovered.")
+        return
+
+    if args.dry:
+        for file_path, recording, well in tasks:
+            logger.info(f"[DRY-RUN] Would process {file_path} / {recording} / {well}")
+        return
+
+    max_workers, gpu_ids = _determine_max_concurrency(args, resolved, logger)
+    failures = 0
+
+    if max_workers == 1:
+        for idx, (file_path, recording, well) in enumerate(tasks):
+            logger.info(f"Processing : {file_path} recording : {recording} well_id : {well}")
+            assigned_gpu = gpu_ids[idx % len(gpu_ids)] if gpu_ids else None
+            ok = launch_sorting_subprocess(str(file_path), recording, well, extra_arg_string, assigned_gpu)
+            if not ok:
+                failures += 1
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    launch_sorting_subprocess,
+                    str(file_path),
+                    recording,
+                    well,
+                    extra_arg_string,
+                    (gpu_ids[idx % len(gpu_ids)] if gpu_ids else None),
+                ): (file_path, recording, well)
+                for idx, (file_path, recording, well) in enumerate(tasks)
+            }
+            for future in as_completed(futures):
+                file_path, recording, well = futures[future]
+                try:
+                    ok = future.result()
+                except Exception:
+                    # Catch any unexpected worker exception so other wells can continue.
+                    ok = False
+                    logger.error(f"Unexpected failure for {file_path} / {recording} / {well}")
+                    logger.error(traceback.format_exc())
+                if not ok:
+                    failures += 1
+
+    if failures:
+        logger.error("Completed with %d failed well(s).", failures)
 
 
 # ----------------------------------------------------------
@@ -196,6 +340,15 @@ def main():
         help="Print what would run without any processing")
     ctrl_group.add_argument("--debug", action="store_true",
         help="Enable verbose logging")
+    ctrl_group.add_argument("--max-concurrent-wells", type=int, default=None,
+        help="Driver worker-pool width for well subprocesses. Auto-profile: sorting=>1, --skip-spikesorting=>default 2")
+    ctrl_group.add_argument("--gpu-ids", type=str, default=None,
+        help="Comma-separated GPU IDs for spike sorting workers (e.g., '0,1,2,3'). "
+             "When provided, sorting concurrency defaults to number of GPUs.")
+    ctrl_group.add_argument("--n-jobs", type=int, default=None,
+        help="Per-well CPU worker count passed to SpikeInterface-heavy steps")
+    ctrl_group.add_argument("--chunk-duration", type=str, default=None,
+        help="Per-well chunk duration passed to SpikeInterface (e.g. '1s')")
 
     args = parser.parse_args()
     config   = load_config(args.config)
@@ -258,6 +411,7 @@ def main():
     # ------------------------------------------------------
     if path.is_dir():
         logger.info(f"[DIR MODE] Scanning directory: {path}")
+        tasks = []
 
         valid_runs = None
         if resolved['reference_file']:
@@ -311,15 +465,7 @@ def main():
                     sys.exit(1)
                 for recording, wells in recording_map.items():
                     for well in wells:
-                        if args.dry:
-                            logger.info(f"[DRY-RUN] Would process {file_path} / {well}")
-                        else:
-                            logger.info(
-                                f"Processing : {file_path} recording : {recording} well_id : {well}"
-                            )
-                            launch_sorting_subprocess(
-                                str(file_path), recording, well, extra_arg_string
-                            )
+                        tasks.append((Path(file_path), recording, well))
                             
             elif suffix == ".nwb":
                 logger.info(f"[PLACEHOLDER] NWB file support not implemented yet: {file_path}")
@@ -333,11 +479,14 @@ def main():
                 logger.warning(f"[SKIP] Unknown file type: {file_path}")
                 continue
 
+        _run_well_tasks(tasks, args, resolved, extra_arg_string, logger)
+
     # ------------------------------------------------------
     # Handle Single File Mode
     # ------------------------------------------------------
     elif path.is_file():
         if path.suffix == ".h5":
+            tasks = []
             try:
                 with h5py.File(path, "r") as h5f:
                     recording_map = {
@@ -349,15 +498,8 @@ def main():
                 sys.exit(1)
             for recording, wells in recording_map.items():
                 for well in wells:
-                    if args.dry:
-                        logger.info(f"[DRY-RUN] Would process {path} / {well}")
-                    else:
-                        logger.info(
-                            f"Processing : {path} recording : {recording} well_id : {well}"
-                        )
-                        launch_sorting_subprocess(
-                            str(path), recording, well, extra_arg_string
-                        )
+                    tasks.append((path, recording, well))
+            _run_well_tasks(tasks, args, resolved, extra_arg_string, logger)
         elif path.suffix == ".nwb":
             logger.info(f"[PLACEHOLDER] NWB file support not implemented yet: {path}")
             sys.exit(1)
