@@ -427,6 +427,7 @@ def run_app(checkpoint_dir):
                     target_path.unlink()
                     deleted_count += 1
                 except FileNotFoundError:
+                    # The file can be deleted between exists() and unlink().
                     missing_count += 1
             except Exception as exc:
                 error_messages.append(f"{path_str}: {exc}")
