@@ -258,6 +258,7 @@ def badge(text, bg):
 def run_app(checkpoint_dir):
     st.set_page_config(layout="wide", page_title="MEA Checkpoint Dashboard")
     st.title("📊 MEA Pipeline Checkpoint Dashboard")
+    checkpoint_root = Path(checkpoint_dir).resolve()
 
     df, errors = load_checkpoints_dataframe(checkpoint_dir)
 
@@ -331,13 +332,44 @@ def run_app(checkpoint_dir):
         st.info("No checkpoints to inspect.")
         return
 
-    sel_file = st.selectbox("Select file", df["file"].tolist())
-    row = df[df["file"] == sel_file].iloc[0]
+    checkpoint_paths = df["path"].dropna().tolist()
+    sel_path = st.selectbox(
+        "Select file",
+        checkpoint_paths,
+        format_func=lambda p: f"{Path(p).name} — {p}",
+    )
+    row = df[df["path"] == sel_path].iloc[0]
 
     if row["analyzer_folder"] not in (None, "—"):
         st.text_input("Analyzer / Output folder", row["analyzer_folder"])
 
     st.json(row["_raw"])
+
+    st.divider()
+    st.subheader("Delete checkpoint")
+    delete_confirmed = st.checkbox(
+        "I understand this permanently deletes the selected checkpoint JSON file.",
+        key="delete_checkpoint_confirm",
+    )
+    if st.button("Delete selected checkpoint", type="primary", disabled=not delete_confirmed):
+        target_path = Path(sel_path).resolve()
+        try:
+            target_path.relative_to(checkpoint_root)
+        except ValueError:
+            st.error(f"Refusing to delete file outside checkpoint root: {target_path}")
+        else:
+            try:
+                if not target_path.exists():
+                    st.warning(f"File does not exist: {target_path}")
+                elif not target_path.is_file():
+                    st.error(f"Path is not a file: {target_path}")
+                else:
+                    target_path.unlink()
+                    load_checkpoints_dataframe.clear()
+                    st.success(f"Deleted checkpoint: {target_path.name}")
+                    st.rerun()
+            except Exception as exc:
+                st.error(f"Failed to delete checkpoint: {exc}")
 
     # -------------------------
     # Parse errors
