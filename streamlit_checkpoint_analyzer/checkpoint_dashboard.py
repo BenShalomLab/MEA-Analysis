@@ -72,6 +72,7 @@ EXPECTED_CHECKPOINT_COLUMNS = [
 ]
 DELETE_CONFIRM_KEY = "delete_checkpoint_confirm"
 BULK_DELETE_CONFIRM_KEY = "bulk_delete_checkpoint_confirm"
+MAX_DISPLAYED_ERRORS = 20
 
 # ============================================================
 # SAFE ACCESS
@@ -443,7 +444,7 @@ def run_app(checkpoint_dir):
             st.warning(f"Skipped {skipped_count} path(s) outside checkpoint root or not regular files.")
         if error_messages:
             st.error("Some checkpoint files failed during deletion:")
-            for msg in error_messages[:20]:
+            for msg in error_messages[:MAX_DISPLAYED_ERRORS]:
                 st.write(msg)
         st.rerun()
 
