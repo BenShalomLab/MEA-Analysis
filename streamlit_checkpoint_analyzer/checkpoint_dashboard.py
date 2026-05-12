@@ -70,6 +70,7 @@ EXPECTED_CHECKPOINT_COLUMNS = [
     "stage", "stage_num", "failed", "failed_stage", "error", "num_units",
     "analyzer_folder", "last_updated", "_raw",
 ]
+DELETE_CONFIRM_KEY = "delete_checkpoint_confirm"
 
 # ============================================================
 # SAFE ACCESS
@@ -256,7 +257,7 @@ def format_checkpoint_label(path_value):
     try:
         p = Path(path_value)
         return f"{p.name} — {path_value}"
-    except TypeError:
+    except (TypeError, ValueError, OSError):
         return str(path_value)
 
 # ============================================================
@@ -361,7 +362,7 @@ def run_app(checkpoint_dir):
     st.subheader("Delete checkpoint")
     delete_confirmed = st.checkbox(
         "I understand this action permanently deletes the selected checkpoint JSON file and cannot be undone.",
-        key="delete_checkpoint_confirm",
+        key=DELETE_CONFIRM_KEY,
     )
     if st.button("Delete selected checkpoint", type="secondary", disabled=not delete_confirmed):
         target_path = Path(sel_path).resolve()
@@ -376,9 +377,13 @@ def run_app(checkpoint_dir):
                 elif not target_path.is_file():
                     st.error(f"Path is not a file: {target_path}")
                 else:
-                    target_path.unlink()
+                    try:
+                        target_path.unlink()
+                    except FileNotFoundError:
+                        st.warning(f"File was already deleted: {target_path}")
+                        return
                     st.cache_data.clear()
-                    st.session_state["delete_checkpoint_confirm"] = False
+                    st.session_state[DELETE_CONFIRM_KEY] = False
                     st.success(f"Deleted checkpoint: {target_path}")
                     st.rerun()
             except Exception as exc:
