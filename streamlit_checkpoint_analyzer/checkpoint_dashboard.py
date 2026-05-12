@@ -408,7 +408,8 @@ def run_app(checkpoint_dir):
     ):
         deleted_count = 0
         missing_count = 0
-        skipped_count = 0
+        skipped_outside_root_count = 0
+        skipped_non_file_count = 0
         error_messages = []
         for path_str in filtered_paths:
             try:
@@ -416,13 +417,13 @@ def run_app(checkpoint_dir):
                 try:
                     target_path.relative_to(checkpoint_root)
                 except ValueError:
-                    skipped_count += 1
+                    skipped_outside_root_count += 1
                     continue
                 if not target_path.exists():
                     missing_count += 1
                     continue
                 if not target_path.is_file():
-                    skipped_count += 1
+                    skipped_non_file_count += 1
                     continue
                 try:
                     target_path.unlink()
@@ -431,7 +432,7 @@ def run_app(checkpoint_dir):
                     # The file can be deleted between exists() and unlink().
                     missing_count += 1
             except Exception as exc:
-                error_messages.append(f"{path_str}: {exc}")
+                error_messages.append(f"Failed to process {path_str}: {exc}")
 
         st.cache_data.clear()
         st.session_state[BULK_DELETE_CONFIRM_KEY] = False
@@ -440,8 +441,10 @@ def run_app(checkpoint_dir):
             st.success(f"Deleted {deleted_count} checkpoint file(s).")
         if missing_count:
             st.warning(f"Skipped {missing_count} missing checkpoint file(s).")
-        if skipped_count:
-            st.warning(f"Skipped {skipped_count} path(s) outside checkpoint root or not regular files.")
+        if skipped_outside_root_count:
+            st.warning(f"Skipped {skipped_outside_root_count} path(s) outside checkpoint root.")
+        if skipped_non_file_count:
+            st.warning(f"Skipped {skipped_non_file_count} path(s) that are not regular files.")
         if error_messages:
             st.error("Some checkpoint files failed during deletion:")
             for msg in error_messages[:MAX_DISPLAYED_ERRORS]:
