@@ -283,7 +283,7 @@ def run_app(checkpoint_dir):
     for col in ["project", "chip", "run", "well", "stage"]:
         if col not in df.columns:
             continue
-        options = sorted(df[col].dropna().unique())
+        options = sorted(df[col].dropna().astype(str).unique())
         sel = st.sidebar.multiselect(col, options)
         if sel:
             df = df[df[col].isin(sel)]
