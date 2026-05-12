@@ -75,7 +75,7 @@ def setup_driver_logger(log_path=None):
 # ----------------------------------------------------------
 # Subprocess launcher
 # ----------------------------------------------------------
-def launch_sorting_subprocess(file_path, rec_name, stream_id, extra_args="") -> bool:
+def launch_sorting_subprocess(file_path, rec_name, stream_id, extra_args="", cuda_visible_devices=None) -> bool:
     
     # Calculate rec_name for 24-well MaxTwo plates
     well_id = int(stream_id[-3:])
@@ -86,13 +86,49 @@ def launch_sorting_subprocess(file_path, rec_name, stream_id, extra_args="") -> 
     logger.info(f"[DRIVER] Launching: {command}")
     
     try:
-        subprocess.run(shlex.split(command), check=True)
+        env = os.environ.copy()
+        if cuda_visible_devices is not None:
+            env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices)
+            logger.info(
+                "[DRIVER] Assigned GPU %s to %s/%s",
+                cuda_visible_devices,
+                rec_name,
+                stream_id,
+            )
+        subprocess.run(shlex.split(command), check=True, env=env)
         return True
     except subprocess.CalledProcessError as e:
         logger.error(f"Subprocess failed for {stream_id} in {file_path}")
         logger.error(f"Exit Code: {e.returncode}")
         logger.error(traceback.format_exc())
         return False
+
+
+def _parse_gpu_ids(value):
+    if value is None:
+        return None
+
+    tokens = []
+    if isinstance(value, (list, tuple)):
+        tokens = [str(v).strip() for v in value if str(v).strip()]
+    else:
+        tokens = [t.strip() for t in str(value).split(",") if t.strip()]
+
+    if not tokens:
+        return None
+
+    gpu_ids = []
+    for token in tokens:
+        try:
+            gid = int(token)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid GPU id '{token}'. Expected comma-separated non-negative integers.")
+        if gid < 0:
+            raise ValueError(f"Invalid GPU id '{token}'. Expected comma-separated non-negative integers.")
+        gpu_ids.append(gid)
+
+    # Stable de-duplication.
+    return list(dict.fromkeys(gpu_ids))
 
 
 def _determine_max_concurrency(args, resolved, logger):
@@ -118,7 +154,27 @@ def _determine_max_concurrency(args, resolved, logger):
                 "Configured max concurrent wells=%d. Recommended initial range is 2-3, then tune upward carefully.",
                 effective,
             )
-        return effective
+        return effective, None
+
+    gpu_ids = _parse_gpu_ids(resolved.get("gpu_ids"))
+    if gpu_ids:
+        if requested is None:
+            effective = len(gpu_ids)
+        else:
+            effective = min(requested, len(gpu_ids))
+            if requested > len(gpu_ids):
+                logger.warning(
+                    "Requested max concurrent wells=%d but only %d GPU id(s) configured. Capping to %d.",
+                    requested,
+                    len(gpu_ids),
+                    effective,
+                )
+        logger.info(
+            "Execution profile: spike sorting enabled (GPU-bound); using %d concurrent wells across GPU IDs %s",
+            effective,
+            gpu_ids,
+        )
+        return effective, gpu_ids
 
     if requested not in (None, 1):
         logger.warning(
@@ -126,7 +182,7 @@ def _determine_max_concurrency(args, resolved, logger):
             requested,
         )
     logger.info("Execution profile: spike sorting enabled (GPU-bound); max concurrent wells=1")
-    return 1
+    return 1, None
 
 
 def _run_well_tasks(tasks, args, resolved, extra_arg_string, logger):
@@ -139,22 +195,28 @@ def _run_well_tasks(tasks, args, resolved, extra_arg_string, logger):
             logger.info(f"[DRY-RUN] Would process {file_path} / {recording} / {well}")
         return
 
-    max_workers = _determine_max_concurrency(args, resolved, logger)
+    max_workers, gpu_ids = _determine_max_concurrency(args, resolved, logger)
     failures = 0
 
     if max_workers == 1:
-        for file_path, recording, well in tasks:
+        for idx, (file_path, recording, well) in enumerate(tasks):
             logger.info(f"Processing : {file_path} recording : {recording} well_id : {well}")
-            ok = launch_sorting_subprocess(str(file_path), recording, well, extra_arg_string)
+            assigned_gpu = gpu_ids[idx % len(gpu_ids)] if gpu_ids else None
+            ok = launch_sorting_subprocess(str(file_path), recording, well, extra_arg_string, assigned_gpu)
             if not ok:
                 failures += 1
     else:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(
-                    launch_sorting_subprocess, str(file_path), recording, well, extra_arg_string
+                    launch_sorting_subprocess,
+                    str(file_path),
+                    recording,
+                    well,
+                    extra_arg_string,
+                    (gpu_ids[idx % len(gpu_ids)] if gpu_ids else None),
                 ): (file_path, recording, well)
-                for file_path, recording, well in tasks
+                for idx, (file_path, recording, well) in enumerate(tasks)
             }
             for future in as_completed(futures):
                 file_path, recording, well = futures[future]
@@ -280,6 +342,9 @@ def main():
         help="Enable verbose logging")
     ctrl_group.add_argument("--max-concurrent-wells", type=int, default=None,
         help="Driver worker-pool width for well subprocesses. Auto-profile: sorting=>1, --skip-spikesorting=>default 2")
+    ctrl_group.add_argument("--gpu-ids", type=str, default=None,
+        help="Comma-separated GPU IDs for spike sorting workers (e.g., '0,1,2,3'). "
+             "When provided, sorting concurrency defaults to number of GPUs.")
     ctrl_group.add_argument("--n-jobs", type=int, default=None,
         help="Per-well CPU worker count passed to SpikeInterface-heavy steps")
     ctrl_group.add_argument("--chunk-duration", type=str, default=None,

@@ -63,6 +63,8 @@ DEFAULTS = {
     "runtime": {
         # Driver-level max worker pool size for concurrent wells.
         "max_concurrent_wells": None,
+        # Driver-level GPU IDs for sorting worker assignment.
+        "gpu_ids": None,
         # Per-well CPU workers for SpikeInterface-heavy operations.
         "n_jobs": None,
         # Per-well SpikeInterface chunk duration (e.g., "1s").
@@ -166,6 +168,7 @@ def resolve_args(args, config):
         "quality_thresholds":   _resolve_thresholds(args, config),
         # runtime controls
         "max_concurrent_wells": _resolve(getattr(args, "max_concurrent_wells", None), _cfg(config, "runtime", "max_concurrent_wells"), DEFAULTS["runtime"]["max_concurrent_wells"]),
+        "gpu_ids":              _resolve(getattr(args, "gpu_ids", None),              _cfg(config, "runtime", "gpu_ids"),              DEFAULTS["runtime"]["gpu_ids"]),
         "n_jobs":               _resolve(getattr(args, "n_jobs", None),               _cfg(config, "runtime", "n_jobs"),               DEFAULTS["runtime"]["n_jobs"]),
         "chunk_duration":       _resolve(getattr(args, "chunk_duration", None),       _cfg(config, "runtime", "chunk_duration"),       DEFAULTS["runtime"]["chunk_duration"]),
     }
