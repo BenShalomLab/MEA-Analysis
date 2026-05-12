@@ -65,6 +65,12 @@ COMPLETE_STAGES = {
     "REPORTS_COMPLETE",
 }
 
+EXPECTED_CHECKPOINT_COLUMNS = [
+    "file", "path", "project", "date", "chip", "run", "well", "rec",
+    "stage", "stage_num", "failed", "failed_stage", "error", "num_units",
+    "analyzer_folder", "last_updated", "_raw",
+]
+
 # ============================================================
 # SAFE ACCESS
 # ============================================================
@@ -82,7 +88,7 @@ def safe_get(d, key, default=None):
 def parse_args():
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
-        "checkpoint_dir_positional",
+        "checkpoint_directory",
         nargs="?",
         default=None,
     )
@@ -103,11 +109,6 @@ def parse_args():
 def load_checkpoints_dataframe(checkpoint_dir: str):
     rows = []
     errors = []
-    expected_cols = [
-        "file", "path", "project", "date", "chip", "run", "well", "rec",
-        "stage", "stage_num", "failed", "failed_stage", "error", "num_units",
-        "analyzer_folder", "last_updated", "_raw",
-    ]
 
     checkpoint_path = Path(checkpoint_dir)
     if not checkpoint_path.exists():
@@ -137,14 +138,14 @@ def load_checkpoints_dataframe(checkpoint_dir: str):
         rec = safe_get(raw, "rec_name")
         try:
             schema_version = int(safe_get(raw, "checkpoint_schema_version", 1))
-        except Exception:
+        except (ValueError, TypeError):
             schema_version = 1
         stage_map = LEGACY_STAGE_MAP if schema_version < 2 else STAGE_MAP
 
         stage_num = safe_get(raw, "stage")
         try:
             stage_num = int(stage_num)
-        except Exception:
+        except (ValueError, TypeError):
             pass
         stage_name = stage_map.get(stage_num, stage_num if isinstance(stage_num, str) else "UNKNOWN")
 
@@ -158,7 +159,7 @@ def load_checkpoints_dataframe(checkpoint_dir: str):
         if failed_stage is not None:
             try:
                 failed_stage = int(failed_stage)
-            except Exception:
+            except (ValueError, TypeError):
                 pass
             failed_stage_name = stage_map.get(failed_stage, failed_stage)
             stage_name = f"FAILED_AT_{failed_stage_name}"
@@ -196,7 +197,7 @@ def load_checkpoints_dataframe(checkpoint_dir: str):
             "_raw": raw,
         })
 
-    df = pd.DataFrame(rows, columns=expected_cols)
+    df = pd.DataFrame(rows, columns=EXPECTED_CHECKPOINT_COLUMNS)
 
     # -------------------------
     # Normalize missing fields
@@ -352,5 +353,5 @@ def run_app(checkpoint_dir):
 
 if __name__ == "__main__":
     args = parse_args()
-    checkpoint_dir = args.checkpoint_dir or args.checkpoint_dir_positional or "./AnalyzedData/checkpoints"
+    checkpoint_dir = args.checkpoint_dir or args.checkpoint_directory or "./AnalyzedData/checkpoints"
     run_app(checkpoint_dir)
