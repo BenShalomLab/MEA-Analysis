@@ -71,6 +71,7 @@ EXPECTED_CHECKPOINT_COLUMNS = [
     "analyzer_folder", "last_updated", "_raw",
 ]
 DELETE_CONFIRM_KEY = "delete_checkpoint_confirm"
+BULK_DELETE_CONFIRM_KEY = "bulk_delete_checkpoint_confirm"
 
 # ============================================================
 # SAFE ACCESS
@@ -390,6 +391,60 @@ def run_app(checkpoint_dir):
                     st.rerun()
             except Exception as exc:
                 st.error(f"Failed to delete checkpoint: {exc}")
+
+    st.divider()
+    st.subheader("Bulk delete filtered checkpoints")
+    filtered_paths = df["path"].dropna().astype(str).unique().tolist()
+    st.caption(f"Filtered checkpoints selected for bulk delete: {len(filtered_paths)}")
+    bulk_delete_confirmed = st.checkbox(
+        "I understand this action permanently deletes all filtered checkpoint JSON files and cannot be undone.",
+        key=BULK_DELETE_CONFIRM_KEY,
+    )
+    if st.button(
+        f"Delete all filtered checkpoints ({len(filtered_paths)})",
+        type="secondary",
+        disabled=(not bulk_delete_confirmed) or (len(filtered_paths) == 0),
+    ):
+        deleted_count = 0
+        missing_count = 0
+        skipped_count = 0
+        error_messages = []
+        for path_str in filtered_paths:
+            try:
+                target_path = Path(path_str).resolve()
+                try:
+                    target_path.relative_to(checkpoint_root)
+                except ValueError:
+                    skipped_count += 1
+                    continue
+                if not target_path.exists():
+                    missing_count += 1
+                    continue
+                if not target_path.is_file():
+                    skipped_count += 1
+                    continue
+                try:
+                    target_path.unlink()
+                    deleted_count += 1
+                except FileNotFoundError:
+                    missing_count += 1
+            except Exception as exc:
+                error_messages.append(f"{path_str}: {exc}")
+
+        st.cache_data.clear()
+        st.session_state[BULK_DELETE_CONFIRM_KEY] = False
+        st.session_state[DELETE_CONFIRM_KEY] = False
+        if deleted_count:
+            st.success(f"Deleted {deleted_count} checkpoint file(s).")
+        if missing_count:
+            st.warning(f"Skipped {missing_count} missing checkpoint file(s).")
+        if skipped_count:
+            st.warning(f"Skipped {skipped_count} path(s) outside checkpoint root or not regular files.")
+        if error_messages:
+            st.error("Some checkpoint files failed during deletion:")
+            for msg in error_messages[:20]:
+                st.write(msg)
+        st.rerun()
 
     # -------------------------
     # Parse errors
