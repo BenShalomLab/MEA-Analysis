@@ -58,6 +58,11 @@ DEFAULTS = {
             "amplitude_median":     -20,
             "amplitude_cv_median":  0.5,
         }
+    },
+    "runtime": {
+        "max_concurrent_wells": None,
+        "n_jobs": None,
+        "chunk_duration": None,
     }
 }
 
@@ -154,6 +159,10 @@ def resolve_args(args, config):
         # curation
         "no_curation":          _resolve(_bool(args, "no_curation"),         _cfg(config, "curation", "no_curation"),     DEFAULTS["curation"]["no_curation"]),
         "quality_thresholds":   _resolve_thresholds(args, config),
+        # runtime controls
+        "max_concurrent_wells": _resolve(getattr(args, "max_concurrent_wells", None), _cfg(config, "runtime", "max_concurrent_wells"), DEFAULTS["runtime"]["max_concurrent_wells"]),
+        "n_jobs":               _resolve(getattr(args, "n_jobs", None),               _cfg(config, "runtime", "n_jobs"),               DEFAULTS["runtime"]["n_jobs"]),
+        "chunk_duration":       _resolve(getattr(args, "chunk_duration", None),       _cfg(config, "runtime", "chunk_duration"),       DEFAULTS["runtime"]["chunk_duration"]),
     }
 
 
@@ -188,6 +197,8 @@ def build_extra_args(resolved, cli_args):
 
     # curation
     if resolved["no_curation"]:     extra.append("--no-curation")
+    if resolved["n_jobs"] is not None: extra.append(f"--n-jobs {int(resolved['n_jobs'])}")
+    if resolved["chunk_duration"]:     extra.append(f"--chunk-duration {resolved['chunk_duration']}")
 
     # CLI-only flags - passed through directly, never in config
     if getattr(cli_args, "force_restart", False):     extra.append("--force-restart")
