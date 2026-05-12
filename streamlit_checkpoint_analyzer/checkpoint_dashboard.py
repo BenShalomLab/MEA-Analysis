@@ -31,6 +31,20 @@ STAGE_MAP = {
     2: "PREPROCESSING_COMPLETE",
     3: "SORTING",
     4: "SORTING_COMPLETE",
+    5: "MERGE",
+    6: "MERGE_COMPLETE",
+    7: "ANALYZER",
+    8: "ANALYZER_COMPLETE",
+    9: "REPORTS",
+    10: "REPORTS_COMPLETE",
+}
+
+LEGACY_STAGE_MAP = {
+    0: "NOT_STARTED",
+    1: "PREPROCESSING",
+    2: "PREPROCESSING_COMPLETE",
+    3: "SORTING",
+    4: "SORTING_COMPLETE",
     5: "ANALYZER",
     6: "ANALYZER_COMPLETE",
     7: "REPORTS",
@@ -68,6 +82,11 @@ def safe_get(d, key, default=None):
 def parse_args():
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
+        "checkpoint_dir_positional",
+        nargs="?",
+        default=None,
+    )
+    parser.add_argument(
         "--checkpoint-dir",
         type=str,
         required=False,
@@ -84,12 +103,23 @@ def parse_args():
 def load_checkpoints_dataframe(checkpoint_dir: str):
     rows = []
     errors = []
+    expected_cols = [
+        "file", "path", "project", "date", "chip", "run", "well", "rec",
+        "stage", "stage_num", "failed", "failed_stage", "error", "num_units",
+        "analyzer_folder", "last_updated", "_raw",
+    ]
 
     checkpoint_path = Path(checkpoint_dir)
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint dir does not exist: {checkpoint_path}")
 
-    for f in sorted(checkpoint_path.glob("*.json")):
+    checkpoint_files = sorted(checkpoint_path.glob("*.json"))
+    if not checkpoint_files:
+        checkpoint_files = sorted(checkpoint_path.rglob("*checkpoint*.json"))
+    if not checkpoint_files:
+        checkpoint_files = sorted(checkpoint_path.rglob("*.json"))
+
+    for f in checkpoint_files:
         try:
             raw = json.loads(f.read_text())
         except Exception as e:
@@ -105,9 +135,18 @@ def load_checkpoints_dataframe(checkpoint_dir: str):
         run = safe_get(raw, "run_id")
         well = safe_get(raw, "well_id") or safe_get(raw, "well")
         rec = safe_get(raw, "rec_name")
+        try:
+            schema_version = int(safe_get(raw, "checkpoint_schema_version", 1))
+        except Exception:
+            schema_version = 1
+        stage_map = LEGACY_STAGE_MAP if schema_version < 2 else STAGE_MAP
 
         stage_num = safe_get(raw, "stage")
-        stage_name = STAGE_MAP.get(stage_num, "UNKNOWN")
+        try:
+            stage_num = int(stage_num)
+        except Exception:
+            pass
+        stage_name = stage_map.get(stage_num, stage_num if isinstance(stage_num, str) else "UNKNOWN")
 
         failed = (
             bool(safe_get(raw, "failed", False))
@@ -117,7 +156,11 @@ def load_checkpoints_dataframe(checkpoint_dir: str):
 
         failed_stage = safe_get(raw, "failed_stage")
         if failed_stage is not None:
-            failed_stage_name = STAGE_MAP.get(failed_stage, failed_stage)
+            try:
+                failed_stage = int(failed_stage)
+            except Exception:
+                pass
+            failed_stage_name = stage_map.get(failed_stage, failed_stage)
             stage_name = f"FAILED_AT_{failed_stage_name}"
 
         num_units = (
@@ -153,7 +196,7 @@ def load_checkpoints_dataframe(checkpoint_dir: str):
             "_raw": raw,
         })
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows, columns=expected_cols)
 
     # -------------------------
     # Normalize missing fields
@@ -309,5 +352,5 @@ def run_app(checkpoint_dir):
 
 if __name__ == "__main__":
     args = parse_args()
-    checkpoint_dir = args.checkpoint_dir or "./AnalyzedData/checkpoints"
+    checkpoint_dir = args.checkpoint_dir or args.checkpoint_dir_positional or "./AnalyzedData/checkpoints"
     run_app(checkpoint_dir)
