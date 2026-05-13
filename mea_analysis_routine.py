@@ -1704,9 +1704,8 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
             raster_sort=options.raster_sort,
             fixed_y=bool(options.fixed_y),
         )
-        current_stage = ProcessingStage(pipeline.state['stage'])
         pipeline._save_checkpoint(
-            current_stage,
+            ProcessingStage.REPORTS_COMPLETE,
             note="Burst Re-analysis Performed",
             last_updated=str(datetime.now()),
         )
