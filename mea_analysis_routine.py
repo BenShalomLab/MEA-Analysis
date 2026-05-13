@@ -497,7 +497,7 @@ class MEAPipeline:
             "used_spike_sorting": bool(used_spike_sorting),
             "processing_mode": ("spike_sorting" if bool(used_spike_sorting) else "spike_detection_only"),
             "reanalyze_bursts": bool(reanalyze_bursts),
-            "extract_rawsortedspikes_requested": bool(extract_rawsortedspikes),
+            "extract_rawsortedspikes": bool(extract_rawsortedspikes),
             "last_updated": str(datetime.now()),
         }
         info_file = self.output_dir / "processing_info.json"
@@ -546,9 +546,10 @@ class MEAPipeline:
                 self.logger.warning("Skipping unit %s in raw extraction: invalid template shape %s.", unit_id, template.shape)
                 continue
 
-            primary_channel_idx = int(np.argmin(np.min(template, axis=0)))
-            primary_channel_id = analyzer_channel_ids[primary_channel_idx]
-            template_primary = np.asarray(template[:, primary_channel_idx], dtype=np.float32)
+            channel_min_peaks = np.min(template, axis=0)
+            extremum_channel_idx = int(np.argmin(channel_min_peaks))
+            extremum_channel_id = analyzer_channel_ids[extremum_channel_idx]
+            template_extremum = np.asarray(template[:, extremum_channel_idx], dtype=np.float32)
 
             spike_train = np.asarray(self.sorting.get_unit_spike_train(unit_id), dtype=np.int64)
             spike_train_limited = spike_train[: int(max_spikes_per_unit)]
@@ -563,7 +564,7 @@ class MEAPipeline:
                     raw_recording.get_traces(
                         start_frame=start,
                         end_frame=end,
-                        channel_ids=[primary_channel_id],
+                        channel_ids=[extremum_channel_id],
                     )
                 ).reshape(-1)
                 if snippet.shape[0] != window_samples:
@@ -571,15 +572,15 @@ class MEAPipeline:
                 snippets.append(np.asarray(snippet, dtype=np.float32))
 
             if snippets:
-                mean_waveform = np.mean(np.stack(snippets, axis=0), axis=0).astype(np.float32)
+                mean_waveform = np.mean(snippets, axis=0).astype(np.float32)
             else:
                 mean_waveform = np.full(window_samples, np.nan, dtype=np.float32)
 
             extracted_units[str(unit_id)] = {
                 "unit_id": int(unit_id) if isinstance(unit_id, np.integer) else unit_id,
-                "primary_channel": int(primary_channel_id) if isinstance(primary_channel_id, np.integer) else primary_channel_id,
+                "primary_channel": int(extremum_channel_id) if isinstance(extremum_channel_id, np.integer) else extremum_channel_id,
                 "spike_times": (spike_train.astype(np.float64) / fs),
-                "template": template_primary,
+                "template": template_extremum,
                 "mean_waveform": mean_waveform,
                 "n_spikes_used_for_mean_waveform": int(len(snippets)),
                 "mean_waveform_window_samples": int(window_samples),
@@ -1687,8 +1688,9 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
     )
 
     _apply_resume_from_stage(pipeline, options.resume_from)
+    uses_spike_sorting = not bool(options.skip_spikesorting)
     pipeline._write_processing_info(
-        used_spike_sorting=(not bool(options.skip_spikesorting)),
+        used_spike_sorting=uses_spike_sorting,
         reanalyze_bursts=bool(options.reanalyze_bursts),
         extract_rawsortedspikes=bool(options.extract_rawsortedspikes),
     )
