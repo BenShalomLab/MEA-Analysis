@@ -272,20 +272,7 @@ def run_app(checkpoint_dir):
     checkpoint_root = Path(checkpoint_dir).resolve()
 
     df, errors = load_checkpoints_dataframe(checkpoint_dir)
-
-    # -------------------------
-    # Summary tiles
-    # -------------------------
-    total = len(df)
-    completed = (df["stage"] == "REPORTS_COMPLETE").sum()
-    failed = df["failed"].sum()
-    in_progress = df["stage"].isin(IN_PROGRESS_STAGES).sum()
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total", total)
-    c2.metric("Completed", completed)
-    c3.metric("In progress", in_progress)
-    c4.metric("Failed", failed)
+    filtered_df = df.copy()
 
     # -------------------------
     # Filters
@@ -293,15 +280,29 @@ def run_app(checkpoint_dir):
     st.sidebar.header("Filters")
 
     for col in ["project", "chip", "run", "well", "stage"]:
-        if col not in df.columns:
+        if col not in filtered_df.columns:
             continue
-        options = sorted(df[col].dropna().astype(str).unique())
+        options = sorted(filtered_df[col].dropna().astype(str).unique())
         sel = st.sidebar.multiselect(col, options)
         if sel:
-            df = df[df[col].isin(sel)]
+            filtered_df = filtered_df[filtered_df[col].isin(sel)]
 
     if st.sidebar.checkbox("Failures only"):
-        df = df[df["failed"]]
+        filtered_df = filtered_df[filtered_df["failed"]]
+
+    # -------------------------
+    # Summary tiles
+    # -------------------------
+    total = len(filtered_df)
+    completed = (filtered_df["stage"] == "REPORTS_COMPLETE").sum()
+    failed = filtered_df["failed"].sum()
+    in_progress = filtered_df["stage"].isin(IN_PROGRESS_STAGES).sum()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total", total)
+    c2.metric("Completed", completed)
+    c3.metric("In progress", in_progress)
+    c4.metric("Failed", failed)
 
     # -------------------------
     # Table
@@ -314,7 +315,7 @@ def run_app(checkpoint_dir):
         html.append(f"<th align='left' style='border-bottom:1px solid #ddd'>{c}</th>")
     html.append("</tr>")
 
-    for _, r in df.iterrows():
+    for _, r in filtered_df.iterrows():
         ts = r["last_updated"]
         ts_str = ts.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(ts) else "—"
 
@@ -339,11 +340,11 @@ def run_app(checkpoint_dir):
     # -------------------------
     st.subheader("Inspect checkpoint")
 
-    if len(df) == 0:
+    if len(filtered_df) == 0:
         st.info("No checkpoints to inspect.")
         return
 
-    checkpoint_paths = df["path"].dropna().tolist()
+    checkpoint_paths = filtered_df["path"].dropna().tolist()
     if not checkpoint_paths:
         st.info("No checkpoint files with valid paths to inspect.")
         return
@@ -353,7 +354,7 @@ def run_app(checkpoint_dir):
         checkpoint_paths,
         format_func=format_checkpoint_label,
     )
-    row = df[df["path"] == sel_path].iloc[0]
+    row = filtered_df[filtered_df["path"] == sel_path].iloc[0]
 
     if row["analyzer_folder"] not in (None, "—"):
         st.text_input("Analyzer / Output folder", row["analyzer_folder"])
@@ -395,7 +396,7 @@ def run_app(checkpoint_dir):
 
     st.divider()
     st.subheader("Bulk delete filtered checkpoints")
-    filtered_paths = df["path"].dropna().astype(str).unique().tolist()
+    filtered_paths = filtered_df["path"].dropna().astype(str).unique().tolist()
     st.caption(f"Filtered checkpoints selected for bulk delete: {len(filtered_paths)}")
     bulk_delete_confirmed = st.checkbox(
         "I understand this action permanently deletes all filtered checkpoint JSON files and cannot be undone.",
