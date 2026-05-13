@@ -452,6 +452,145 @@ class MEAPipeline:
             return si.load_extractor(self.file_path)
         raise ValueError(f"Unknown format: {fpath}")
 
+    def _load_existing_sorting(self):
+        if self.sorting is not None:
+            return True
+
+        sorter_folder = self.output_dir / "sorter_output"
+        if not sorter_folder.exists():
+            self.logger.warning("Cannot load existing sorting: missing %s", sorter_folder)
+            return False
+
+        try:
+            self.sorting = si.read_sorter_folder(sorter_folder)
+        except Exception:
+            try:
+                self.sorting = si.read_kilosort(sorter_folder)
+            except Exception as e:
+                self.logger.warning("Failed loading existing sorting from %s: %s", sorter_folder, e)
+                return False
+
+        try:
+            self.sorting = self.sorting.remove_empty_units()
+        except Exception:
+            pass
+        return self.sorting is not None
+
+    def _load_existing_analyzer(self):
+        if self.analyzer is not None:
+            return True
+
+        analyzer_folder = self.output_dir / "analyzer_output"
+        if not analyzer_folder.exists():
+            self.logger.warning("Cannot load existing analyzer: missing %s", analyzer_folder)
+            return False
+
+        try:
+            self.analyzer = si.load_sorting_analyzer(analyzer_folder)
+            return True
+        except Exception as e:
+            self.logger.warning("Failed loading existing analyzer from %s: %s", analyzer_folder, e)
+            return False
+
+    def _write_processing_info(self, *, used_spike_sorting, reanalyze_bursts, extract_rawsortedspikes):
+        payload = {
+            "used_spike_sorting": bool(used_spike_sorting),
+            "processing_mode": ("spike_sorting" if bool(used_spike_sorting) else "spike_detection_only"),
+            "reanalyze_bursts": bool(reanalyze_bursts),
+            "extract_rawsortedspikes_requested": bool(extract_rawsortedspikes),
+            "last_updated": str(datetime.now()),
+        }
+        info_file = self.output_dir / "processing_info.json"
+        with open(info_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        self.state.update(payload)
+
+    def _extract_rawsortedspikes(self, *, max_spikes_per_unit=200, window_ms=2.5):
+        if not self._load_existing_sorting():
+            self.logger.warning("Skipping raw sorted spike extraction: sorting is unavailable.")
+            return None
+        if not self._load_existing_analyzer():
+            self.logger.warning("Skipping raw sorted spike extraction: analyzer is unavailable.")
+            return None
+
+        templates_ext = self.analyzer.get_extension("templates")
+        if templates_ext is None:
+            self.analyzer.compute("templates", verbose=self.verbose)
+            templates_ext = self.analyzer.get_extension("templates")
+        if templates_ext is None:
+            self.logger.warning("Skipping raw sorted spike extraction: templates extension is unavailable.")
+            return None
+
+        raw_recording = self._load_recording_file()
+        fs = float(raw_recording.get_sampling_frequency())
+        n_frames = int(raw_recording.get_num_frames())
+        window_samples = max(1, int(round((float(window_ms) / 1000.0) * fs)))
+        if window_samples % 2 == 0:
+            window_samples += 1
+        half_window = window_samples // 2
+
+        analyzer_channel_ids = np.asarray(getattr(self.analyzer, "channel_ids", raw_recording.get_channel_ids()))
+        template_data = templates_ext.get_data()
+        template_unit_ids = list(self.analyzer.unit_ids)
+        template_unit_idx = {str(uid): i for i, uid in enumerate(template_unit_ids)}
+
+        extracted_units = {}
+        for unit_id in self.sorting.get_unit_ids():
+            template_idx = template_unit_idx.get(str(unit_id))
+            if template_idx is None:
+                self.logger.warning("Skipping unit %s in raw extraction: missing template.", unit_id)
+                continue
+
+            template = np.asarray(template_data[template_idx])
+            if template.ndim != 2 or template.shape[1] == 0:
+                self.logger.warning("Skipping unit %s in raw extraction: invalid template shape %s.", unit_id, template.shape)
+                continue
+
+            primary_channel_idx = int(np.argmin(np.min(template, axis=0)))
+            primary_channel_id = analyzer_channel_ids[primary_channel_idx]
+            template_primary = np.asarray(template[:, primary_channel_idx], dtype=np.float32)
+
+            spike_train = np.asarray(self.sorting.get_unit_spike_train(unit_id), dtype=np.int64)
+            spike_train_limited = spike_train[: int(max_spikes_per_unit)]
+
+            snippets = []
+            for center in spike_train_limited:
+                start = int(center) - half_window
+                end = start + window_samples
+                if start < 0 or end > n_frames:
+                    continue
+                snippet = np.asarray(
+                    raw_recording.get_traces(
+                        start_frame=start,
+                        end_frame=end,
+                        channel_ids=[primary_channel_id],
+                    )
+                ).reshape(-1)
+                if snippet.shape[0] != window_samples:
+                    continue
+                snippets.append(np.asarray(snippet, dtype=np.float32))
+
+            if snippets:
+                mean_waveform = np.mean(np.stack(snippets, axis=0), axis=0).astype(np.float32)
+            else:
+                mean_waveform = np.full(window_samples, np.nan, dtype=np.float32)
+
+            extracted_units[str(unit_id)] = {
+                "unit_id": int(unit_id) if isinstance(unit_id, np.integer) else unit_id,
+                "primary_channel": int(primary_channel_id) if isinstance(primary_channel_id, np.integer) else primary_channel_id,
+                "spike_times": (spike_train.astype(np.float64) / fs),
+                "template": template_primary,
+                "mean_waveform": mean_waveform,
+                "n_spikes_used_for_mean_waveform": int(len(snippets)),
+                "mean_waveform_window_samples": int(window_samples),
+            }
+
+        output_path = self.output_dir / "raw_sorted_spikes.npy"
+        np.save(output_path, extracted_units, allow_pickle=True)
+        self.state["raw_sorted_spikes_file"] = str(output_path)
+        self.logger.info("Saved raw sorted spike summary with mean waveforms: %s", output_path)
+        return output_path
+
     # --- Phase 1: Preprocessing ---
     def run_preprocessing(self):
         binary_folder = self.output_dir / "binary"
@@ -1133,8 +1272,26 @@ class MEAPipeline:
 
             np.save(self.output_dir / "spike_times.npy", spike_times)
         else:
-            self.logger.error("No spike times found for burst analysis.")
-            return
+            spike_times_file = self.output_dir / "spike_times.npy"
+            if spike_times_file.exists():
+                try:
+                    loaded = np.load(spike_times_file, allow_pickle=True).item()
+                    if isinstance(loaded, dict):
+                        if ids_list is not None:
+                            id_set = {str(uid) for uid in ids_list}
+                            spike_times = {
+                                uid: st for uid, st in loaded.items()
+                                if str(uid) in id_set
+                            }
+                        else:
+                            spike_times = loaded
+                        self.logger.info("Loaded existing spike times from %s", spike_times_file)
+                except Exception as e:
+                    self.logger.error("Failed loading spike times from %s: %s", spike_times_file, e)
+
+            if not spike_times:
+                self.logger.error("No spike times found for burst analysis.")
+                return
 
         if not spike_times:
             self.logger.warning("Spike times dictionary is empty. Skipping burst analysis.")
@@ -1407,6 +1564,7 @@ class MEARunOptions:
     raster_sort: str | None = None
     fixed_y: bool = False
     auto_merge_template_diff_thresh: str = "0.05,0.15,0.25"
+    extract_rawsortedspikes: bool = False
 
 
 @dataclass(frozen=True)
@@ -1529,8 +1687,15 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
     )
 
     _apply_resume_from_stage(pipeline, options.resume_from)
+    pipeline._write_processing_info(
+        used_spike_sorting=(not bool(options.skip_spikesorting)),
+        reanalyze_bursts=bool(options.reanalyze_bursts),
+        extract_rawsortedspikes=bool(options.extract_rawsortedspikes),
+    )
 
     if bool(options.reanalyze_bursts):
+        if bool(options.extract_rawsortedspikes):
+            pipeline._extract_rawsortedspikes()
         pipeline._run_burst_analysis(
             plot_mode=options.plot_mode,
             plot_debug=bool(options.plot_debug),
@@ -1556,6 +1721,8 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
 
         if bool(options.run_analyzer):
             pipeline.run_analyzer()
+            if bool(options.extract_rawsortedspikes):
+                pipeline._extract_rawsortedspikes()
 
         if bool(options.run_reports):
             if (not bool(options.run_analyzer)) and pipeline.analyzer is None:
@@ -1573,6 +1740,10 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
                 fixed_y=bool(options.fixed_y),
             )
     else:
+        if bool(options.extract_rawsortedspikes):
+            pipeline.logger.warning(
+                "--extract-rawsortedspikes requested but --skip-spikesorting is enabled; skipping extraction."
+            )
         ids = pipeline._spike_detection_only()
         pipeline._run_burst_analysis(
             ids,
@@ -1652,6 +1823,8 @@ def main():
         help="Resume by rewinding checkpoint to just before this stage and rerunning from there")
     ctrl_group.add_argument("--reanalyze-bursts", action="store_true",
         help="Re-run burst analysis on existing spike times only")
+    ctrl_group.add_argument("--extract-rawsortedspikes", action="store_true",
+        help="Extract per-unit raw mean waveforms from sorted spikes and save raw_sorted_spikes.npy")
     ctrl_group.add_argument("--debug", action="store_true",
         help="Enable verbose logging")
 
@@ -1832,6 +2005,7 @@ def main():
                 raster_sort=raster_sort,
                 fixed_y=bool(fixed_y),
                 auto_merge_template_diff_thresh=str(args.auto_merge_template_diff_thresh),
+                extract_rawsortedspikes=bool(args.extract_rawsortedspikes),
             )
         )
 

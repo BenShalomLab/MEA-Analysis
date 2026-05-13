@@ -133,6 +133,8 @@ def main():
         help="Docker image name for containerized sorting")
     sort_group.add_argument("--skip-spikesorting", action="store_true",
         help="Run spike detection only, skip full sorting")
+    sort_group.add_argument("--extract-rawsortedspikes", action="store_true",
+        help="Extract per-unit raw mean waveforms from sorted spikes and save raw_sorted_spikes.npy")
     sort_group.add_argument("--unitmatch-merge-units", action="store_true",
         help="Run UnitMatch dry-run/merge phase (optional, passed to each well)")
     sort_group.add_argument("--unitmatch-dry-run", action="store_true",
