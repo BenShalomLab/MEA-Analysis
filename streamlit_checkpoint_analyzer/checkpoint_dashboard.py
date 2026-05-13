@@ -436,7 +436,6 @@ def run_app(checkpoint_dir):
 
         st.cache_data.clear()
         st.session_state[BULK_DELETE_CONFIRM_KEY] = False
-        st.session_state[DELETE_CONFIRM_KEY] = False
         if deleted_count:
             st.success(f"Deleted {deleted_count} checkpoint file(s).")
         if missing_count:
@@ -449,6 +448,8 @@ def run_app(checkpoint_dir):
             st.error("Some checkpoint files failed during deletion:")
             for msg in error_messages[:MAX_DISPLAYED_ERRORS]:
                 st.write(msg)
+            if len(error_messages) > MAX_DISPLAYED_ERRORS:
+                st.write(f"... and {len(error_messages) - MAX_DISPLAYED_ERRORS} more errors")
         st.rerun()
 
     # -------------------------
