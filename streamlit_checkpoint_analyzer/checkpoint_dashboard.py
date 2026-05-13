@@ -272,7 +272,7 @@ def run_app(checkpoint_dir):
     checkpoint_root = Path(checkpoint_dir).resolve()
 
     df, errors = load_checkpoints_dataframe(checkpoint_dir)
-    filtered_df = df.copy()
+    filtered_df = df
 
     # -------------------------
     # Filters
