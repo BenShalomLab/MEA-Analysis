@@ -31,6 +31,20 @@ STAGE_MAP = {
     2: "PREPROCESSING_COMPLETE",
     3: "SORTING",
     4: "SORTING_COMPLETE",
+    5: "MERGE",
+    6: "MERGE_COMPLETE",
+    7: "ANALYZER",
+    8: "ANALYZER_COMPLETE",
+    9: "REPORTS",
+    10: "REPORTS_COMPLETE",
+}
+
+LEGACY_STAGE_MAP = {
+    0: "NOT_STARTED",
+    1: "PREPROCESSING",
+    2: "PREPROCESSING_COMPLETE",
+    3: "SORTING",
+    4: "SORTING_COMPLETE",
     5: "ANALYZER",
     6: "ANALYZER_COMPLETE",
     7: "REPORTS",
@@ -51,6 +65,15 @@ COMPLETE_STAGES = {
     "REPORTS_COMPLETE",
 }
 
+EXPECTED_CHECKPOINT_COLUMNS = [
+    "file", "path", "project", "date", "chip", "run", "well", "rec",
+    "stage", "stage_num", "failed", "failed_stage", "error", "num_units",
+    "analyzer_folder", "last_updated", "_raw",
+]
+DELETE_CONFIRM_KEY = "delete_checkpoint_confirm"
+BULK_DELETE_CONFIRM_KEY = "bulk_delete_checkpoint_confirm"
+MAX_DISPLAYED_ERRORS = 20
+
 # ============================================================
 # SAFE ACCESS
 # ============================================================
@@ -67,6 +90,11 @@ def safe_get(d, key, default=None):
 
 def parse_args():
     parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        "checkpoint_directory",
+        nargs="?",
+        default=None,
+    )
     parser.add_argument(
         "--checkpoint-dir",
         type=str,
@@ -89,7 +117,13 @@ def load_checkpoints_dataframe(checkpoint_dir: str):
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint dir does not exist: {checkpoint_path}")
 
-    for f in sorted(checkpoint_path.glob("*.json")):
+    checkpoint_files = sorted(checkpoint_path.glob("*.json"))
+    if not checkpoint_files:
+        checkpoint_files = sorted(checkpoint_path.rglob("*checkpoint*.json"))
+    if not checkpoint_files:
+        checkpoint_files = sorted(checkpoint_path.rglob("*.json"))
+
+    for f in checkpoint_files:
         try:
             raw = json.loads(f.read_text())
         except Exception as e:
@@ -105,9 +139,18 @@ def load_checkpoints_dataframe(checkpoint_dir: str):
         run = safe_get(raw, "run_id")
         well = safe_get(raw, "well_id") or safe_get(raw, "well")
         rec = safe_get(raw, "rec_name")
+        try:
+            schema_version = int(safe_get(raw, "checkpoint_schema_version", 1))
+        except (ValueError, TypeError):
+            schema_version = 1
+        stage_map = LEGACY_STAGE_MAP if schema_version < 2 else STAGE_MAP
 
         stage_num = safe_get(raw, "stage")
-        stage_name = STAGE_MAP.get(stage_num, "UNKNOWN")
+        try:
+            stage_num = int(stage_num)
+        except (ValueError, TypeError):
+            pass
+        stage_name = stage_map.get(stage_num, stage_num if isinstance(stage_num, str) else "UNKNOWN")
 
         failed = (
             bool(safe_get(raw, "failed", False))
@@ -117,7 +160,11 @@ def load_checkpoints_dataframe(checkpoint_dir: str):
 
         failed_stage = safe_get(raw, "failed_stage")
         if failed_stage is not None:
-            failed_stage_name = STAGE_MAP.get(failed_stage, failed_stage)
+            try:
+                failed_stage = int(failed_stage)
+            except (ValueError, TypeError):
+                pass
+            failed_stage_name = stage_map.get(failed_stage, failed_stage)
             stage_name = f"FAILED_AT_{failed_stage_name}"
 
         num_units = (
@@ -153,7 +200,7 @@ def load_checkpoints_dataframe(checkpoint_dir: str):
             "_raw": raw,
         })
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows, columns=EXPECTED_CHECKPOINT_COLUMNS)
 
     # -------------------------
     # Normalize missing fields
@@ -207,6 +254,14 @@ def stage_badge(stage):
 def badge(text, bg):
     return f"<span style='padding:3px 8px;border-radius:6px;background:{bg}'>{text}</span>"
 
+
+def format_checkpoint_label(path_value):
+    try:
+        p = Path(path_value)
+        return f"{p.name} — {path_value}"
+    except (TypeError, ValueError, OSError):
+        return str(path_value)
+
 # ============================================================
 # STREAMLIT APP
 # ============================================================
@@ -214,6 +269,7 @@ def badge(text, bg):
 def run_app(checkpoint_dir):
     st.set_page_config(layout="wide", page_title="MEA Checkpoint Dashboard")
     st.title("📊 MEA Pipeline Checkpoint Dashboard")
+    checkpoint_root = Path(checkpoint_dir).resolve()
 
     df, errors = load_checkpoints_dataframe(checkpoint_dir)
 
@@ -239,7 +295,7 @@ def run_app(checkpoint_dir):
     for col in ["project", "chip", "run", "well", "stage"]:
         if col not in df.columns:
             continue
-        options = sorted(df[col].dropna().unique())
+        options = sorted(df[col].dropna().astype(str).unique())
         sel = st.sidebar.multiselect(col, options)
         if sel:
             df = df[df[col].isin(sel)]
@@ -287,13 +343,114 @@ def run_app(checkpoint_dir):
         st.info("No checkpoints to inspect.")
         return
 
-    sel_file = st.selectbox("Select file", df["file"].tolist())
-    row = df[df["file"] == sel_file].iloc[0]
+    checkpoint_paths = df["path"].dropna().tolist()
+    if not checkpoint_paths:
+        st.info("No checkpoint files with valid paths to inspect.")
+        return
+
+    sel_path = st.selectbox(
+        "Select file",
+        checkpoint_paths,
+        format_func=format_checkpoint_label,
+    )
+    row = df[df["path"] == sel_path].iloc[0]
 
     if row["analyzer_folder"] not in (None, "—"):
         st.text_input("Analyzer / Output folder", row["analyzer_folder"])
 
     st.json(row["_raw"])
+
+    st.divider()
+    st.subheader("Delete checkpoint")
+    delete_confirmed = st.checkbox(
+        "I understand this action permanently deletes the selected checkpoint JSON file and cannot be undone.",
+        key=DELETE_CONFIRM_KEY,
+    )
+    if st.button("Delete selected checkpoint", type="secondary", disabled=not delete_confirmed):
+        target_path = Path(sel_path).resolve()
+        try:
+            target_path.relative_to(checkpoint_root)
+        except ValueError:
+            st.error(f"Refusing to delete file outside checkpoint root: {target_path}")
+        else:
+            try:
+                if not target_path.exists():
+                    st.warning(f"File does not exist: {target_path}")
+                elif not target_path.is_file():
+                    st.error(f"Path is not a file: {target_path}")
+                else:
+                    deleted = False
+                    try:
+                        target_path.unlink()
+                        deleted = True
+                    except FileNotFoundError:
+                        st.warning(f"File was already deleted: {target_path}")
+                    st.cache_data.clear()
+                    st.session_state[DELETE_CONFIRM_KEY] = False
+                    if deleted:
+                        st.success(f"Deleted checkpoint: {target_path}")
+                    st.rerun()
+            except Exception as exc:
+                st.error(f"Failed to delete checkpoint: {exc}")
+
+    st.divider()
+    st.subheader("Bulk delete filtered checkpoints")
+    filtered_paths = df["path"].dropna().astype(str).unique().tolist()
+    st.caption(f"Filtered checkpoints selected for bulk delete: {len(filtered_paths)}")
+    bulk_delete_confirmed = st.checkbox(
+        "I understand this action permanently deletes all filtered checkpoint JSON files and cannot be undone.",
+        key=BULK_DELETE_CONFIRM_KEY,
+    )
+    if st.button(
+        f"Delete all filtered checkpoints ({len(filtered_paths)})",
+        type="secondary",
+        disabled=(not bulk_delete_confirmed) or (len(filtered_paths) == 0),
+    ):
+        deleted_count = 0
+        missing_count = 0
+        skipped_outside_root_count = 0
+        skipped_non_file_count = 0
+        error_messages = []
+        for path_str in filtered_paths:
+            try:
+                target_path = Path(path_str).resolve()
+                try:
+                    target_path.relative_to(checkpoint_root)
+                except ValueError:
+                    skipped_outside_root_count += 1
+                    continue
+                if not target_path.exists():
+                    missing_count += 1
+                    continue
+                if not target_path.is_file():
+                    skipped_non_file_count += 1
+                    continue
+                try:
+                    target_path.unlink()
+                    deleted_count += 1
+                except FileNotFoundError:
+                    # The file can be deleted between exists() and unlink().
+                    missing_count += 1
+            except Exception as exc:
+                error_messages.append(f"Failed to process {path_str}: {exc}")
+
+        st.cache_data.clear()
+        st.session_state[BULK_DELETE_CONFIRM_KEY] = False
+        if deleted_count:
+            st.success(f"Deleted {deleted_count} checkpoint file(s).")
+        if missing_count:
+            st.warning(f"Skipped {missing_count} missing checkpoint file(s).")
+        if skipped_outside_root_count:
+            st.warning(f"Skipped {skipped_outside_root_count} path(s) outside checkpoint root.")
+        if skipped_non_file_count:
+            st.warning(f"Skipped {skipped_non_file_count} path(s) that are not regular files.")
+        if error_messages:
+            st.error("Some checkpoint files failed during deletion:")
+            for msg in error_messages[:MAX_DISPLAYED_ERRORS]:
+                st.write(msg)
+            if len(error_messages) > MAX_DISPLAYED_ERRORS:
+                st.write(f"... and {len(error_messages) - MAX_DISPLAYED_ERRORS} more errors")
+        st.rerun()
 
     # -------------------------
     # Parse errors
@@ -309,5 +466,5 @@ def run_app(checkpoint_dir):
 
 if __name__ == "__main__":
     args = parse_args()
-    checkpoint_dir = args.checkpoint_dir or "./AnalyzedData/checkpoints"
+    checkpoint_dir = args.checkpoint_dir or args.checkpoint_directory or "./AnalyzedData/checkpoints"
     run_app(checkpoint_dir)
