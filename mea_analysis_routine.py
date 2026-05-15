@@ -570,11 +570,11 @@ class MEAPipeline:
         extracted_units = {}
         for unit_id in unit_ids:
             template_idx = template_index_for_unit.get(str(unit_id))
-            if template_idx is None or int(template_idx) >= int(template_data.shape[0]):
+            if template_idx is None or template_idx >= template_data.shape[0]:
                 self.logger.warning("Skipping unit/template %s: missing template index.", unit_id)
                 continue
 
-            template = np.asarray(template_data[int(template_idx)])
+            template = np.asarray(template_data[template_idx])
             if template.ndim != 2 or template.shape[1] == 0:
                 self.logger.warning("Skipping unit/template %s: invalid template shape %s.", unit_id, template.shape)
                 continue
