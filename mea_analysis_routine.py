@@ -506,22 +506,60 @@ class MEAPipeline:
         self.state.update(payload)
 
     def _extract_rawsortedspikes(self, *, max_spikes_per_unit=200, window_ms=2.5):
-        if not self._load_existing_sorting():
-            self.logger.warning("Skipping raw sorted spike extraction: sorting is unavailable.")
-            return None
-        if not self._load_existing_analyzer():
-            self.logger.warning("Skipping raw sorted spike extraction: analyzer is unavailable.")
-            return None
+        analyzer_folder = self.output_dir / "analyzer_output"
+        phy_folder = self.output_dir / "phy_output"
 
-        templates_ext = self.analyzer.get_extension("templates")
-        if templates_ext is None:
-            self.analyzer.compute("templates", verbose=self.verbose)
+        unit_ids = None
+        template_data = None
+        channel_ids = None
+        get_spike_train = None
+        template_index_for_unit = None
+        source_name = None
+
+        if analyzer_folder.exists() and self._load_existing_analyzer():
             templates_ext = self.analyzer.get_extension("templates")
-        if templates_ext is None:
-            self.logger.warning("Skipping raw sorted spike extraction: templates extension is unavailable.")
+            if templates_ext is None:
+                self.analyzer.compute("templates", verbose=self.verbose)
+                templates_ext = self.analyzer.get_extension("templates")
+            if templates_ext is not None:
+                if not self._load_existing_sorting():
+                    self.logger.warning("Skipping raw mean template extraction: sorting is unavailable.")
+                    return None
+                template_data = np.asarray(templates_ext.get_data())
+                unit_ids = list(self.analyzer.unit_ids)
+                analyzer_channel_ids = getattr(self.analyzer, "channel_ids", None)
+                channel_ids = (np.asarray(analyzer_channel_ids) if analyzer_channel_ids is not None else None)
+                template_index_for_unit = {str(uid): i for i, uid in enumerate(unit_ids)}
+                get_spike_train = lambda uid: np.asarray(self.sorting.get_unit_spike_train(uid), dtype=np.int64)
+                source_name = "analyzer_output"
+
+        if template_data is None and phy_folder.exists():
+            templates_path = phy_folder / "templates.npy"
+            spike_templates_path = phy_folder / "spike_templates.npy"
+            spike_times_path = phy_folder / "spike_times.npy"
+            channel_map_path = phy_folder / "channel_map.npy"
+            if templates_path.exists() and spike_templates_path.exists() and spike_times_path.exists():
+                template_data = np.asarray(np.load(templates_path, allow_pickle=False))
+                spike_templates = np.asarray(np.load(spike_templates_path, allow_pickle=False)).reshape(-1)
+                spike_times = np.asarray(np.load(spike_times_path, allow_pickle=False)).reshape(-1)
+                if channel_map_path.exists():
+                    channel_ids = np.asarray(np.load(channel_map_path, allow_pickle=False)).reshape(-1)
+                else:
+                    channel_ids = np.arange(template_data.shape[-1], dtype=np.int64)
+                unit_ids = sorted(set(int(x) for x in spike_templates.tolist()))
+                get_spike_train = lambda uid: spike_times[spike_templates == int(uid)].astype(np.int64)
+                template_index_for_unit = {str(uid): int(uid) for uid in unit_ids}
+                source_name = "phy_output"
+
+        if template_data is None:
+            self.logger.warning(
+                "Skipping raw mean template extraction: requires analyzer_output (templates) or phy_output export."
+            )
             return None
 
         raw_recording = self._load_recording_file()
+        if channel_ids is None:
+            channel_ids = np.asarray(raw_recording.get_channel_ids())
         fs = float(raw_recording.get_sampling_frequency())
         n_frames = int(raw_recording.get_num_frames())
         window_samples = max(1, int(round((float(window_ms) / 1000.0) * fs)))
@@ -529,29 +567,23 @@ class MEAPipeline:
             window_samples += 1
         half_window = window_samples // 2
 
-        analyzer_channel_ids = np.asarray(getattr(self.analyzer, "channel_ids", raw_recording.get_channel_ids()))
-        template_data = templates_ext.get_data()
-        template_unit_ids = list(self.analyzer.unit_ids)
-        template_unit_idx = {str(uid): i for i, uid in enumerate(template_unit_ids)}
-
         extracted_units = {}
-        for unit_id in self.sorting.get_unit_ids():
-            template_idx = template_unit_idx.get(str(unit_id))
-            if template_idx is None:
-                self.logger.warning("Skipping unit %s in raw extraction: missing template.", unit_id)
+        for unit_id in unit_ids:
+            template_idx = template_index_for_unit.get(str(unit_id))
+            if template_idx is None or int(template_idx) >= int(template_data.shape[0]):
+                self.logger.warning("Skipping unit/template %s: missing template index.", unit_id)
                 continue
 
-            template = np.asarray(template_data[template_idx])
+            template = np.asarray(template_data[int(template_idx)])
             if template.ndim != 2 or template.shape[1] == 0:
-                self.logger.warning("Skipping unit %s in raw extraction: invalid template shape %s.", unit_id, template.shape)
+                self.logger.warning("Skipping unit/template %s: invalid template shape %s.", unit_id, template.shape)
                 continue
 
             channel_min_peaks = np.min(template, axis=0)
             extremum_channel_idx = int(np.argmin(channel_min_peaks))
-            extremum_channel_id = analyzer_channel_ids[extremum_channel_idx]
-            template_extremum = np.asarray(template[:, extremum_channel_idx], dtype=np.float32)
+            extremum_channel_id = channel_ids[extremum_channel_idx]
 
-            spike_train = np.asarray(self.sorting.get_unit_spike_train(unit_id), dtype=np.int64)
+            spike_train = np.asarray(get_spike_train(unit_id), dtype=np.int64)
             spike_train_limited = spike_train[: int(max_spikes_per_unit)]
 
             snippets = []
@@ -572,24 +604,22 @@ class MEAPipeline:
                 snippets.append(np.asarray(snippet, dtype=np.float32))
 
             if snippets:
-                mean_waveform = np.mean(snippets, axis=0).astype(np.float32)
+                raw_mean_template = np.mean(snippets, axis=0).astype(np.float32)
             else:
-                mean_waveform = np.full(window_samples, np.nan, dtype=np.float32)
+                raw_mean_template = np.full(window_samples, np.nan, dtype=np.float32)
 
             extracted_units[str(unit_id)] = {
                 "unit_id": int(unit_id) if isinstance(unit_id, np.integer) else unit_id,
                 "primary_channel": int(extremum_channel_id) if isinstance(extremum_channel_id, np.integer) else extremum_channel_id,
-                "spike_times": (spike_train.astype(np.float64) / fs),
-                "template": template_extremum,
-                "mean_waveform": mean_waveform,
-                "n_spikes_used_for_mean_waveform": int(len(snippets)),
-                "mean_waveform_window_samples": int(window_samples),
+                "raw_mean_template": raw_mean_template,
+                "n_spikes_used": int(len(snippets)),
+                "window_samples": int(window_samples),
             }
 
-        output_path = self.output_dir / "raw_sorted_spikes.npy"
+        output_path = self.output_dir / "raw_mean_templates.npy"
         np.save(output_path, extracted_units, allow_pickle=True)
-        self.state["raw_sorted_spikes_file"] = str(output_path)
-        self.logger.info("Saved raw sorted spike summary with mean waveforms: %s", output_path)
+        self.state["raw_mean_templates_file"] = str(output_path)
+        self.logger.info("Saved raw mean templates (%s source): %s", source_name, output_path)
         return output_path
 
     # --- Phase 1: Preprocessing ---
@@ -1825,7 +1855,7 @@ def main():
     ctrl_group.add_argument("--reanalyze-bursts", action="store_true",
         help="Re-run burst analysis on existing spike times only")
     ctrl_group.add_argument("--extract-rawsortedspikes", action="store_true",
-        help="Extract per-unit raw mean waveforms from sorted spikes and save raw_sorted_spikes.npy")
+        help="Extract per-unit raw mean templates and save raw_mean_templates.npy (requires analyzer_output or phy_output)")
     ctrl_group.add_argument("--debug", action="store_true",
         help="Enable verbose logging")
 

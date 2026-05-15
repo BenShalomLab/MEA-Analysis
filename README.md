@@ -99,7 +99,7 @@ Output organized as:
   ├── raster_burst_plot_60s.svg  (60s zoom)
   ├── network_results.json       (burst statistics)
   ├── spike_times.npy            (spike times per unit)
-  ├── raw_sorted_spikes.npy      (optional per-unit template + mean_waveform from raw traces)
+  ├── raw_mean_templates.npy     (optional per-unit raw mean templates on extremum channels)
   ├── processing_info.json       (records whether spike sorting was used)
   ├── metrics_curated.xlsx       (quality metrics post-curation)
   ├── rejection_log.xlsx         (rejected units and reasons)
@@ -276,7 +276,7 @@ current working directory (recommended: run from the repository root).
 | sorting | `--sorter` | Spike sorter to use (default: kilosort4) |
 | sorting | `--docker` | Docker image for containerized sorting |
 | sorting | `--skip-spikesorting` | Spike detection only, skip full sorting |
-| sorting | `--extract-rawsortedspikes` | Save per-unit raw mean waveforms to `raw_sorted_spikes.npy` |
+| sorting | `--extract-rawsortedspikes` | Save per-unit raw mean templates to `raw_mean_templates.npy` (requires `analyzer_output` or `phy_output`) |
 | plotting | `--plot-mode` | `separate` or `merged` (default: separate) |
 | plotting | `--raster-sort` | `none`, `firing_rate`, `location_y`, `unit_id` |
 | plotting | `--plot-debug` | Overlay burst/superburst intervals on plot |
