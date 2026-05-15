@@ -547,7 +547,7 @@ class MEAPipeline:
                     channel_ids = np.asarray(np.load(channel_map_path, allow_pickle=False)).reshape(-1)
                 else:
                     channel_ids = np.arange(template_data.shape[-1], dtype=np.int64)
-                unit_ids = sorted(set(int(x) for x in spike_templates.tolist()))
+                unit_ids = [int(x) for x in np.unique(spike_templates)]
                 def _get_spike_train_from_phy(uid):
                     return spike_times[spike_templates == int(uid)].astype(np.int64)
                 get_spike_train = _get_spike_train_from_phy
@@ -573,8 +573,11 @@ class MEAPipeline:
         extracted_units = {}
         for unit_id in unit_ids:
             template_idx = template_index_for_unit.get(str(unit_id))
-            if template_idx is None or template_idx >= template_data.shape[0]:
+            if template_idx is None:
                 self.logger.warning("Skipping unit/template %s: missing template index.", unit_id)
+                continue
+            if template_idx >= template_data.shape[0]:
+                self.logger.warning("Skipping unit/template %s: template index out of bounds.", unit_id)
                 continue
 
             template = np.asarray(template_data[template_idx])
