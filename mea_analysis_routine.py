@@ -506,7 +506,6 @@ class MEAPipeline:
         self.state.update(payload)
 
     def _extract_rawsortedspikes(self, *, max_spikes_per_unit=200, window_ms=2.5):
-        analyzer_folder = self.output_dir / "analyzer_output"
         phy_folder = self.output_dir / "phy_output"
 
         unit_ids = None
@@ -516,7 +515,7 @@ class MEAPipeline:
         template_index_for_unit = None
         source_name = None
 
-        if analyzer_folder.exists() and self._load_existing_analyzer():
+        if self._load_existing_analyzer():
             templates_ext = self.analyzer.get_extension("templates")
             if templates_ext is None:
                 self.analyzer.compute("templates", verbose=self.verbose)
@@ -530,7 +529,9 @@ class MEAPipeline:
                 analyzer_channel_ids = getattr(self.analyzer, "channel_ids", None)
                 channel_ids = (np.asarray(analyzer_channel_ids) if analyzer_channel_ids is not None else None)
                 template_index_for_unit = {str(uid): i for i, uid in enumerate(unit_ids)}
-                get_spike_train = lambda uid: np.asarray(self.sorting.get_unit_spike_train(uid), dtype=np.int64)
+                def _get_spike_train_from_sorting(uid):
+                    return np.asarray(self.sorting.get_unit_spike_train(uid), dtype=np.int64)
+                get_spike_train = _get_spike_train_from_sorting
                 source_name = "analyzer_output"
 
         if template_data is None and phy_folder.exists():
@@ -547,7 +548,9 @@ class MEAPipeline:
                 else:
                     channel_ids = np.arange(template_data.shape[-1], dtype=np.int64)
                 unit_ids = sorted(set(int(x) for x in spike_templates.tolist()))
-                get_spike_train = lambda uid: spike_times[spike_templates == int(uid)].astype(np.int64)
+                def _get_spike_train_from_phy(uid):
+                    return spike_times[spike_templates == int(uid)].astype(np.int64)
+                get_spike_train = _get_spike_train_from_phy
                 template_index_for_unit = {str(uid): int(uid) for uid in unit_ids}
                 source_name = "phy_output"
 
