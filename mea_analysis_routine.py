@@ -456,7 +456,7 @@ class MEAPipeline:
         if self.sorting is not None:
             return True
 
-        sorter_folder = self.output_dir / "sorter_output"
+        sorter_folder = self.output_dir / "sorting"
         if not sorter_folder.exists():
             self.logger.warning("Cannot load existing sorting: missing %s", sorter_folder)
             return False
@@ -506,7 +506,7 @@ class MEAPipeline:
         self.state.update(payload)
 
     def _extract_rawsortedspikes(self, *, max_spikes_per_unit=200, window_ms=2.5):
-        phy_folder = self.output_dir / "phy_output"
+        
 
         unit_ids = None
         template_data = None
@@ -514,27 +514,8 @@ class MEAPipeline:
         get_spike_train = None
         template_index_for_unit = None
         source_name = None
-
-        if self._load_existing_analyzer():
-            templates_ext = self.analyzer.get_extension("templates")
-            if templates_ext is None:
-                self.analyzer.compute("templates", verbose=self.verbose)
-                templates_ext = self.analyzer.get_extension("templates")
-            if templates_ext is not None:
-                if not self._load_existing_sorting():
-                    self.logger.warning("Skipping raw mean template extraction: sorting is unavailable.")
-                    return None
-                template_data = np.asarray(templates_ext.get_data())
-                unit_ids = list(self.analyzer.unit_ids)
-                analyzer_channel_ids = getattr(self.analyzer, "channel_ids", None)
-                channel_ids = (np.asarray(analyzer_channel_ids) if analyzer_channel_ids is not None else None)
-                template_index_for_unit = {str(uid): i for i, uid in enumerate(unit_ids)}
-                def _get_spike_train_from_sorting(uid):
-                    return np.asarray(self.sorting.get_unit_spike_train(uid), dtype=np.int64)
-                get_spike_train = _get_spike_train_from_sorting
-                source_name = "analyzer_output"
-
-        if template_data is None and phy_folder.exists():
+        phy_folder = self.output_dir / "phy_output"
+        if phy_folder.exists():
             templates_path = phy_folder / "templates.npy"
             spike_templates_path = phy_folder / "spike_templates.npy"
             spike_times_path = phy_folder / "spike_times.npy"
@@ -553,6 +534,28 @@ class MEAPipeline:
                 get_spike_train = _get_spike_train_from_phy
                 template_index_for_unit = {str(uid): int(uid) for uid in unit_ids}
                 source_name = "phy_output"
+        analyzer_folder = self.output_dir / "analyzer_output"
+        if template_data is None and analyzer_folder.exists():
+            self.analyzer = si.load_sorting_analyzer(analyzer_folder)
+            self.sorting = self.analyzer.sorting
+            templates_ext = self.analyzer.get_extension("templates")
+            if templates_ext is None:
+                self.analyzer.compute("templates", verbose=self.verbose)
+                templates_ext = self.analyzer.get_extension("templates")
+            if templates_ext is not None:
+                if self.sorting is None:
+                    self.logger.warning("Skipping raw mean template extraction: sorting is unavailable.")
+                    return None
+                template_data = np.asarray(templates_ext.get_data())
+                unit_ids = list(self.analyzer.unit_ids)
+                analyzer_channel_ids = getattr(self.analyzer, "channel_ids", None)
+                channel_ids = (np.asarray(analyzer_channel_ids) if analyzer_channel_ids is not None else None)
+                template_index_for_unit = {str(uid): i for i, uid in enumerate(unit_ids)}
+                def _get_spike_train_from_sorting(uid):
+                    return np.asarray(self.sorting.get_unit_spike_train(uid), dtype=np.int64)
+                get_spike_train = _get_spike_train_from_sorting
+                source_name = "analyzer_output"
+
 
         if template_data is None:
             self.logger.warning(
