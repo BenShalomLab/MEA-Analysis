@@ -521,40 +521,53 @@ class MEAPipeline:
             spike_times_path = phy_folder / "spike_times.npy"
             channel_map_path = phy_folder / "channel_map.npy"
             if templates_path.exists() and spike_templates_path.exists() and spike_times_path.exists():
-                template_data = np.asarray(np.load(templates_path, allow_pickle=False))
-                spike_templates = np.asarray(np.load(spike_templates_path, allow_pickle=False)).reshape(-1)
-                spike_times = np.asarray(np.load(spike_times_path, allow_pickle=False)).reshape(-1)
-                if channel_map_path.exists():
-                    channel_ids = np.asarray(np.load(channel_map_path, allow_pickle=False)).reshape(-1)
-                else:
-                    channel_ids = np.arange(template_data.shape[-1], dtype=np.int64)
-                unit_ids = [int(x) for x in np.unique(spike_templates)]
-                def _get_spike_train_from_phy(uid):
-                    return spike_times[spike_templates == int(uid)].astype(np.int64)
-                get_spike_train = _get_spike_train_from_phy
-                template_index_for_unit = {str(uid): int(uid) for uid in unit_ids}
-                source_name = "phy_output"
+                try:
+                    template_data = np.asarray(np.load(templates_path, allow_pickle=False))
+                    spike_templates = np.asarray(np.load(spike_templates_path, allow_pickle=False)).reshape(-1)
+                    spike_times = np.asarray(np.load(spike_times_path, allow_pickle=False)).reshape(-1)
+                    if channel_map_path.exists():
+                        channel_ids = np.asarray(np.load(channel_map_path, allow_pickle=False)).reshape(-1)
+                    else:
+                        channel_ids = np.arange(template_data.shape[-1], dtype=np.int64)
+                    unit_ids = [int(x) for x in np.unique(spike_templates)]
+                    def _get_spike_train_from_phy(uid):
+                        return spike_times[spike_templates == int(uid)].astype(np.int64)
+                    get_spike_train = _get_spike_train_from_phy
+                    template_index_for_unit = {str(uid): int(uid) for uid in unit_ids}
+                    source_name = "phy_output"
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed loading template artifacts from phy_output (%s); falling back to analyzer_output.",
+                        e,
+                    )
         analyzer_folder = self.output_dir / "analyzer_output"
         if template_data is None and analyzer_folder.exists():
-            self.analyzer = si.load_sorting_analyzer(analyzer_folder)
-            self.sorting = self.analyzer.sorting
-            templates_ext = self.analyzer.get_extension("templates")
-            if templates_ext is None:
-                self.analyzer.compute("templates", verbose=self.verbose)
+            try:
+                self.analyzer = si.load_sorting_analyzer(analyzer_folder)
+                self.sorting = self.analyzer.sorting
                 templates_ext = self.analyzer.get_extension("templates")
-            if templates_ext is not None:
-                if self.sorting is None:
-                    self.logger.warning("Skipping raw mean template extraction: sorting is unavailable.")
-                    return None
-                template_data = np.asarray(templates_ext.get_data())
-                unit_ids = list(self.analyzer.unit_ids)
-                analyzer_channel_ids = getattr(self.analyzer, "channel_ids", None)
-                channel_ids = (np.asarray(analyzer_channel_ids) if analyzer_channel_ids is not None else None)
-                template_index_for_unit = {str(uid): i for i, uid in enumerate(unit_ids)}
-                def _get_spike_train_from_sorting(uid):
-                    return np.asarray(self.sorting.get_unit_spike_train(uid), dtype=np.int64)
-                get_spike_train = _get_spike_train_from_sorting
-                source_name = "analyzer_output"
+                if templates_ext is None:
+                    self.analyzer.compute("templates", verbose=self.verbose)
+                    templates_ext = self.analyzer.get_extension("templates")
+                if templates_ext is not None:
+                    if self.sorting is None:
+                        self.logger.warning("Skipping raw mean template extraction: sorting is unavailable.")
+                        return None
+                    template_data = np.asarray(templates_ext.get_data())
+                    unit_ids = list(self.analyzer.unit_ids)
+                    analyzer_channel_ids = getattr(self.analyzer, "channel_ids", None)
+                    channel_ids = (np.asarray(analyzer_channel_ids) if analyzer_channel_ids is not None else None)
+                    template_index_for_unit = {str(uid): i for i, uid in enumerate(unit_ids)}
+                    def _get_spike_train_from_sorting(uid):
+                        return np.asarray(self.sorting.get_unit_spike_train(uid), dtype=np.int64)
+                    get_spike_train = _get_spike_train_from_sorting
+                    source_name = "analyzer_output"
+            except Exception as e:
+                self.logger.warning(
+                    "Failed loading template artifacts from analyzer_output (%s); skipping raw mean template extraction.",
+                    e,
+                )
+                return None
 
 
         if template_data is None:
@@ -563,7 +576,11 @@ class MEAPipeline:
             )
             return None
 
-        raw_recording = self._load_recording_file()
+        try:
+            raw_recording = self._load_recording_file()
+        except Exception as e:
+            self.logger.warning("Skipping raw mean template extraction: failed loading recording (%s).", e)
+            return None
         if channel_ids is None:
             channel_ids = np.asarray(raw_recording.get_channel_ids())
         fs = float(raw_recording.get_sampling_frequency())
