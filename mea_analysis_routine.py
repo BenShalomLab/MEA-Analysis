@@ -511,6 +511,7 @@ class MEAPipeline:
         unit_ids = None
         template_data = None
         channel_ids = None
+        templates_ind = None
         get_spike_train = None
         template_index_for_unit = None
         source_name = None
@@ -520,6 +521,7 @@ class MEAPipeline:
             spike_templates_path = phy_folder / "spike_templates.npy"
             spike_times_path = phy_folder / "spike_times.npy"
             channel_map_path = phy_folder / "channel_map.npy"
+            templates_ind_path = phy_folder / "templates_ind.npy"
             if templates_path.exists() and spike_templates_path.exists() and spike_times_path.exists():
                 template_data = np.asarray(np.load(templates_path, allow_pickle=False))
                 spike_templates = np.asarray(np.load(spike_templates_path, allow_pickle=False)).reshape(-1)
@@ -528,6 +530,8 @@ class MEAPipeline:
                     channel_ids = np.asarray(np.load(channel_map_path, allow_pickle=False)).reshape(-1)
                 else:
                     channel_ids = np.arange(template_data.shape[-1], dtype=np.int64)
+                if templates_ind_path.exists():
+                    templates_ind = np.asarray(np.load(templates_ind_path, allow_pickle=False))
                 unit_ids = [int(x) for x in np.unique(spike_templates)]
                 def _get_spike_train_from_phy(uid):
                     return spike_times[spike_templates == int(uid)].astype(np.int64)
@@ -589,28 +593,41 @@ class MEAPipeline:
                 continue
 
             channel_min_peaks = np.min(template, axis=0)
-            extremum_channel_idx = int(np.argmin(channel_min_peaks))
-            extremum_channel_id = channel_ids[extremum_channel_idx]
+            extremum_local_idx = int(np.argmin(channel_min_peaks))
+            if templates_ind is not None:
+                # Sparse templates: local index → recording channel via templates_ind
+                recording_ch_idx = int(templates_ind[template_idx, extremum_local_idx])
+                extremum_channel_id = channel_ids[recording_ch_idx]
+            else:
+                extremum_channel_id = channel_ids[extremum_local_idx]
 
             spike_train = np.asarray(get_spike_train(unit_id), dtype=np.int64)
             spike_train_limited = spike_train[: int(max_spikes_per_unit)]
 
+            # Filter valid spike centers before any I/O
+            valid_centers = [
+                int(c) for c in spike_train_limited
+                if int(c) - half_window >= 0 and int(c) - half_window + window_samples <= n_frames
+            ]
+
             snippets = []
-            for center in spike_train_limited:
-                start = int(center) - half_window
-                end = start + window_samples
-                if start < 0 or end > n_frames:
-                    continue
-                snippet = np.asarray(
+            if valid_centers:
+                # One read covering all spikes for this unit on this channel
+                ch_start = int(valid_centers[0]) - half_window
+                ch_end = int(valid_centers[-1]) - half_window + window_samples
+                ch_trace = np.asarray(
                     raw_recording.get_traces(
-                        start_frame=start,
-                        end_frame=end,
-                        channel_ids=[extremum_channel_id],
-                    )
+                        start_frame=ch_start,
+                        end_frame=ch_end,
+                        channel_ids=[str(extremum_channel_id)],
+                    ),
+                    dtype=np.float32,
                 ).reshape(-1)
-                if snippet.shape[0] != window_samples:
-                    continue
-                snippets.append(np.asarray(snippet, dtype=np.float32))
+                for center in valid_centers:
+                    s = int(center) - half_window - ch_start
+                    snippet = ch_trace[s : s + window_samples]
+                    if snippet.shape[0] == window_samples:
+                        snippets.append(snippet)
 
             if snippets:
                 raw_mean_template = np.mean(snippets, axis=0).astype(np.float32)
