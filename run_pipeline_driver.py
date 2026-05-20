@@ -189,6 +189,9 @@ def main():
         help="Ignore checkpoints and restart from scratch")
     ctrl_group.add_argument("--reanalyze-bursts", action="store_true",
         help="Re-run burst analysis on existing spike times")
+    ctrl_group.add_argument("--extract-rawsortedspikes", "--extract_rawsortedspikes",
+        action="store_true",
+        help="Legacy no-op flag kept for backward compatibility")
     ctrl_group.add_argument("--resume-from", "--resume_from", dest="resume_from", type=str, default=None,
         choices=["preprocessing", "sorting", "merge", "analyzer", "reports"],
         help="Rewind checkpoint and resume each well from this stage")

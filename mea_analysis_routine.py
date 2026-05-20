@@ -1652,6 +1652,9 @@ def main():
         help="Resume by rewinding checkpoint to just before this stage and rerunning from there")
     ctrl_group.add_argument("--reanalyze-bursts", action="store_true",
         help="Re-run burst analysis on existing spike times only")
+    ctrl_group.add_argument("--extract-rawsortedspikes", "--extract_rawsortedspikes",
+        action="store_true",
+        help="Legacy no-op flag kept for backward compatibility")
     ctrl_group.add_argument("--debug", action="store_true",
         help="Enable verbose logging")
 
