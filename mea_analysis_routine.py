@@ -1884,6 +1884,10 @@ def main():
         help="Extract per-unit raw mean templates and save raw_mean_templates.npy (requires analyzer_output or phy_output)")
     ctrl_group.add_argument("--debug", action="store_true",
         help="Enable verbose logging")
+    ctrl_group.add_argument("--n-jobs", type=int, default=None,
+        help="CPU worker count for SpikeInterface-heavy steps (default: internal default)")
+    ctrl_group.add_argument("--chunk-duration", type=str, default=None,
+        help="Chunk duration for SpikeInterface jobs, e.g. '1s' (default: internal default)")
 
     # Optional post-spikesort step(s)
     parser.add_argument(
@@ -2024,6 +2028,8 @@ def main():
                 cleanup=bool(resolved["clean_up"]),
                 force_restart=bool(args.force_restart),
                 resume_from=args.resume_from,
+                n_jobs=resolved["n_jobs"],
+                chunk_duration=resolved["chunk_duration"],
                 um_kwargs={
                     "merge_units": bool(args.unitmatch_merge_units),
                     "dry_run": bool(args.unitmatch_dry_run),

@@ -240,6 +240,36 @@ python run_pipeline_driver.py /data/experiment --config mea_config.json
 python run_pipeline_driver.py /data/experiment --config mea_config.json --force-restart
 ```
 
+### 10. Multi-GPU runs (single node / supercomputer node)
+```bash
+# Use 4 GPUs on the current node (one well subprocess per GPU)
+python run_pipeline_driver.py /data/experiment \
+  --config mea_config.json \
+  --gpu-ids 0,1,2,3
+
+# Explicitly cap concurrency below GPU count
+python run_pipeline_driver.py /data/experiment \
+  --config mea_config.json \
+  --gpu-ids 0,1,2,3 \
+  --max-concurrent-wells 2
+
+# CPU-only detection profile (no spike sorting)
+python run_pipeline_driver.py /data/experiment \
+  --config mea_config.json \
+  --skip-spikesorting \
+  --max-concurrent-wells 4
+```
+
+You can also set this in config:
+```json
+"runtime": {
+  "gpu_ids": "0,1,2,3",
+  "max_concurrent_wells": 4,
+  "n_jobs": 16,
+  "chunk_duration": "1s"
+}
+```
+
 ## Streamlit Checkpoint Dashboard
 
 Use the Streamlit app to inspect checkpoint JSON status across runs.
@@ -287,6 +317,10 @@ current working directory (recommended: run from the repository root).
 | run control | `--reanalyze-bursts` | Re-run burst analysis on existing spike times |
 | run control | `--dry` | Preview what would run without processing |
 | run control | `--debug` | Enable verbose logging |
+| run control | `--max-concurrent-wells` | Driver worker-pool width for well subprocesses |
+| run control | `--gpu-ids` | Comma-separated GPU IDs for sorting workers (e.g., `0,1,2,3`) |
+| run control | `--n-jobs` | Per-well CPU worker count for SpikeInterface-heavy steps |
+| run control | `--chunk-duration` | Per-well SpikeInterface chunk duration (e.g., `1s`) |
 
 ### mea_analysis_routine.py
 
