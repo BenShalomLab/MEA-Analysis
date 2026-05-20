@@ -516,12 +516,19 @@ class MEAPipeline:
         template_index_for_unit = None
         source_name = None
         phy_folder = self.output_dir / "phy_output"
+        self.logger.debug("Checking phy_folder: %s  exists=%s", phy_folder, phy_folder.exists())
         if phy_folder.exists():
             templates_path = phy_folder / "templates.npy"
             spike_templates_path = phy_folder / "spike_templates.npy"
             spike_times_path = phy_folder / "spike_times.npy"
             channel_map_path = phy_folder / "channel_map.npy"
             templates_ind_path = phy_folder / "templates_ind.npy"
+            self.logger.debug(
+                "phy_folder files: templates=%s  spike_templates=%s  spike_times=%s"
+                "  channel_map=%s  templates_ind=%s",
+                templates_path.exists(), spike_templates_path.exists(), spike_times_path.exists(),
+                channel_map_path.exists(), templates_ind_path.exists(),
+            )
             if templates_path.exists() and spike_templates_path.exists() and spike_times_path.exists():
                 template_data = np.asarray(np.load(templates_path, allow_pickle=False))
                 spike_templates = np.asarray(np.load(spike_templates_path, allow_pickle=False)).reshape(-1)
@@ -539,12 +546,17 @@ class MEAPipeline:
                 template_index_for_unit = {str(uid): int(uid) for uid in unit_ids}
                 source_name = "phy_output"
                 self.logger.debug(
-                    "phy_output loaded: %d units, templates %s, channel_map %s, templates_ind %s",
+                    "phy_output loaded: %d units  templates=%s  channel_map=%s  templates_ind=%s",
                     len(unit_ids), template_data.shape, channel_ids.shape,
-                    templates_ind.shape if templates_ind is not None else "not found",
+                    templates_ind.shape if templates_ind is not None else "NOT FOUND (channel lookup will be wrong for sparse templates)",
                 )
+            else:
+                self.logger.debug("phy_folder exists but required .npy files missing — falling back to analyzer_output")
         analyzer_folder = self.output_dir / "analyzer_output"
+        self.logger.debug("Checking analyzer_folder: %s  exists=%s  will_use=%s",
+                          analyzer_folder, analyzer_folder.exists(), template_data is None)
         if template_data is None and analyzer_folder.exists():
+            self.logger.debug("Loading sorting analyzer from %s", analyzer_folder)
             self.analyzer = si.load_sorting_analyzer(analyzer_folder)
             self.sorting = self.analyzer.sorting
             templates_ext = self.analyzer.get_extension("templates")
@@ -564,6 +576,13 @@ class MEAPipeline:
                     return np.asarray(self.sorting.get_unit_spike_train(uid), dtype=np.int64)
                 get_spike_train = _get_spike_train_from_sorting
                 source_name = "analyzer_output"
+                self.logger.debug(
+                    "analyzer_output loaded: %d units  templates=%s  channel_ids=%s",
+                    len(unit_ids), template_data.shape,
+                    channel_ids.shape if channel_ids is not None else "None (will use recording channel_ids)",
+                )
+            else:
+                self.logger.debug("analyzer_output: templates extension not found/computable")
 
 
         if template_data is None:
