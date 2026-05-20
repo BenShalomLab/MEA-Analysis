@@ -452,6 +452,202 @@ class MEAPipeline:
             return si.load_extractor(self.file_path)
         raise ValueError(f"Unknown format: {fpath}")
 
+    def _load_existing_sorting(self):
+        if self.sorting is not None:
+            return True
+
+        sorter_folder = self.output_dir / "sorting"
+        if not sorter_folder.exists():
+            self.logger.warning("Cannot load existing sorting: missing %s", sorter_folder)
+            return False
+
+        try:
+            self.sorting = si.read_sorter_folder(sorter_folder)
+        except Exception:
+            try:
+                self.sorting = si.read_kilosort(sorter_folder)
+            except Exception as e:
+                self.logger.warning("Failed loading existing sorting from %s: %s", sorter_folder, e)
+                return False
+
+        try:
+            self.sorting = self.sorting.remove_empty_units()
+        except Exception:
+            pass
+        return self.sorting is not None
+
+    def _load_existing_analyzer(self):
+        if self.analyzer is not None:
+            return True
+
+        analyzer_folder = self.output_dir / "analyzer_output"
+        if not analyzer_folder.exists():
+            self.logger.warning("Cannot load existing analyzer: missing %s", analyzer_folder)
+            return False
+
+        try:
+            self.analyzer = si.load_sorting_analyzer(analyzer_folder)
+            return True
+        except Exception as e:
+            self.logger.warning("Failed loading existing analyzer from %s: %s", analyzer_folder, e)
+            return False
+
+    def _write_processing_info(self, *, used_spike_sorting, reanalyze_bursts, extract_rawsortedspikes):
+        payload = {
+            "used_spike_sorting": bool(used_spike_sorting),
+            "processing_mode": ("spike_sorting" if bool(used_spike_sorting) else "spike_detection_only"),
+            "reanalyze_bursts": bool(reanalyze_bursts),
+            "extract_rawsortedspikes": bool(extract_rawsortedspikes),
+            "last_updated": str(datetime.now()),
+        }
+        info_file = self.output_dir / "processing_info.json"
+        with open(info_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        self.state.update(payload)
+
+    def _extract_rawsortedspikes(self, *, max_spikes_per_unit=200, window_ms=2.5):
+        
+
+        unit_ids = None
+        template_data = None
+        channel_ids = None
+        templates_ind = None
+        get_spike_train = None
+        template_index_for_unit = None
+        source_name = None
+        phy_folder = self.output_dir / "phy_output"
+        if phy_folder.exists():
+            templates_path = phy_folder / "templates.npy"
+            spike_templates_path = phy_folder / "spike_templates.npy"
+            spike_times_path = phy_folder / "spike_times.npy"
+            channel_map_path = phy_folder / "channel_map.npy"
+            templates_ind_path = phy_folder / "templates_ind.npy"
+            if templates_path.exists() and spike_templates_path.exists() and spike_times_path.exists():
+                template_data = np.asarray(np.load(templates_path, allow_pickle=False))
+                spike_templates = np.asarray(np.load(spike_templates_path, allow_pickle=False)).reshape(-1)
+                spike_times = np.asarray(np.load(spike_times_path, allow_pickle=False)).reshape(-1)
+                if channel_map_path.exists():
+                    channel_ids = np.asarray(np.load(channel_map_path, allow_pickle=False)).reshape(-1)
+                else:
+                    channel_ids = np.arange(template_data.shape[-1], dtype=np.int64)
+                if templates_ind_path.exists():
+                    templates_ind = np.asarray(np.load(templates_ind_path, allow_pickle=False))
+                unit_ids = [int(x) for x in np.unique(spike_templates)]
+                def _get_spike_train_from_phy(uid):
+                    return spike_times[spike_templates == int(uid)].astype(np.int64)
+                get_spike_train = _get_spike_train_from_phy
+                template_index_for_unit = {str(uid): int(uid) for uid in unit_ids}
+                source_name = "phy_output"
+        analyzer_folder = self.output_dir / "analyzer_output"
+        if template_data is None and analyzer_folder.exists():
+            self.analyzer = si.load_sorting_analyzer(analyzer_folder)
+            self.sorting = self.analyzer.sorting
+            templates_ext = self.analyzer.get_extension("templates")
+            if templates_ext is None:
+                self.analyzer.compute("templates", verbose=self.verbose)
+                templates_ext = self.analyzer.get_extension("templates")
+            if templates_ext is not None:
+                if self.sorting is None:
+                    self.logger.warning("Skipping raw mean template extraction: sorting is unavailable.")
+                    return None
+                template_data = np.asarray(templates_ext.get_data())
+                unit_ids = list(self.analyzer.unit_ids)
+                analyzer_channel_ids = getattr(self.analyzer, "channel_ids", None)
+                channel_ids = (np.asarray(analyzer_channel_ids) if analyzer_channel_ids is not None else None)
+                template_index_for_unit = {str(uid): i for i, uid in enumerate(unit_ids)}
+                def _get_spike_train_from_sorting(uid):
+                    return np.asarray(self.sorting.get_unit_spike_train(uid), dtype=np.int64)
+                get_spike_train = _get_spike_train_from_sorting
+                source_name = "analyzer_output"
+
+
+        if template_data is None:
+            self.logger.warning(
+                "Skipping raw mean template extraction: requires analyzer_output (templates) or phy_output export."
+            )
+            return None
+
+        raw_recording = self._load_recording_file()
+        if channel_ids is None:
+            channel_ids = np.asarray(raw_recording.get_channel_ids())
+        fs = float(raw_recording.get_sampling_frequency())
+        n_frames = int(raw_recording.get_num_frames())
+        window_samples = max(1, int(round((float(window_ms) / 1000.0) * fs)))
+        if window_samples % 2 == 0:
+            window_samples += 1
+        half_window = window_samples // 2
+
+        extracted_units = {}
+        for unit_id in unit_ids:
+            template_idx = template_index_for_unit.get(str(unit_id))
+            if template_idx is None:
+                self.logger.warning("Skipping unit/template %s: missing template index.", unit_id)
+                continue
+            if template_idx >= template_data.shape[0]:
+                self.logger.warning("Skipping unit/template %s: template index out of bounds.", unit_id)
+                continue
+
+            template = np.asarray(template_data[template_idx])
+            if template.ndim != 2 or template.shape[1] == 0:
+                self.logger.warning("Skipping unit/template %s: invalid template shape %s.", unit_id, template.shape)
+                continue
+
+            channel_min_peaks = np.min(template, axis=0)
+            extremum_local_idx = int(np.argmin(channel_min_peaks))
+            if templates_ind is not None:
+                # Sparse templates: local index → recording channel via templates_ind
+                recording_ch_idx = int(templates_ind[template_idx, extremum_local_idx])
+                extremum_channel_id = channel_ids[recording_ch_idx]
+            else:
+                extremum_channel_id = channel_ids[extremum_local_idx]
+
+            spike_train = np.asarray(get_spike_train(unit_id), dtype=np.int64)
+            spike_train_limited = spike_train[: int(max_spikes_per_unit)]
+
+            # Filter valid spike centers before any I/O
+            valid_centers = [
+                int(c) for c in spike_train_limited
+                if int(c) - half_window >= 0 and int(c) - half_window + window_samples <= n_frames
+            ]
+
+            snippets = []
+            if valid_centers:
+                # One read covering all spikes for this unit on this channel
+                ch_start = int(valid_centers[0]) - half_window
+                ch_end = int(valid_centers[-1]) - half_window + window_samples
+                ch_trace = np.asarray(
+                    raw_recording.get_traces(
+                        start_frame=ch_start,
+                        end_frame=ch_end,
+                        channel_ids=[str(extremum_channel_id)],
+                    ),
+                    dtype=np.float32,
+                ).reshape(-1)
+                for center in valid_centers:
+                    s = int(center) - half_window - ch_start
+                    snippet = ch_trace[s : s + window_samples]
+                    if snippet.shape[0] == window_samples:
+                        snippets.append(snippet)
+
+            if snippets:
+                raw_mean_template = np.mean(snippets, axis=0).astype(np.float32)
+            else:
+                raw_mean_template = np.full(window_samples, np.nan, dtype=np.float32)
+
+            extracted_units[str(unit_id)] = {
+                "unit_id": int(unit_id) if isinstance(unit_id, np.integer) else unit_id,
+                "primary_channel": int(extremum_channel_id) if isinstance(extremum_channel_id, np.integer) else extremum_channel_id,
+                "raw_mean_template": raw_mean_template,
+                "n_spikes_used": int(len(snippets)),
+                "window_samples": int(window_samples),
+            }
+
+        output_path = self.output_dir / "raw_mean_templates.npy"
+        np.save(output_path, extracted_units, allow_pickle=True)
+        self.state["raw_mean_templates_file"] = str(output_path)
+        self.logger.info("Saved raw mean templates (%s source): %s", source_name, output_path)
+        return output_path
+
     # --- Phase 1: Preprocessing ---
     def run_preprocessing(self):
         binary_folder = self.output_dir / "binary"
@@ -1133,8 +1329,26 @@ class MEAPipeline:
 
             np.save(self.output_dir / "spike_times.npy", spike_times)
         else:
-            self.logger.error("No spike times found for burst analysis.")
-            return
+            spike_times_file = self.output_dir / "spike_times.npy"
+            if spike_times_file.exists():
+                try:
+                    loaded = np.load(spike_times_file, allow_pickle=True).item()
+                    if isinstance(loaded, dict):
+                        if ids_list is not None:
+                            id_set = {str(uid) for uid in ids_list}
+                            spike_times = {
+                                uid: st for uid, st in loaded.items()
+                                if str(uid) in id_set
+                            }
+                        else:
+                            spike_times = loaded
+                        self.logger.info("Loaded existing spike times from %s", spike_times_file)
+                except Exception as e:
+                    self.logger.error("Failed loading spike times from %s: %s", spike_times_file, e)
+
+            if not spike_times:
+                self.logger.error("No spike times found for burst analysis.")
+                return
 
         if not spike_times:
             self.logger.warning("Spike times dictionary is empty. Skipping burst analysis.")
@@ -1407,6 +1621,7 @@ class MEARunOptions:
     raster_sort: str | None = None
     fixed_y: bool = False
     auto_merge_template_diff_thresh: str = "0.05,0.15,0.25"
+    extract_rawsortedspikes: bool = False
 
 
 @dataclass(frozen=True)
@@ -1529,17 +1744,24 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
     )
 
     _apply_resume_from_stage(pipeline, options.resume_from)
+    uses_spike_sorting = not bool(options.skip_spikesorting)
+    pipeline._write_processing_info(
+        used_spike_sorting=uses_spike_sorting,
+        reanalyze_bursts=bool(options.reanalyze_bursts),
+        extract_rawsortedspikes=bool(options.extract_rawsortedspikes),
+    )
 
     if bool(options.reanalyze_bursts):
+        if bool(options.extract_rawsortedspikes):
+            pipeline._extract_rawsortedspikes()
         pipeline._run_burst_analysis(
             plot_mode=options.plot_mode,
             plot_debug=bool(options.plot_debug),
             raster_sort=options.raster_sort,
             fixed_y=bool(options.fixed_y),
         )
-        current_stage = ProcessingStage(pipeline.state['stage'])
         pipeline._save_checkpoint(
-            current_stage,
+            ProcessingStage.REPORTS_COMPLETE,
             note="Burst Re-analysis Performed",
             last_updated=str(datetime.now()),
         )
@@ -1556,6 +1778,8 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
 
         if bool(options.run_analyzer):
             pipeline.run_analyzer()
+            if bool(options.extract_rawsortedspikes):
+                pipeline._extract_rawsortedspikes()
 
         if bool(options.run_reports):
             if (not bool(options.run_analyzer)) and pipeline.analyzer is None:
@@ -1573,6 +1797,10 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
                 fixed_y=bool(options.fixed_y),
             )
     else:
+        if bool(options.extract_rawsortedspikes):
+            pipeline.logger.warning(
+                "--extract-rawsortedspikes requested but --skip-spikesorting is enabled; skipping extraction."
+            )
         ids = pipeline._spike_detection_only()
         pipeline._run_burst_analysis(
             ids,
@@ -1652,6 +1880,8 @@ def main():
         help="Resume by rewinding checkpoint to just before this stage and rerunning from there")
     ctrl_group.add_argument("--reanalyze-bursts", action="store_true",
         help="Re-run burst analysis on existing spike times only")
+    ctrl_group.add_argument("--extract-rawsortedspikes", action="store_true",
+        help="Extract per-unit raw mean templates and save raw_mean_templates.npy (requires analyzer_output or phy_output)")
     ctrl_group.add_argument("--debug", action="store_true",
         help="Enable verbose logging")
     ctrl_group.add_argument("--n-jobs", type=int, default=None,
@@ -1838,6 +2068,7 @@ def main():
                 raster_sort=raster_sort,
                 fixed_y=bool(fixed_y),
                 auto_merge_template_diff_thresh=str(args.auto_merge_template_diff_thresh),
+                extract_rawsortedspikes=bool(args.extract_rawsortedspikes),
             )
         )
 

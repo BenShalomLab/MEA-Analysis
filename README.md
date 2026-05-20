@@ -99,6 +99,8 @@ Output organized as:
   ├── raster_burst_plot_60s.svg  (60s zoom)
   ├── network_results.json       (burst statistics)
   ├── spike_times.npy            (spike times per unit)
+  ├── raw_mean_templates.npy     (optional per-unit raw mean templates on extremum channels)
+  ├── processing_info.json       (records whether spike sorting was used)
   ├── metrics_curated.xlsx       (quality metrics post-curation)
   ├── rejection_log.xlsx         (rejected units and reasons)
   ├── waveforms_grid.pdf         (waveform overview)
@@ -268,6 +270,25 @@ You can also set this in config:
 }
 ```
 
+## Streamlit Checkpoint Dashboard
+
+Use the Streamlit app to inspect checkpoint JSON status across runs.
+
+```bash
+streamlit run streamlit_checkpoint_analyzer/checkpoint_dashboard.py -- \
+  --checkpoint-dir /path/to/checkpoints
+```
+
+You can also pass a top-level `AnalyzedData` directory as a positional argument (legacy-compatible mode):
+
+```bash
+streamlit run streamlit_checkpoint_analyzer/checkpoint_dashboard.py -- \
+  /path/to/AnalyzedData
+```
+
+By default (no argument), the app uses `./AnalyzedData/checkpoints` relative to the
+current working directory (recommended: run from the repository root).
+
 ## Command-Line Reference
 
 ### run_pipeline_driver.py
@@ -285,6 +306,7 @@ You can also set this in config:
 | sorting | `--sorter` | Spike sorter to use (default: kilosort4) |
 | sorting | `--docker` | Docker image for containerized sorting |
 | sorting | `--skip-spikesorting` | Spike detection only, skip full sorting |
+| sorting | `--extract-rawsortedspikes` | Save per-unit raw mean templates to `raw_mean_templates.npy` (requires `analyzer_output` or `phy_output`) |
 | plotting | `--plot-mode` | `separate` or `merged` (default: separate) |
 | plotting | `--raster-sort` | `none`, `firing_rate`, `location_y`, `unit_id` |
 | plotting | `--plot-debug` | Overlay burst/superburst intervals on plot |
@@ -312,5 +334,5 @@ Same groups and flags as the driver, minus `--dry` and the filtering group, plus
 ## Notes
 
 - `--well` and `--rec` are always CLI-only — they identify a specific file/recording and are never set in config
-- `--debug`, `--dry`, `--force-restart`, `--reanalyze-bursts`, `--skip-spikesorting` are CLI-only run control flags — they represent one-off decisions and are never set in config
+- `--debug`, `--dry`, `--force-restart`, `--reanalyze-bursts`, `--skip-spikesorting`, `--extract-rawsortedspikes` are CLI-only run control flags — they represent one-off decisions and are never set in config
 - Everything else can be set in `mea_config.json` and overridden per-run from CLI
