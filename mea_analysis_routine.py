@@ -587,9 +587,11 @@ class MEAPipeline:
         self.logger.debug("Recording: fs=%.0f Hz, n_frames=%d, window_samples=%d",
                           fs, n_frames, window_samples)
 
-        extracted_units = {}
-        for i, unit_id in enumerate(unit_ids):
-            self.logger.debug("Processing unit %d/%d (id=%s)", i + 1, len(unit_ids), unit_id)
+        # --- Pass 1: resolve primary channel and valid spike centers per unit ---
+        # Separating channel resolution from I/O lets us group units by channel
+        # and read each channel's trace only once.
+        unit_meta = {}  # unit_id → {channel_id, valid_centers}
+        for unit_id in unit_ids:
             template_idx = template_index_for_unit.get(str(unit_id))
             if template_idx is None:
                 self.logger.warning("Skipping unit/template %s: missing template index.", unit_id)
@@ -613,50 +615,80 @@ class MEAPipeline:
                 extremum_channel_id = channel_ids[extremum_local_idx]
 
             spike_train = np.asarray(get_spike_train(unit_id), dtype=np.int64)
-            spike_train_limited = spike_train[: int(max_spikes_per_unit)]
-
-            # Filter valid spike centers before any I/O
             valid_centers = [
-                int(c) for c in spike_train_limited
+                int(c) for c in spike_train[: int(max_spikes_per_unit)]
                 if int(c) - half_window >= 0 and int(c) - half_window + window_samples <= n_frames
             ]
+            unit_meta[unit_id] = {
+                "channel_id": str(extremum_channel_id),
+                "channel_id_raw": extremum_channel_id,
+                "valid_centers": valid_centers,
+            }
 
-            snippets = []
-            if valid_centers:
-                # One read covering all spikes for this unit on this channel
-                ch_start = int(valid_centers[0]) - half_window
-                ch_end = int(valid_centers[-1]) - half_window + window_samples
-                self.logger.debug(
-                    "  unit %s: ch=%s, %d valid spikes, reading frames [%d, %d] (%.2f s span)",
-                    unit_id, extremum_channel_id, len(valid_centers),
-                    ch_start, ch_end, (ch_end - ch_start) / fs,
-                )
-                ch_trace = np.asarray(
-                    raw_recording.get_traces(
-                        start_frame=ch_start,
-                        end_frame=ch_end,
-                        channel_ids=[str(extremum_channel_id)],
-                    ),
-                    dtype=np.float32,
-                ).reshape(-1)
+        # --- Pass 2: group by channel, one get_traces() call per channel ---
+        from collections import defaultdict
+        channel_to_units = defaultdict(list)
+        for unit_id, meta in unit_meta.items():
+            channel_to_units[meta["channel_id"]].append(unit_id)
+
+        n_channels = len(channel_to_units)
+        self.logger.info("Reading raw traces: %d unique channels for %d units",
+                         n_channels, len(unit_meta))
+
+        extracted_units = {}
+        for ch_i, (ch_id, ch_unit_ids) in enumerate(channel_to_units.items()):
+            # Collect all spike centers for this channel across all its units
+            all_centers = sorted({
+                c for uid in ch_unit_ids for c in unit_meta[uid]["valid_centers"]
+            })
+            if not all_centers:
+                for unit_id in ch_unit_ids:
+                    extracted_units[str(unit_id)] = {
+                        "unit_id": int(unit_id) if isinstance(unit_id, np.integer) else unit_id,
+                        "primary_channel": unit_meta[unit_id]["channel_id_raw"],
+                        "raw_mean_template": np.full(window_samples, np.nan, dtype=np.float32),
+                        "n_spikes_used": 0,
+                        "window_samples": int(window_samples),
+                    }
+                continue
+
+            ch_start = all_centers[0] - half_window
+            ch_end = all_centers[-1] - half_window + window_samples
+            self.logger.debug(
+                "Channel %s (%d/%d): %d units, reading frames [%d, %d] (%.1f s)",
+                ch_id, ch_i + 1, n_channels, len(ch_unit_ids),
+                ch_start, ch_end, (ch_end - ch_start) / fs,
+            )
+            ch_trace = np.asarray(
+                raw_recording.get_traces(
+                    start_frame=ch_start,
+                    end_frame=ch_end,
+                    channel_ids=[ch_id],
+                ),
+                dtype=np.float32,
+            ).reshape(-1)
+
+            for unit_id in ch_unit_ids:
+                valid_centers = unit_meta[unit_id]["valid_centers"]
+                snippets = []
                 for center in valid_centers:
-                    s = int(center) - half_window - ch_start
+                    s = center - half_window - ch_start
                     snippet = ch_trace[s : s + window_samples]
                     if snippet.shape[0] == window_samples:
                         snippets.append(snippet)
-
-            if snippets:
-                raw_mean_template = np.mean(snippets, axis=0).astype(np.float32)
-            else:
-                raw_mean_template = np.full(window_samples, np.nan, dtype=np.float32)
-
-            extracted_units[str(unit_id)] = {
-                "unit_id": int(unit_id) if isinstance(unit_id, np.integer) else unit_id,
-                "primary_channel": int(extremum_channel_id) if isinstance(extremum_channel_id, np.integer) else extremum_channel_id,
-                "raw_mean_template": raw_mean_template,
-                "n_spikes_used": int(len(snippets)),
-                "window_samples": int(window_samples),
-            }
+                raw_mean_template = (
+                    np.mean(snippets, axis=0).astype(np.float32)
+                    if snippets
+                    else np.full(window_samples, np.nan, dtype=np.float32)
+                )
+                ch_id_raw = unit_meta[unit_id]["channel_id_raw"]
+                extracted_units[str(unit_id)] = {
+                    "unit_id": int(unit_id) if isinstance(unit_id, np.integer) else unit_id,
+                    "primary_channel": int(ch_id_raw) if isinstance(ch_id_raw, np.integer) else ch_id_raw,
+                    "raw_mean_template": raw_mean_template,
+                    "n_spikes_used": int(len(snippets)),
+                    "window_samples": int(window_samples),
+                }
 
         output_path = self.output_dir / "raw_mean_templates.npy"
         np.save(output_path, extracted_units, allow_pickle=True)
