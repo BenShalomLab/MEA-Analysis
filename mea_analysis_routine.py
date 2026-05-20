@@ -538,6 +538,11 @@ class MEAPipeline:
                 get_spike_train = _get_spike_train_from_phy
                 template_index_for_unit = {str(uid): int(uid) for uid in unit_ids}
                 source_name = "phy_output"
+                self.logger.debug(
+                    "phy_output loaded: %d units, templates %s, channel_map %s, templates_ind %s",
+                    len(unit_ids), template_data.shape, channel_ids.shape,
+                    templates_ind.shape if templates_ind is not None else "not found",
+                )
         analyzer_folder = self.output_dir / "analyzer_output"
         if template_data is None and analyzer_folder.exists():
             self.analyzer = si.load_sorting_analyzer(analyzer_folder)
@@ -567,6 +572,9 @@ class MEAPipeline:
             )
             return None
 
+        self.logger.info("Raw mean template extraction: source=%s, %d units, window=%.1f ms",
+                         source_name, len(unit_ids), window_ms)
+        self.logger.debug("Loading raw recording file: %s", self.file_path)
         raw_recording = self._load_recording_file()
         if channel_ids is None:
             channel_ids = np.asarray(raw_recording.get_channel_ids())
@@ -576,9 +584,12 @@ class MEAPipeline:
         if window_samples % 2 == 0:
             window_samples += 1
         half_window = window_samples // 2
+        self.logger.debug("Recording: fs=%.0f Hz, n_frames=%d, window_samples=%d",
+                          fs, n_frames, window_samples)
 
         extracted_units = {}
-        for unit_id in unit_ids:
+        for i, unit_id in enumerate(unit_ids):
+            self.logger.debug("Processing unit %d/%d (id=%s)", i + 1, len(unit_ids), unit_id)
             template_idx = template_index_for_unit.get(str(unit_id))
             if template_idx is None:
                 self.logger.warning("Skipping unit/template %s: missing template index.", unit_id)
@@ -615,6 +626,11 @@ class MEAPipeline:
                 # One read covering all spikes for this unit on this channel
                 ch_start = int(valid_centers[0]) - half_window
                 ch_end = int(valid_centers[-1]) - half_window + window_samples
+                self.logger.debug(
+                    "  unit %s: ch=%s, %d valid spikes, reading frames [%d, %d] (%.2f s span)",
+                    unit_id, extremum_channel_id, len(valid_centers),
+                    ch_start, ch_end, (ch_end - ch_start) / fs,
+                )
                 ch_trace = np.asarray(
                     raw_recording.get_traces(
                         start_frame=ch_start,
