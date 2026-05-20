@@ -535,7 +535,7 @@ class MEAPipeline:
                     get_spike_train = _get_spike_train_from_phy
                     template_index_for_unit = {str(uid): int(uid) for uid in unit_ids}
                     source_name = "phy_output"
-                except Exception as e:
+                except (OSError, ValueError, RuntimeError) as e:
                     self.logger.warning(
                         "Failed loading template artifacts from phy_output (%s); falling back to analyzer_output.",
                         e,
@@ -562,7 +562,7 @@ class MEAPipeline:
                         return np.asarray(self.sorting.get_unit_spike_train(uid), dtype=np.int64)
                     get_spike_train = _get_spike_train_from_sorting
                     source_name = "analyzer_output"
-            except Exception as e:
+            except (OSError, ValueError, RuntimeError) as e:
                 self.logger.warning(
                     "Failed loading template artifacts from analyzer_output (%s); skipping raw mean template extraction.",
                     e,
@@ -578,7 +578,7 @@ class MEAPipeline:
 
         try:
             raw_recording = self._load_recording_file()
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             self.logger.warning("Skipping raw mean template extraction: failed loading recording (%s).", e)
             return None
         if channel_ids is None:
