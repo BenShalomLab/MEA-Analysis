@@ -55,6 +55,16 @@ def parse_args() -> argparse.Namespace:
         default="Raster Plot Dashboard",
         help="Dashboard page title",
     )
+    parser.add_argument(
+        "--group-by",
+        nargs="+",
+        choices=tuple(DEFAULT_METADATA.keys()),
+        default=["day"],
+        help=(
+            "Metadata field(s) used for dashboard sections. "
+            "Default: day"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -65,10 +75,14 @@ def empty_metadata() -> dict[str, Any]:
 def parse_path_metadata(plot_path: Path, anchor: str) -> dict[str, Any]:
     """Extract path metadata from the output tree.
 
-    Preferred parse:
-    .../<anchor>/<project>/<day>/<chip_id>/<run_id>/<well>/<pattern>
+    Preferred parse uses an anchor like:
+    .../<anchor>/.../<day>/<chip_id>/(Network/)<run_id>/<well>/<pattern>
 
-    Falls back to:
+    This supports both:
+    .../<anchor>/<project>/<day>/<chip_id>/<run_id>/<well>/<pattern>
+    .../<anchor>/<group>/<project>/<day>/<chip_id>/Network/<run_id>/<well>/<pattern>
+
+    If anchor parsing is not possible, this falls back to:
     .../<run_id>/<well>/<pattern>
     """
     metadata: dict[str, Any] = empty_metadata()
@@ -76,15 +90,30 @@ def parse_path_metadata(plot_path: Path, anchor: str) -> dict[str, Any]:
 
     if anchor in parts:
         idx = parts.index(anchor)
-        try:
-            metadata["project"] = parts[idx + 1]
-            metadata["day"] = parts[idx + 2]
-            metadata["chip_id"] = parts[idx + 3]
-            metadata["run_id"] = parts[idx + 4]
-            metadata["well"] = parts[idx + 5]
+        body = parts[idx + 1 : -1]  # exclude anchor and filename
+
+        if len(body) >= 2:
+            metadata["well"] = body[-1]
+            metadata["run_id"] = body[-2]
+
+            # Optional Network folder between chip_id and run_id.
+            chip_idx = -3
+            if len(body) >= 3 and str(body[-3]).lower() == "network":
+                chip_idx = -4
+
+            if len(body) >= abs(chip_idx):
+                metadata["chip_id"] = body[chip_idx]
+
+            day_idx = chip_idx - 1
+            if len(body) >= abs(day_idx):
+                metadata["day"] = body[day_idx]
+
+            # Everything before day is considered project context.
+            if len(body) > abs(day_idx):
+                project_tokens = body[:day_idx]
+                metadata["project"] = "/".join(project_tokens) if project_tokens else None
+
             return metadata
-        except IndexError:
-            pass
 
     metadata["well"] = plot_path.parent.name if plot_path.parent else None
     metadata["run_id"] = plot_path.parent.parent.name if len(plot_path.parents) >= 2 else None
@@ -109,20 +138,40 @@ def day_sort_key(day_value: Any) -> tuple[int, str]:
     return (1, day_str.lower())
 
 
-def render_dashboard(rows: list[dict[str, Any]], title: str) -> str:
+def format_group_label(row: dict[str, Any], group_by: list[str]) -> str:
+    values = []
+    for field in group_by:
+        value = row.get(field) or "Unknown"
+        values.append(f"{field}={value}")
+    return " | ".join(values)
+
+
+def group_sort_key(section_label: str) -> tuple[Any, ...]:
+    keys: list[Any] = []
+    for part in section_label.split(" | "):
+        _, _, value = part.partition("=")
+        if part.startswith("day="):
+            keys.append(day_sort_key(value))
+        else:
+            keys.append((0, str(value).lower()))
+    return tuple(keys)
+
+
+def render_dashboard(rows: list[dict[str, Any]], title: str, group_by: list[str]) -> str:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        day = row.get("day") or "Unknown"
-        grouped[str(day)].append(row)
+        section = format_group_label(row, group_by)
+        grouped[section].append(row)
 
-    day_sections: list[str] = []
-    for day in sorted(grouped.keys(), key=day_sort_key):
+    sections: list[str] = []
+    for section_label in sorted(grouped.keys(), key=group_sort_key):
         cards: list[str] = []
-        for row in sorted(grouped[day], key=lambda r: ((r.get("project") or ""), (r.get("chip_id") or ""), (r.get("run_id") or ""), (r.get("well") or ""))):
+        for row in sorted(grouped[section_label], key=lambda r: ((r.get("project") or ""), (r.get("day") or ""), (r.get("chip_id") or ""), (r.get("run_id") or ""), (r.get("well") or ""))):
             label = " | ".join(
                 x
                 for x in [
                     row.get("project"),
+                    row.get("day"),
                     row.get("chip_id"),
                     row.get("run_id"),
                     row.get("well"),
@@ -147,13 +196,13 @@ def render_dashboard(rows: list[dict[str, Any]], title: str) -> str:
                 )
             )
 
-        day_sections.append(
+        sections.append(
             """
             <section class=\"day-section\">
-              <h2>{day}</h2>
+              <h2>{section_label}</h2>
               <div class=\"grid\">{cards}</div>
             </section>
-            """.format(day=html.escape(day), cards="".join(cards))
+            """.format(section_label=html.escape(section_label), cards="".join(cards))
         )
 
     return """<!doctype html>
@@ -180,7 +229,7 @@ def render_dashboard(rows: list[dict[str, Any]], title: str) -> str:
   {sections}
 </body>
 </html>
-""".format(title=html.escape(title), count=len(rows), sections="".join(day_sections))
+""".format(title=html.escape(title), count=len(rows), sections="".join(sections))
 
 
 def main() -> int:
@@ -202,7 +251,7 @@ def main() -> int:
         row["image_rel_path"] = str(plot_path.relative_to(output_html.parent))
         rows.append(row)
 
-    html_text = render_dashboard(rows, args.title)
+    html_text = render_dashboard(rows, args.title, args.group_by)
     output_html.parent.mkdir(parents=True, exist_ok=True)
     output_html.write_text(html_text, encoding="utf-8")
 

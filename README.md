@@ -239,9 +239,10 @@ This scans recursively for `network_results.json` files and writes one row per f
 ### 10. Build raster dashboard HTML grouped by day
 ```bash
 python scripts/build_raster_dashboard_html.py /data/AnalyzedData \
-  --output-html /data/AnalyzedData/raster_dashboard.html
+  --output-html /data/AnalyzedData/raster_dashboard.html \
+  --group-by day chip_id
 ```
-This scans recursively for raster plot files (`raster_burst_plot_60s.svg` by default) and builds an HTML dashboard grouped by day folders.
+This scans recursively for raster plot files (`raster_burst_plot_60s.svg` by default), extracts path metadata (`project/day/chip_id/run_id/well`), and builds an HTML dashboard grouped by chosen metadata fields.
 
 ### 11. Resume after crash (automatic via checkpoint)
 ```bash
