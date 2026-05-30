@@ -697,7 +697,9 @@ class MEAPipeline:
                     [np.asarray(v, dtype=float) for v in spike_times.values() if len(v) > 0]
                 )
                 fig, (ax_hist, ax_bar) = plt.subplots(2, 1, figsize=(11, 8))
-                n_bins = max(50, min(400, int(np.sqrt(all_spikes.size))))
+                # Keep histogram informative for tiny and huge spike counts.
+                min_bins, max_bins = 50, 400
+                n_bins = max(min_bins, min(max_bins, int(np.sqrt(all_spikes.size))))
                 ax_hist.hist(all_spikes, bins=n_bins, color="steelblue", alpha=0.8)
                 ax_hist.set_title(
                     f"Burst diagnostics: spikes detected but analysis stopped ({reason})"
@@ -1213,7 +1215,10 @@ class MEAPipeline:
                 if spike_times_file.exists():
                     try:
                         loaded = np.load(spike_times_file, allow_pickle=True)
-                        candidate = loaded.item() if isinstance(loaded, np.ndarray) else loaded
+                        if isinstance(loaded, np.ndarray):
+                            candidate = loaded.item() if loaded.ndim == 0 else None
+                        else:
+                            candidate = loaded
                         if isinstance(candidate, dict):
                             spike_times = {
                                 uid: np.asarray(times) for uid, times in candidate.items()
@@ -1222,6 +1227,11 @@ class MEAPipeline:
                                 "Loaded spike times from %s for burst analysis (%d units).",
                                 spike_times_file,
                                 len(spike_times),
+                            )
+                        elif candidate is None:
+                            self.logger.warning(
+                                "Unexpected spike_times.npy structure (ndim=%s); expected 0-d object array with dict.",
+                                getattr(loaded, "ndim", "unknown"),
                             )
                     except Exception as exc:
                         self.logger.warning(
