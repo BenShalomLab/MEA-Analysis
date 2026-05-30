@@ -236,7 +236,14 @@ python scripts/collect_network_results_csv.py /data/AnalyzedData \
 ```
 This scans recursively for `network_results.json` files and writes one row per file with path metadata plus flattened scalar metrics.
 
-### 10. Resume after crash (automatic via checkpoint)
+### 10. Build raster dashboard HTML grouped by day
+```bash
+python scripts/build_raster_dashboard_html.py /data/AnalyzedData \
+  --output-html /data/AnalyzedData/raster_dashboard.html
+```
+This scans recursively for raster plot files (`raster_burst_plot_60s.svg` by default) and builds an HTML dashboard grouped by day folders.
+
+### 11. Resume after crash (automatic via checkpoint)
 ```bash
 # just re-run the same command — checkpoints handle resumption automatically
 python run_pipeline_driver.py /data/experiment --config mea_config.json
