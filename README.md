@@ -229,7 +229,14 @@ python run_pipeline_driver.py /data/experiment \
   --type "network today"
 ```
 
-### 9. Resume after crash (automatic via checkpoint)
+### 9. Consolidate `network_results.json` into one CSV
+```bash
+python scripts/collect_network_results_csv.py /data/AnalyzedData \
+  --output-csv /data/AnalyzedData/network_results_summary.csv
+```
+This scans recursively for `network_results.json` files and writes one row per file with path metadata plus flattened scalar metrics.
+
+### 10. Resume after crash (automatic via checkpoint)
 ```bash
 # just re-run the same command — checkpoints handle resumption automatically
 python run_pipeline_driver.py /data/experiment --config mea_config.json

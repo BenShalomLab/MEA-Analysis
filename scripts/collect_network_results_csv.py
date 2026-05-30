@@ -6,11 +6,19 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
 
 SCALAR_TYPES = (str, int, float, bool, type(None))
+DEFAULT_METADATA = {
+    "project": None,
+    "date": None,
+    "chip_id": None,
+    "run_id": None,
+    "well": None,
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,15 +48,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def empty_metadata() -> dict[str, Any]:
+    return dict(DEFAULT_METADATA)
+
+
 def parse_path_metadata(json_path: Path, anchor: str) -> dict[str, Any]:
+    """Extract path metadata from the output tree.
+
+    Preferred parse uses an anchor like:
+    .../<anchor>/<project>/<date>/<chip_id>/<run_id>/<well>/network_results.json
+
+    If anchor parsing is not possible, this falls back to:
+    .../<run_id>/<well>/network_results.json
+    """
     parts = list(json_path.parts)
-    metadata: dict[str, Any] = {
-        "project": None,
-        "date": None,
-        "chip_id": None,
-        "run_id": None,
-        "well": None,
-    }
+    metadata: dict[str, Any] = empty_metadata()
 
     if anchor in parts:
         idx = parts.index(anchor)
@@ -56,8 +70,8 @@ def parse_path_metadata(json_path: Path, anchor: str) -> dict[str, Any]:
             metadata["project"] = parts[idx + 1]
             metadata["date"] = parts[idx + 2]
             metadata["chip_id"] = parts[idx + 3]
-            metadata["run_id"] = parts[idx + 5]
-            metadata["well"] = parts[idx + 6]
+            metadata["run_id"] = parts[idx + 4]
+            metadata["well"] = parts[idx + 5]
             return metadata
         except IndexError:
             pass
@@ -120,13 +134,7 @@ def load_row(json_path: Path, anchor: str) -> dict[str, Any]:
 
 
 def write_csv(rows: list[dict[str, Any]], output_csv: Path) -> None:
-    fieldnames: list[str] = []
-    seen = set()
-    for row in rows:
-        for key in row:
-            if key not in seen:
-                seen.add(key)
-                fieldnames.append(key)
+    fieldnames = list(dict.fromkeys(chain.from_iterable(row.keys() for row in rows)))
 
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     with output_csv.open("w", newline="", encoding="utf-8") as f:
@@ -155,11 +163,7 @@ def main() -> int:
             rows.append(
                 {
                     "json_path": str(path),
-                    "project": None,
-                    "date": None,
-                    "chip_id": None,
-                    "run_id": None,
-                    "well": None,
+                    **empty_metadata(),
                     "error": str(exc),
                 }
             )
