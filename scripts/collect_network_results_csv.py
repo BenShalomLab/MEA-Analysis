@@ -76,7 +76,7 @@ def parse_path_metadata(json_path: Path, anchor: str) -> dict[str, Any]:
             metadata["well"] = body[-1]
             metadata["run_id"] = body[-2]
 
-            # Optional assay folder between chip_id and run_id.
+            # Optional Network folder between chip_id and run_id.
             assay_idx = -3
             if len(body) >= 3 and str(body[-3]).lower() == "network":
                 assay_idx = -4
