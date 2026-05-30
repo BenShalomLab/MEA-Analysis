@@ -56,7 +56,11 @@ def parse_path_metadata(json_path: Path, anchor: str) -> dict[str, Any]:
     """Extract path metadata from the output tree.
 
     Preferred parse uses an anchor like:
+    .../<anchor>/.../<date>/<chip_id>/(Network/)<run_id>/<well>/network_results.json
+
+    This supports both:
     .../<anchor>/<project>/<date>/<chip_id>/<run_id>/<well>/network_results.json
+    .../<anchor>/<group>/<project>/<date>/<chip_id>/Network/<run_id>/<well>/network_results.json
 
     If anchor parsing is not possible, this falls back to:
     .../<run_id>/<well>/network_results.json
@@ -66,15 +70,30 @@ def parse_path_metadata(json_path: Path, anchor: str) -> dict[str, Any]:
 
     if anchor in parts:
         idx = parts.index(anchor)
-        try:
-            metadata["project"] = parts[idx + 1]
-            metadata["date"] = parts[idx + 2]
-            metadata["chip_id"] = parts[idx + 3]
-            metadata["run_id"] = parts[idx + 4]
-            metadata["well"] = parts[idx + 5]
+        body = parts[idx + 1 : -1]  # exclude anchor and filename
+
+        if len(body) >= 2:
+            metadata["well"] = body[-1]
+            metadata["run_id"] = body[-2]
+
+            # Optional assay folder between chip_id and run_id.
+            assay_idx = -3
+            if len(body) >= 3 and str(body[-3]).lower() == "network":
+                assay_idx = -4
+
+            if len(body) >= abs(assay_idx):
+                metadata["chip_id"] = body[assay_idx]
+
+            date_idx = assay_idx - 1
+            if len(body) >= abs(date_idx):
+                metadata["date"] = body[date_idx]
+
+            # Everything before date is considered project context.
+            if len(body) > abs(date_idx):
+                project_tokens = body[:date_idx]
+                metadata["project"] = "/".join(project_tokens) if project_tokens else None
+
             return metadata
-        except IndexError:
-            pass
 
     # Fallback to local parent structure: .../<run>/<well>/network_results.json
     if len(json_path.parents) >= 2:
