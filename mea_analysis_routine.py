@@ -1518,6 +1518,7 @@ class MEARunOptions:
     docker_image: str | None = None
     verbose: bool = False
     cleanup: bool = False
+    cleanup_only: bool = False
     force_restart: bool = False
     resume_from: str | None = None
     n_jobs: int | None = None
@@ -1661,6 +1662,10 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
 
     _apply_resume_from_stage(pipeline, options.resume_from)
 
+    if bool(options.cleanup_only):
+        pipeline.cleanup()
+        return MEARunResult(pipeline=pipeline, skipped=True, reanalyzed_bursts=False)
+
     if bool(options.reanalyze_bursts):
         pipeline._run_burst_analysis(
             plot_mode=options.plot_mode,
@@ -1783,6 +1788,8 @@ def main():
         help="Resume by rewinding checkpoint to just before this stage and rerunning from there")
     ctrl_group.add_argument("--reanalyze-bursts", action="store_true",
         help="Re-run burst analysis on existing spike times only")
+    ctrl_group.add_argument("--clean-up-only", action="store_true",
+        help="Only delete intermediate output artifacts and exit")
     ctrl_group.add_argument("--debug", action="store_true",
         help="Enable verbose logging")
 
@@ -1922,7 +1929,8 @@ def main():
                 sorter=sorter,
                 docker_image=resolved["docker_image"],
                 verbose=bool(args.debug),
-                cleanup=bool(resolved["clean_up"]),
+                cleanup=bool(resolved["clean_up"] or args.clean_up_only),
+                cleanup_only=bool(args.clean_up_only),
                 force_restart=bool(args.force_restart),
                 resume_from=args.resume_from,
                 um_kwargs={
@@ -1968,6 +1976,10 @@ def main():
 
         if result.reanalyzed_bursts:
             print("Burst Re-analysis Complete.")
+            sys.exit(0)
+
+        if args.clean_up_only:
+            print(f"Cleanup Complete for {args.well}")
             sys.exit(0)
 
         if result.skipped:

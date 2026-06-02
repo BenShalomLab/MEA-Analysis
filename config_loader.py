@@ -194,6 +194,7 @@ def build_extra_args(resolved, cli_args):
     if getattr(cli_args, "debug", False):             extra.append("--debug")
     if getattr(cli_args, "skip_spikesorting", False): extra.append("--skip-spikesorting")
     if getattr(cli_args, "reanalyze_bursts", False):  extra.append("--reanalyze-bursts")
+    if getattr(cli_args, "clean_up_only", False):     extra.append("--clean-up-only")
     if getattr(cli_args, "resume_from", None):         extra.append(f"--resume-from {getattr(cli_args, 'resume_from')}")
     if getattr(cli_args, "unitmatch_merge_units", False): extra.append("--unitmatch-merge-units")
     if getattr(cli_args, "unitmatch_dry_run", False):     extra.append("--unitmatch-dry-run")

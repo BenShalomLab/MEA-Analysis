@@ -284,6 +284,7 @@ current working directory (recommended: run from the repository root).
 | input/output | `--checkpoint-dir` | Checkpoint directory (default: output-dir/checkpoints) |
 | input/output | `--export-to-phy` | Export results to Phy format |
 | input/output | `--clean-up` | Remove intermediate files after processing |
+| run control | `--clean-up-only` | Only delete intermediate files for each discovered well and exit |
 | filtering | `--reference` | Path to an Excel file mapping run IDs to assay types (see [Reference File](#reference-file)) |
 | filtering | `--type` | Assay type(s) to include — only runs whose `Assay` value matches are processed (default: `network today`, `network today/best`) |
 | sorting | `--sorter` | Spike sorter to use (default: kilosort4) |
