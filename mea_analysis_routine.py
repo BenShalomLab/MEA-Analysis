@@ -1663,6 +1663,8 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
     _apply_resume_from_stage(pipeline, options.resume_from)
 
     if bool(options.cleanup_only):
+        pipeline.cleanup_flag = True
+        pipeline.logger.info("Running in cleanup-only mode; no processing stages will execute.")
         pipeline.cleanup()
         return MEARunResult(pipeline=pipeline, skipped=True, reanalyzed_bursts=False)
 
