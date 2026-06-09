@@ -229,7 +229,22 @@ python run_pipeline_driver.py /data/experiment \
   --type "network today"
 ```
 
-### 9. Resume after crash (automatic via checkpoint)
+### 9. Consolidate `network_results.json` into one CSV
+```bash
+python scripts/collect_network_results_csv.py /data/AnalyzedData \
+  --output-csv /data/AnalyzedData/network_results_summary.csv
+```
+This scans recursively for `network_results.json` files and writes one row per file with path metadata plus flattened scalar metrics.
+
+### 10. Build raster dashboard HTML grouped by day
+```bash
+python scripts/build_raster_dashboard_html.py /data/AnalyzedData \
+  --output-html /data/AnalyzedData/raster_dashboard.html \
+  --group-by day chip_id
+```
+This scans recursively for raster plot files (`raster_burst_plot_60s.svg` by default), extracts path metadata (`project/day/chip_id/run_id/well`), and builds an HTML dashboard grouped by chosen metadata fields.
+
+### 11. Resume after crash (automatic via checkpoint)
 ```bash
 # just re-run the same command — checkpoints handle resumption automatically
 python run_pipeline_driver.py /data/experiment --config mea_config.json
@@ -269,6 +284,7 @@ current working directory (recommended: run from the repository root).
 | input/output | `--checkpoint-dir` | Checkpoint directory (default: output-dir/checkpoints) |
 | input/output | `--export-to-phy` | Export results to Phy format |
 | input/output | `--clean-up` | Remove intermediate files after processing |
+| run control | `--clean-up-only` | Only delete intermediate files for each discovered well and exit |
 | filtering | `--reference` | Path to an Excel file mapping run IDs to assay types (see [Reference File](#reference-file)) |
 | filtering | `--type` | Assay type(s) to include — only runs whose `Assay` value matches are processed (default: `network today`, `network today/best`) |
 | sorting | `--sorter` | Spike sorter to use (default: kilosort4) |

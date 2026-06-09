@@ -659,10 +659,77 @@ class MEAPipeline:
                 if np.any(mask)
                 else np.array([])
             )
-        
+
+        self._detected_spike_times = spike_times
         np.save(self.output_dir / "spike_times.npy", spike_times)
 
         return list(spike_times.keys())
+
+    def _write_burst_diagnostics(self, spike_times: dict[Any, np.ndarray], reason: str) -> None:
+        """Save lightweight diagnostics when burst analysis cannot proceed."""
+        try:
+            counts = {
+                str(uid): int(len(np.asarray(times)))
+                for uid, times in spike_times.items()
+            }
+            total_spikes = int(sum(counts.values()))
+            nonempty_units = int(sum(1 for c in counts.values() if c > 0))
+
+            diagnostics = {
+                "reason": reason,
+                "timestamp": str(datetime.now()),
+                "has_sorting": bool(self.sorting),
+                "n_units": int(len(spike_times)),
+                "n_nonempty_units": nonempty_units,
+                "total_spikes": total_spikes,
+                "spike_times_file": str(self.output_dir / "spike_times.npy"),
+                "top_units_by_spikes": dict(
+                    sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:20]
+                ),
+            }
+
+            diag_json = self.output_dir / "burst_analysis_diagnostics.json"
+            with open(diag_json, "w", encoding="utf-8") as f:
+                json.dump(diagnostics, f, indent=2)
+
+            if total_spikes > 0:
+                all_spikes = np.concatenate(
+                    [np.asarray(v, dtype=float) for v in spike_times.values() if len(v) > 0]
+                )
+                fig, (ax_hist, ax_bar) = plt.subplots(2, 1, figsize=(11, 8))
+                # Keep histogram informative for tiny and huge spike counts.
+                min_bins, max_bins = 50, 400
+                n_bins = max(min_bins, min(max_bins, int(np.sqrt(all_spikes.size))))
+                ax_hist.hist(all_spikes, bins=n_bins, color="steelblue", alpha=0.8)
+                ax_hist.set_title(
+                    f"Burst diagnostics: spikes detected but analysis stopped ({reason})"
+                )
+                ax_hist.set_ylabel("Spike count")
+                ax_hist.set_xlabel("Time (s)")
+                ax_hist.spines["top"].set_visible(False)
+                ax_hist.spines["right"].set_visible(False)
+
+                top_items = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:30]
+                labels = [k for k, _ in top_items]
+                values = [v for _, v in top_items]
+                ax_bar.bar(range(len(values)), values, color="gray")
+                ax_bar.set_ylabel("Spikes")
+                ax_bar.set_xlabel("Top units/channels by spike count")
+                ax_bar.set_xticks(range(len(labels)))
+                ax_bar.set_xticklabels(labels, rotation=75, fontsize=7)
+                ax_bar.spines["top"].set_visible(False)
+                ax_bar.spines["right"].set_visible(False)
+                plt.tight_layout()
+                diag_png = self.output_dir / "burst_analysis_diagnostic_plot.png"
+                plt.savefig(diag_png, dpi=200)
+                plt.close(fig)
+
+            self.logger.info(
+                "Saved burst diagnostics to %s",
+                self.output_dir / "burst_analysis_diagnostics.json",
+            )
+        except Exception as exc:
+            self.logger.warning("Failed to write burst diagnostics: %s", exc)
 
     # --- Phase 2.5: Merge (Optional) ---
     def run_optional_merge_phase(self):
@@ -1129,15 +1196,76 @@ class MEAPipeline:
                 self.logger.error(
                     "No valid units left for burst analysis after filtering missing unit IDs."
                 )
+                self._write_burst_diagnostics(spike_times, "no_valid_units_after_sorting_filter")
                 return
 
             np.save(self.output_dir / "spike_times.npy", spike_times)
         else:
-            self.logger.error("No spike times found for burst analysis.")
-            return
+            cached_spike_times = getattr(self, "_detected_spike_times", None)
+            if isinstance(cached_spike_times, dict) and cached_spike_times:
+                spike_times = {
+                    uid: np.asarray(times) for uid, times in cached_spike_times.items()
+                }
+                self.logger.info(
+                    "Using in-memory detected spike times for burst analysis (%d units).",
+                    len(spike_times),
+                )
+            else:
+                spike_times_file = self.output_dir / "spike_times.npy"
+                if spike_times_file.exists():
+                    try:
+                        loaded = np.load(spike_times_file, allow_pickle=True)
+                        if isinstance(loaded, np.ndarray):
+                            candidate = loaded.item() if loaded.ndim == 0 else None
+                        else:
+                            candidate = loaded
+                        if isinstance(candidate, dict):
+                            spike_times = {
+                                uid: np.asarray(times) for uid, times in candidate.items()
+                            }
+                            self.logger.info(
+                                "Loaded spike times from %s for burst analysis (%d units).",
+                                spike_times_file,
+                                len(spike_times),
+                            )
+                        elif candidate is None:
+                            self.logger.warning(
+                                "Unexpected spike_times.npy structure (ndim=%s); expected 0-d object array with dict.",
+                                getattr(loaded, "ndim", "unknown"),
+                            )
+                    except Exception as exc:
+                        self.logger.warning(
+                            "Failed loading spike_times.npy for burst analysis: %s", exc
+                        )
+
+            if ids_list is not None and spike_times:
+                requested = set(ids_list)
+                filtered = {
+                    uid: times for uid, times in spike_times.items() if uid in requested
+                }
+                if not filtered:
+                    requested_str = {str(uid) for uid in ids_list}
+                    filtered = {
+                        uid: times
+                        for uid, times in spike_times.items()
+                        if str(uid) in requested_str
+                    }
+                spike_times = filtered
+
+            if not spike_times:
+                self.logger.error("No spike times found for burst analysis.")
+                self._write_burst_diagnostics(spike_times, "no_spike_times_found")
+                return
 
         if not spike_times:
             self.logger.warning("Spike times dictionary is empty. Skipping burst analysis.")
+            self._write_burst_diagnostics(spike_times, "spike_times_dict_empty")
+            return
+
+        total_spikes = int(sum(len(np.asarray(v)) for v in spike_times.values()))
+        if total_spikes == 0:
+            self.logger.warning("Spike times are present but empty. Skipping burst analysis.")
+            self._write_burst_diagnostics(spike_times, "all_units_empty_spike_times")
             return
 
         # ---------------------------------------------------------
@@ -1151,6 +1279,9 @@ class MEAPipeline:
 
             if isinstance(network_data, dict) and "error" in network_data:
                 self.logger.error(f"Burst detector returned error: {network_data['error']}")
+                self._write_burst_diagnostics(
+                    spike_times, f"burst_detector_error:{network_data['error']}"
+                )
                 return
 
             # B. Extract array and tabular data before JSON serialization
@@ -1387,6 +1518,7 @@ class MEARunOptions:
     docker_image: str | None = None
     verbose: bool = False
     cleanup: bool = False
+    cleanup_only: bool = False
     force_restart: bool = False
     resume_from: str | None = None
     n_jobs: int | None = None
@@ -1545,6 +1677,12 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
 
     _apply_resume_from_stage(pipeline, options.resume_from)
 
+    if bool(options.cleanup_only):
+        pipeline.cleanup_flag = True
+        pipeline.logger.info("Running in cleanup-only mode; no processing stages will execute.")
+        pipeline.cleanup()
+        return MEARunResult(pipeline=pipeline, skipped=True, reanalyzed_bursts=False)
+
     if bool(options.reanalyze_bursts):
         pipeline._run_burst_analysis(
             plot_mode=options.plot_mode,
@@ -1667,6 +1805,8 @@ def main():
         help="Resume by rewinding checkpoint to just before this stage and rerunning from there")
     ctrl_group.add_argument("--reanalyze-bursts", action="store_true",
         help="Re-run burst analysis on existing spike times only")
+    ctrl_group.add_argument("--clean-up-only", action="store_true",
+        help="Only delete intermediate output artifacts and exit")
     ctrl_group.add_argument("--debug", action="store_true",
         help="Enable verbose logging")
 
@@ -1806,7 +1946,8 @@ def main():
                 sorter=sorter,
                 docker_image=resolved["docker_image"],
                 verbose=bool(args.debug),
-                cleanup=bool(resolved["clean_up"]),
+                cleanup=bool(resolved["clean_up"] or args.clean_up_only),
+                cleanup_only=bool(args.clean_up_only),
                 force_restart=bool(args.force_restart),
                 resume_from=args.resume_from,
                 um_kwargs={
@@ -1852,6 +1993,10 @@ def main():
 
         if result.reanalyzed_bursts:
             print("Burst Re-analysis Complete.")
+            sys.exit(0)
+
+        if args.clean_up_only:
+            print(f"Cleanup Complete for {args.well}")
             sys.exit(0)
 
         if result.skipped:
