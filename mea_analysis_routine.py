@@ -1528,6 +1528,21 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
         option_kwargs=option_kwargs,
     )
 
+    # skip_spikesorting still executes spike-detection + burst analysis, so it counts as execution.
+    stage_execution_requested = any(
+        (
+            options.reanalyze_bursts,
+            options.skip_spikesorting,
+            options.run_analyzer,
+            options.run_reports,
+        )
+    )
+    cleanup_only = options.cleanup and not stage_execution_requested
+    if cleanup_only:
+        pipeline.logger.info("Running in cleanup-only mode; no processing stages will execute.")
+        pipeline.cleanup()
+        return MEARunResult(pipeline=pipeline, skipped=False, reanalyzed_bursts=False)
+
     _apply_resume_from_stage(pipeline, options.resume_from)
 
     if bool(options.reanalyze_bursts):
