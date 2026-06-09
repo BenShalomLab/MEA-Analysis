@@ -1528,13 +1528,15 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
         option_kwargs=option_kwargs,
     )
 
-    cleanup_only = (
-        bool(options.cleanup)
-        and not bool(options.reanalyze_bursts)
-        and not bool(options.skip_spikesorting)
-        and not bool(options.run_analyzer)
-        and not bool(options.run_reports)
+    processing_requested = any(
+        (
+            options.reanalyze_bursts,
+            options.skip_spikesorting,
+            options.run_analyzer,
+            options.run_reports,
+        )
     )
+    cleanup_only = bool(options.cleanup) and not processing_requested
     if cleanup_only:
         pipeline.logger.info("Running in cleanup-only mode; no processing stages will execute.")
         pipeline.cleanup()
