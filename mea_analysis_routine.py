@@ -1536,7 +1536,7 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
             options.run_reports,
         )
     )
-    cleanup_only = bool(options.cleanup) and not processing_requested
+    cleanup_only = options.cleanup and not processing_requested
     if cleanup_only:
         pipeline.logger.info("Running in cleanup-only mode; no processing stages will execute.")
         pipeline.cleanup()
