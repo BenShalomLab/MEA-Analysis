@@ -1,7 +1,9 @@
 import os
+import re
 import json
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -76,9 +78,11 @@ class ReportsMixin:
                                      raster_sort=raster_sort, fixed_y=fixed_y)
 
             if export_phy:
+                phy_folder = self.output_dir / "phy_output"
                 si.export_to_phy(self.analyzer.select_units(clean_units),
-                                 output_folder=self.output_dir / "phy_output",
+                                 output_folder=phy_folder,
                                  remove_if_exists=True, copy_binary=False)
+                self._patch_phy_binary_path(phy_folder)
 
             self._save_checkpoint(ProcessingStage.REPORTS_COMPLETE, n_units=len(clean_units),
                                   failed_stage=None, error=None)
@@ -436,3 +440,43 @@ class ReportsMixin:
 
         self.logger.warning(f"Unknown raster_sort: {raster_sort}. Falling back to none.")
         return None
+
+    def _patch_phy_binary_path(self, phy_folder: Path):
+        """Create a relative symlink in phy_output/ so phy finds the binary without
+        depending on absolute paths. Patches params.py dat_path to the filename only."""
+        binary_dir = self.output_dir / "binary"
+        if not binary_dir.exists():
+            self.logger.warning("phy export: binary/ not found, TraceView will be unavailable")
+            return
+
+        raw_files = sorted(binary_dir.glob("traces_cached_seg*.raw"))
+        if not raw_files:
+            self.logger.warning("phy export: no traces_cached_seg*.raw in binary/, TraceView will be unavailable")
+            return
+
+        params_file = phy_folder / "params.py"
+        if not params_file.exists():
+            return
+
+        for raw_file in raw_files:
+            link = phy_folder / raw_file.name
+            if not link.exists():
+                try:
+                    link.symlink_to(Path("..") / "binary" / raw_file.name)
+                except Exception as e:
+                    self.logger.warning("phy export: could not symlink %s: %s", raw_file.name, e)
+
+        # Patch dat_path in params.py to use just the filename (relative to phy_output/)
+        # so phy resolves it against its working directory rather than the original abs path.
+        try:
+            text = params_file.read_text()
+            # SpikeInterface writes one dat_path line per segment for multi-segment, or a single line
+            text = re.sub(
+                r"(dat_path\s*=\s*)['\"].*?['\"]",
+                lambda m: m.group(1) + repr(raw_files[0].name),
+                text,
+            )
+            params_file.write_text(text)
+            self.logger.info("phy export: patched params.py to relative binary path (%s)", raw_files[0].name)
+        except Exception as e:
+            self.logger.warning("phy export: could not patch params.py: %s", e)

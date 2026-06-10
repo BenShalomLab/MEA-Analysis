@@ -269,7 +269,11 @@ class MEAPipeline(
     def cleanup(self):
         if self.cleanup_flag:
             self.logger.info("Cleaning up temp files...")
-            shutil.rmtree(self.output_dir / "binary", ignore_errors=True)
+            # Preserve binary/ when phy_output exists: phy's symlink relies on it.
+            if (self.output_dir / "phy_output").exists():
+                self.logger.info("Skipping binary/ cleanup: phy_output exists and symlinks into it.")
+            else:
+                shutil.rmtree(self.output_dir / "binary", ignore_errors=True)
             shutil.rmtree(self.output_dir / "sorter_output", ignore_errors=True)
         self.recording = None
         self.sorting = None
