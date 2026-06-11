@@ -45,8 +45,7 @@ class WaveformMixin:
         # Fall back to phy_output only if analyzer is absent.
         template_data = None
         channel_ids = None
-        templates_ind = None           # phy sparse index only
-        use_analyzer_sparsity = False  # True → use analyzer.sparsity.mask
+        templates_ind = None   # phy sparse index only
         template_index_for_unit = None
 
         analyzer_folder = self.output_dir / "analyzer_output"
@@ -58,17 +57,14 @@ class WaveformMixin:
                 self.analyzer.compute("templates", verbose=self.verbose)
                 templates_ext = self.analyzer.get_extension("templates")
             if templates_ext is not None:
+                # get_data() returns dense (n_units, n_time, n_all_channels) with zeros
+                # outside the sparsity mask — extremum_local_idx is a global channel index.
                 template_data = np.asarray(templates_ext.get_data())
                 channel_ids = np.asarray(self.analyzer.channel_ids)
                 template_index_for_unit = {str(uid): i for i, uid in enumerate(self.analyzer.unit_ids)}
-                use_analyzer_sparsity = (
-                    hasattr(self.analyzer, "sparsity")
-                    and self.analyzer.sparsity is not None
-                    and hasattr(self.analyzer.sparsity, "mask")
-                )
                 self.logger.debug(
-                    "Templates from analyzer: shape=%s  n_channels=%d  sparse=%s",
-                    template_data.shape, len(channel_ids), use_analyzer_sparsity,
+                    "Templates from analyzer: shape=%s  n_channels=%d",
+                    template_data.shape, len(channel_ids),
                 )
 
         if template_data is None:
@@ -153,15 +149,12 @@ class WaveformMixin:
                 n_no_template += 1
                 continue
 
-            # Bug 1 fix: map sparse-local index → global recording channel via sparsity mask.
-            # Without this fix, extremum_local_idx (always 0 when K=1) would index into the
-            # full 1020-channel list and every unit would be assigned channel_ids[0].
+            # extremum_local_idx is a global channel index for the analyzer path because
+            # get_data() returns dense (n_all_channels) with zeros outside the sparsity mask.
+            # For the phy path with templates_ind, it is a local sparse index that must be
+            # remapped through templates_ind → global channel index.
             extremum_local_idx = int(np.argmin(np.min(template, axis=0)))
-            if use_analyzer_sparsity:
-                unit_mask = self.analyzer.sparsity.mask[template_idx]  # bool (n_recording_channels,)
-                unit_active_channels = channel_ids[unit_mask]
-                extremum_channel_id = unit_active_channels[extremum_local_idx]
-            elif templates_ind is not None:
+            if templates_ind is not None:
                 recording_ch_idx = int(templates_ind[template_idx, extremum_local_idx])
                 extremum_channel_id = channel_ids[recording_ch_idx]
             else:
