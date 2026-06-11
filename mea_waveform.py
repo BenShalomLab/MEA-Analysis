@@ -1,4 +1,5 @@
 import json
+from collections import defaultdict
 from datetime import datetime
 
 import numpy as np
@@ -134,8 +135,8 @@ class WaveformMixin:
             fs, n_frames, n_before, n_after, window_samples,
         )
 
-        # ── 4. Per-unit extraction ─────────────────────────────────────────────
-        extracted_units = {}
+        # ── 4. Per-unit: resolve primary channel + sample spike centers ───────────
+        unit_meta = {}   # uid → {channel_id_str, channel_id_raw, valid_centers}
         n_no_template = 0
 
         for uid_key in curated_unit_ids:
@@ -144,15 +145,14 @@ class WaveformMixin:
                 n_no_template += 1
                 continue
 
-            template = np.asarray(template_data[template_idx])  # (n_time, n_sparse_ch)
+            template = np.asarray(template_data[template_idx])  # (n_time, n_all_ch) dense
             if template.ndim != 2 or template.shape[1] == 0:
                 n_no_template += 1
                 continue
 
-            # extremum_local_idx is a global channel index for the analyzer path because
-            # get_data() returns dense (n_all_channels) with zeros outside the sparsity mask.
-            # For the phy path with templates_ind, it is a local sparse index that must be
-            # remapped through templates_ind → global channel index.
+            # get_data() returns dense (zeros outside sparsity mask) so extremum_local_idx
+            # is already a global channel index for the analyzer path.
+            # For the phy path with templates_ind it is a local sparse index remapped below.
             extremum_local_idx = int(np.argmin(np.min(template, axis=0)))
             if templates_ind is not None:
                 recording_ch_idx = int(templates_ind[template_idx, extremum_local_idx])
@@ -160,13 +160,12 @@ class WaveformMixin:
             else:
                 extremum_channel_id = channel_ids[extremum_local_idx]
 
-            # Bug 2 fix: round seconds → samples (truncation misaligns waveforms by 1 sample).
+            # Round seconds → samples (truncation misaligns by up to 1 sample).
             spike_samples = np.round(
                 np.asarray(saved_spike_times[uid_key], dtype=np.float64) * fs
             ).astype(np.int64)
 
-            # Bug 3+4 fix: filter boundary spikes across ALL spikes first, then random-sample.
-            # Original code sliced [:N] then filtered, losing spikes at the cost of the limit.
+            # Filter boundary spikes across ALL spikes first, then random-sample up to limit.
             all_valid = [
                 int(c) for c in spike_samples
                 if n_before <= int(c) < n_frames - n_after
@@ -177,56 +176,119 @@ class WaveformMixin:
             else:
                 selected_centers = sorted(all_valid)
 
-            if not selected_centers:
-                extracted_units[str(uid_key)] = {
-                    "unit_id": uid_key,
-                    "primary_channel": extremum_channel_id,
-                    "raw_mean_template": np.full(window_samples, np.nan, dtype=np.float32),
-                    "n_spikes_used": 0,
-                    "window_samples": int(window_samples),
-                }
-                continue
-
-            # Bug 5 fix: read one small window per spike instead of one huge contiguous span
-            # covering first→last spike (which could be the full recording, e.g. 28 GB for
-            # 400 channels × 30 min at 10 kHz).
-            ch_id_str = str(extremum_channel_id)
-            snippets = []
-            for center in selected_centers:
-                start = center - n_before
-                snippet = np.asarray(
-                    raw_recording.get_traces(
-                        start_frame=start,
-                        end_frame=start + window_samples,
-                        channel_ids=[ch_id_str],
-                    ),
-                    dtype=np.float32,
-                ).reshape(-1)
-                if snippet.shape[0] == window_samples:
-                    snippets.append(snippet)
-
-            raw_mean_template = (
-                np.mean(snippets, axis=0).astype(np.float32)
-                if snippets
-                else np.full(window_samples, np.nan, dtype=np.float32)
-            )
-            extracted_units[str(uid_key)] = {
-                "unit_id": uid_key,
-                "primary_channel": extremum_channel_id,
-                "raw_mean_template": raw_mean_template,
-                "n_spikes_used": int(len(snippets)),
-                "window_samples": int(window_samples),
-                "ms_before": float(ms_before),
-                "ms_after": float(ms_after),
+            unit_meta[uid_key] = {
+                "channel_id":     str(extremum_channel_id),
+                "channel_id_raw": extremum_channel_id,
+                "valid_centers":  selected_centers,
             }
 
         if n_no_template:
             self.logger.warning(
                 "%d curated units had no matching template and were skipped.", n_no_template
             )
+
+        # ── 5. Single streaming pass — one sequential block read per block ─────
+        # Builds a global time-sorted event list then streams through the recording
+        # in BLOCK_SIZE chunks.  This replaces n_units × n_spikes individual seeks
+        # (e.g. 300 × 200 = 60 000 calls) with ~ceil(n_frames / BLOCK_SIZE) calls,
+        # which is critical for performance on network-mounted NAS storage.
+        BLOCK_SIZE = 50_000   # 5 s at 10 kHz; ~60 MB/block for 300 channels × float32
+
+        all_spike_events = []  # (center, uid, ch_id_str)
+        for uid, meta in unit_meta.items():
+            for center in meta["valid_centers"]:
+                all_spike_events.append((center, uid, meta["channel_id"]))
+        all_spike_events.sort(key=lambda x: x[0])
+
+        snippets_by_unit: dict = defaultdict(list)
+        n_events   = len(all_spike_events)
+        event_idx  = 0
+        n_blocks   = 0
+
+        for block_start in range(0, n_frames, BLOCK_SIZE):
+            if event_idx >= n_events:
+                break
+            block_end = block_start + BLOCK_SIZE
+
+            # Collect all events whose center falls in [block_start, block_end).
+            block_events = []
+            i = event_idx
+            while i < n_events and all_spike_events[i][0] < block_end:
+                block_events.append(all_spike_events[i])
+                i += 1
+            event_idx = i
+
+            if not block_events:
+                continue
+
+            # Extend the read range by the window margins so edge-of-block spikes
+            # have their full window available.  Boundary spikes were pre-filtered
+            # in pass 4, so clamping to [0, n_frames] is purely defensive.
+            read_start = max(0, block_start - n_before)
+            read_end   = min(n_frames, block_end + n_after)
+
+            needed_channels = list({ch for _, _, ch in block_events})
+            block_data = np.asarray(
+                raw_recording.get_traces(
+                    start_frame=read_start,
+                    end_frame=read_end,
+                    channel_ids=needed_channels,
+                ),
+                dtype=np.float32,
+            )  # (read_end - read_start, len(needed_channels))
+            ch_to_col = {ch: idx for idx, ch in enumerate(needed_channels)}
+            n_blocks += 1
+
+            for center, uid, ch_id in block_events:
+                local_start = center - n_before - read_start
+                col = ch_to_col[ch_id]
+                snippet = block_data[local_start: local_start + window_samples, col]
+                if snippet.shape[0] == window_samples:
+                    snippets_by_unit[uid].append(snippet.copy())
+
         self.logger.info(
-            "Raw mean templates: %d/%d units extracted",
-            len(extracted_units), len(curated_unit_ids),
+            "Streaming pass complete: %d block reads for %d spike events",
+            n_blocks, n_events,
+        )
+
+        # ── 6. Compute per-unit mean templates ─────────────────────────────────
+        extracted_units = {}
+        for uid_key in unit_meta:
+            meta     = unit_meta[uid_key]
+            snippets = snippets_by_unit.get(uid_key, [])
+            raw_mean_template = (
+                np.mean(snippets, axis=0).astype(np.float32)
+                if snippets
+                else np.full(window_samples, np.nan, dtype=np.float32)
+            )
+            extracted_units[str(uid_key)] = {
+                "unit_id":          uid_key,
+                "primary_channel":  meta["channel_id_raw"],
+                "raw_mean_template": raw_mean_template,
+                "n_spikes_used":    int(len(snippets)),
+                "window_samples":   int(window_samples),
+                "ms_before":        float(ms_before),
+                "ms_after":         float(ms_after),
+            }
+
+        # Units that had no template get a NaN entry so they are present in the output.
+        for uid_key in curated_unit_ids:
+            if str(uid_key) not in extracted_units:
+                extracted_units[str(uid_key)] = {
+                    "unit_id":          uid_key,
+                    "primary_channel":  None,
+                    "raw_mean_template": np.full(window_samples, np.nan, dtype=np.float32),
+                    "n_spikes_used":    0,
+                    "window_samples":   int(window_samples),
+                    "ms_before":        float(ms_before),
+                    "ms_after":         float(ms_after),
+                }
+
+        self.logger.info(
+            "Raw mean templates: %d/%d units extracted (%d with spikes)",
+            len(extracted_units),
+            len(curated_unit_ids),
+            sum(1 for v in extracted_units.values() if v["n_spikes_used"] > 0),
         )
 
         output_path = self.output_dir / "raw_mean_templates.npy"
