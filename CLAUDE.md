@@ -57,12 +57,24 @@ There is no test suite or linter configured.
 - Accepts `--config mea_config.json`; CLI flags always override config
 
 **`mea_analysis_routine.py` — Core Pipeline Worker (`MEAPipeline` class)**
-- Per-well worker that runs four sequential stages: **Preprocessing → Sorting → Analyzer → Reports**
-- Preprocessing: highpass filter (300 Hz), local common median reference, float32 conversion, binary cache
-- Sorting: Kilosort4 via SpikeInterface; Docker-based runs also supported
-- Analyzer: template computation, quality metrics (firing rate, presence ratio, ISI violations, amplitude)
-- Reports: waveform PDFs, probe location maps, raster plots, burst stats, unit curation
+- Thin orchestrator (~650 lines): `__init__`, `cleanup`, `run_mea_pipeline()`, CLI `main()`
+- `MEAPipeline` inherits stage logic from mixin modules (see table below); runtime behavior is identical to callers
+- Stages: **Preprocessing → Sorting → (optional Merge) → Analyzer → Reports**
 - Checkpoint JSON files in `checkpoints/` allow resumption from crashes; completed stages are skipped
+
+**Pipeline mixin modules** (one file per stage, all at repo root):
+
+| File | Class | Responsibility |
+|------|-------|----------------|
+| `mea_checkpoint.py` | — | `ProcessingStage` enum, schema version constant |
+| `mea_infra.py` | `InfraMixin` | Logger, metadata parsing, checkpoint load/save, runtime controls |
+| `mea_preprocessing.py` | `PreprocessingMixin` | Highpass filter, CMR, float32 conversion, binary cache |
+| `mea_sorting.py` | `SortingMixin` | Kilosort4 sorting; spike-detection-only fallback |
+| `mea_merge.py` | `MergeMixin` | Optional UnitMatch or `auto_merge_units` phase |
+| `mea_analyzer.py` | `AnalyzerMixin` | Templates, quality metrics, unit locations |
+| `mea_waveform.py` | `WaveformMixin` | Per-unit raw mean template extraction |
+| `mea_reports.py` | `ReportsMixin` | Curation, waveform PDFs, probe maps, raster + burst plots |
+| `mea_resume.py` | — | `--resume-from` stage rewind helpers |
 
 **`config_loader.py` — Shared Configuration**
 - Three-level priority: CLI flag → `mea_config.json` → hardcoded defaults
@@ -75,6 +87,7 @@ There is no test suite or linter configured.
 |------|---------|
 | `helper_functions.py` | Peak detection, file discovery, raster/network plotting, burst statistics |
 | `parameter_free_burst_detector.py` | Adaptive network burst detection: per-unit ISI bursts, population rate signal, adaptive thresholding, synchrony metrics |
+| `config_loader.py` | Three-level priority config (CLI → JSON → defaults); shared by driver and routine |
 | `meaplotter.py` | Advanced visualization utilities |
 | `spikeMatrix.py` | Spike raster representation and matrix operations |
 | `gaussianNetworkBursts.py` | Gaussian-based burst modeling |

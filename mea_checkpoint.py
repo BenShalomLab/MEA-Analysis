@@ -1,0 +1,18 @@
+from enum import Enum
+
+
+class ProcessingStage(Enum):
+    NOT_STARTED = 0
+    PREPROCESSING = 1
+    PREPROCESSING_COMPLETE = 2
+    SORTING = 3
+    SORTING_COMPLETE = 4
+    MERGE = 5
+    MERGE_COMPLETE = 6
+    ANALYZER = 7
+    ANALYZER_COMPLETE = 8
+    REPORTS = 9
+    REPORTS_COMPLETE = 10
+
+
+CHECKPOINT_SCHEMA_VERSION = 2

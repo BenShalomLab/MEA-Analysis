@@ -17,10 +17,11 @@ This is a production-grade **MEA (Microelectrode Array) processing pipeline** fo
 
 **2. mea_analysis_routine.py — Core Pipeline (`MEAPipeline` class)**
 - Per-well worker executing the full processing pipeline
-- Stages: Preprocessing → Sorting → Analysis → Reports
+- Stages: Preprocessing → Sorting → (optional Merge) → Analyzer → Reports
 - Checkpoint-based resumption (resume on crash, skip completed stages)
 - Metadata parsing and intelligent output directory structuring
 - Can be invoked independently of the driver for single-well processing
+- Thin orchestrator (~650 lines); stage logic lives in dedicated mixin modules (see [Pipeline Modules](#pipeline-modules))
 
 **3. config_loader.py — Shared Configuration**
 - Shared by both scripts
@@ -69,6 +70,22 @@ The pipeline uses a `recording_map` to efficiently map all recordings to their c
 ✅ **Visualization** — Waveforms, probe maps, rasters, network burst overlays  
 ✅ **Config System** — JSON config file with CLI override support  
 
+## Pipeline Modules
+
+`MEAPipeline` is assembled from mixin classes, one file per stage. Each file can be read independently.
+
+| File | Class | Contents |
+|------|-------|----------|
+| `mea_checkpoint.py` | — | `ProcessingStage` enum, `CHECKPOINT_SCHEMA_VERSION` |
+| `mea_infra.py` | `InfraMixin` | Logger setup, metadata parsing, checkpoint load/save, runtime controls |
+| `mea_preprocessing.py` | `PreprocessingMixin` | `_load_recording_file`, `run_preprocessing` |
+| `mea_sorting.py` | `SortingMixin` | `run_sorting` (Kilosort4), `_spike_detection_only` |
+| `mea_merge.py` | `MergeMixin` | `run_optional_merge_phase` (UnitMatch + auto_merge paths) |
+| `mea_analyzer.py` | `AnalyzerMixin` | `_load_existing_sorting/analyzer`, `run_analyzer` |
+| `mea_waveform.py` | `WaveformMixin` | `_write_processing_info`, `_extract_rawsortedspikes` |
+| `mea_reports.py` | `ReportsMixin` | `generate_reports`, curation, waveform PDF, burst analysis, raster plots |
+| `mea_resume.py` | — | `_normalize_resume_from_stage`, `_apply_resume_from_stage` |
+
 ## Supporting Modules
 
 - **config_loader.py** — Config file loading, CLI/config/default resolution, subprocess arg builder
@@ -99,6 +116,8 @@ Output organized as:
   ├── raster_burst_plot_60s.svg  (60s zoom)
   ├── network_results.json       (burst statistics)
   ├── spike_times.npy            (spike times per unit)
+  ├── raw_mean_templates.npy     (optional per-unit raw mean templates on extremum channels)
+  ├── processing_info.json       (records whether spike sorting was used)
   ├── metrics_curated.xlsx       (quality metrics post-curation)
   ├── rejection_log.xlsx         (rejected units and reasons)
   ├── waveforms_grid.pdf         (waveform overview)
@@ -238,6 +257,132 @@ python run_pipeline_driver.py /data/experiment --config mea_config.json
 python run_pipeline_driver.py /data/experiment --config mea_config.json --force-restart
 ```
 
+### 10. Resume from a specific stage
+Rewinds the checkpoint to just before the named stage and reruns from there. Valid stages: `preprocessing`, `sorting`, `merge`, `analyzer`, `reports`.
+```bash
+# rerun just the analyzer and reports (e.g. after changing sparsity params)
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --config mea_config.json \
+  --resume-from analyzer
+
+# rerun reports only for all wells in a batch (e.g. after curation threshold change)
+python run_pipeline_driver.py /data/experiment \
+  --config mea_config.json \
+  --resume-from reports
+```
+
+### 11. Rerun the analyzer without rerunning spike sorting
+```bash
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --config mea_config.json \
+  --rerun-analyzer
+```
+
+### 12. Export to Phy for manual curation
+```bash
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --config mea_config.json \
+  --export-to-phy
+```
+Output written to `<well_output>/phy_output/`. Open with `phy template-gui <well_output>/phy_output/params.py`.
+
+### 13. Skip automatic curation (keep all sorted units)
+```bash
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --config mea_config.json \
+  --no-curation
+```
+
+### 14. Custom quality thresholds
+```bash
+# inline JSON
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --params '{"presence_ratio": 0.8, "firing_rate": 0.1, "rp_contamination": 0.1}'
+
+# or via config file
+# mea_config.json: "curation": { "quality_thresholds": { "presence_ratio": 0.8 } }
+```
+
+### 15. Docker-based sorting (reproducible environment)
+```bash
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --docker spikeinterface/kilosort4-compiled-base:latest
+```
+
+### 16. Extract per-unit raw mean templates
+Saves `raw_mean_templates.npy` alongside spike times. Requires `analyzer_output` to exist.
+```bash
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --extract-rawsortedspikes
+
+# also works during reanalyze-bursts pass
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --reanalyze-bursts --extract-rawsortedspikes
+```
+
+### 17. Unit merging — UnitMatch (dry-run report)
+Scores all candidate unit pairs and produces a report without modifying the sorting.
+```bash
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --unitmatch-merge-units \
+  --unitmatch-dry-run
+```
+
+### 18. Unit merging — UnitMatch (apply merges)
+```bash
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --unitmatch-merge-units \
+  --unitmatch-apply-merges \
+  --unitmatch-recursive
+```
+
+### 19. Unit merging — SpikeInterface auto-merge
+```bash
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --auto-merge-units \
+  --auto-merge-template-diff-thresh "0.05,0.15,0.25"
+```
+
+### 20. Plot options — merged raster + network on one axis
+```bash
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --plot-mode merged \
+  --raster-sort firing_rate
+```
+`--raster-sort` options: `none` (default), `firing_rate`, `unit_id`, `location_y`.
+
+### 21. Fixed y-axis across all wells (for cross-well comparison)
+Every normal run automatically writes each well's network y-max to a project-level summary file at `<output_dir>/<project>/<project>_y_max_summary.json`. Once all wells have been processed at least once, rerun reports with `--fixed-y` to apply the global maximum across all wells.
+```bash
+# Step 1 — run normally (summary written automatically per well)
+python run_pipeline_driver.py /data/experiment --config mea_config.json
+
+# Step 2 — replot all wells using the global y-max
+python run_pipeline_driver.py /data/experiment \
+  --config mea_config.json \
+  --resume-from reports \
+  --fixed-y
+```
+
+### 22. Clean up intermediate files after processing
+Removes the `binary/` and `sorter_output/` directories once the run completes.
+```bash
+python run_pipeline_driver.py /data/experiment --config mea_config.json --clean-up
+```
+
+### 23. Write results into a named subdirectory per well
+Useful for running the same data with different parameters side-by-side.
+```bash
+python mea_analysis_routine.py /data/file.h5 --well well000 \
+  --output-subdir-after-well tight_thresholds
+# output: <well_dir>/tight_thresholds/
+```
+
+### 24. Verbose / debug logging
+```bash
+python mea_analysis_routine.py /data/file.h5 --well well000 --debug
+```
+
 ## Streamlit Checkpoint Dashboard
 
 Use the Streamlit app to inspect checkpoint JSON status across runs.
@@ -274,6 +419,7 @@ current working directory (recommended: run from the repository root).
 | sorting | `--sorter` | Spike sorter to use (default: kilosort4) |
 | sorting | `--docker` | Docker image for containerized sorting |
 | sorting | `--skip-spikesorting` | Spike detection only, skip full sorting |
+| sorting | `--extract-rawsortedspikes` | Save per-unit raw mean templates to `raw_mean_templates.npy` (requires `analyzer_output` or `phy_output`) |
 | plotting | `--plot-mode` | `separate` or `merged` (default: separate) |
 | plotting | `--raster-sort` | `none`, `firing_rate`, `location_y`, `unit_id` |
 | plotting | `--plot-debug` | Overlay burst/superburst intervals on plot |
@@ -297,5 +443,5 @@ Same groups and flags as the driver, minus `--dry` and the filtering group, plus
 ## Notes
 
 - `--well` and `--rec` are always CLI-only — they identify a specific file/recording and are never set in config
-- `--debug`, `--dry`, `--force-restart`, `--reanalyze-bursts`, `--skip-spikesorting` are CLI-only run control flags — they represent one-off decisions and are never set in config
+- `--debug`, `--dry`, `--force-restart`, `--reanalyze-bursts`, `--skip-spikesorting`, `--extract-rawsortedspikes` are CLI-only run control flags — they represent one-off decisions and are never set in config
 - Everything else can be set in `mea_config.json` and overridden per-run from CLI
