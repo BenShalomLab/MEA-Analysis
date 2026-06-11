@@ -253,9 +253,20 @@ class MEAPipeline(
         self.logger = self._setup_logger(log_file)
 
         # 3. Checkpointing Setup
-        ckpt_root = Path(checkpoint_root) if checkpoint_root else self.output_dir / "checkpoints"
-        ckpt_root.mkdir(parents=True, exist_ok=True)
-        self.checkpoint_file = ckpt_root / f"{self.project_name}_{self.run_id}_{self.stream_id}_checkpoint.json"
+        # Primary checkpoint always lives inside the well output folder.
+        # If checkpoint_root is also provided it receives an additional mirrored copy.
+        ckpt_fname = f"{self.project_name}_{self.run_id}_{self.stream_id}_checkpoint.json"
+        default_ckpt_root = self.output_dir / "checkpoints"
+        default_ckpt_root.mkdir(parents=True, exist_ok=True)
+        self.checkpoint_file = default_ckpt_root / ckpt_fname
+
+        self.extra_checkpoint_file = None
+        if checkpoint_root is not None:
+            extra_root = Path(checkpoint_root)
+            if extra_root.resolve() != default_ckpt_root.resolve():
+                extra_root.mkdir(parents=True, exist_ok=True)
+                self.extra_checkpoint_file = extra_root / ckpt_fname
+
         self.state = self._load_checkpoint()
 
         self._apply_runtime_controls()

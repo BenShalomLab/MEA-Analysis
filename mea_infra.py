@@ -118,8 +118,13 @@ class InfraMixin:
         return token
 
     def _load_checkpoint(self):
-        if self.checkpoint_file.exists() and not self.force_restart:
-            with open(self.checkpoint_file, 'r') as f:
+        # Prefer the primary (well-local) file; fall back to extra_checkpoint_file so
+        # that runs started before this change (which only wrote the separate dir) resume cleanly.
+        source = self.checkpoint_file
+        if not source.exists() and getattr(self, 'extra_checkpoint_file', None) and self.extra_checkpoint_file.exists():
+            source = self.extra_checkpoint_file
+        if source.exists() and not self.force_restart:
+            with open(source, 'r') as f:
                 state = json.load(f)
 
             try:
@@ -157,6 +162,13 @@ class InfraMixin:
         self.state.update(kwargs)
         with open(self.checkpoint_file, 'w') as f:
             json.dump(self.state, f, indent=2)
+        if getattr(self, 'extra_checkpoint_file', None):
+            try:
+                with open(self.extra_checkpoint_file, 'w') as f:
+                    json.dump(self.state, f, indent=2)
+            except Exception as e:
+                self.logger.warning("Could not write extra checkpoint copy to %s: %s",
+                                    self.extra_checkpoint_file, e)
         self.logger.info(f"Checkpoint Saved: {stage.name}")
 
     def should_skip(self):
