@@ -14,14 +14,16 @@ from flask import current_app
 
 
 _NAV_META: dict[str, tuple[str, str]] = {
-    "Home":      ("operations", "◐"),
-    "Pipeline":  ("operations", "≡"),
-    "Recordings": ("operations", "▦"),
-    "Run":       ("operations", "▸"),
-    "Settings":  ("system",     "{}"),
+    "Home":              ("operations", "◐"),
+    "Pipeline":          ("operations", "≡"),
+    "Recordings":        ("operations", "▦"),
+    "Run":               ("operations", "▸"),
+    "Burst Diagnostic":  ("analysis",   "∿"),
+    "Burst Inspector":   ("analysis",   "⌇"),
+    "Settings":          ("system",     "{}"),
 }
 
-_SECTION_ORDER = ("operations", "system")
+_SECTION_ORDER = ("operations", "analysis", "system")
 
 
 def _git_rev() -> str:

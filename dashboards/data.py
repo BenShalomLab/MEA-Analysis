@@ -151,6 +151,110 @@ def checkpoint_kpis(df: pd.DataFrame) -> dict[str, int]:
     }
 
 
+def stage_throughput(df: pd.DataFrame) -> list[dict]:
+    """Per-stage complete/running/not_run counts for home throughput table."""
+    total = len(df) if not df.empty else 0
+    if total == 0:
+        return [{"name": c, "complete": 0, "running": 0, "not_run": 0, "total": 0}
+                for c, _, _ in STAGE_COLS]
+    sn = df["stage_num"].fillna(-1).astype(int)
+    failed = df["failed"].fillna(False).astype(bool)
+    rows = []
+    for col, complete_thresh, running_val in STAGE_COLS:
+        complete = int((sn >= complete_thresh).sum())
+        running = int(((sn == running_val) & ~failed).sum())
+        rows.append({
+            "name": col,
+            "complete": complete,
+            "running": running,
+            "not_run": max(0, total - complete - running),
+            "total": total,
+        })
+    return rows
+
+
+def reset_checkpoint(path: str | Path, to_stage_num: int) -> tuple[bool, str]:
+    """Set checkpoint stage to to_stage_num and clear failure state."""
+    import datetime as _dt
+    path = Path(path)
+    try:
+        raw = json.loads(path.read_text())
+        raw["stage"] = to_stage_num
+        raw.pop("failed", None)
+        raw.pop("failed_stage", None)
+        raw.pop("error", None)
+        raw["last_updated"] = _dt.datetime.now().isoformat()
+        path.write_text(json.dumps(raw, indent=2))
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def bulk_reset_checkpoints(
+    df: pd.DataFrame,
+    to_stage_num: int,
+    filter_stage: str | None = None,
+    filter_failed_only: bool = False,
+) -> tuple[int, int]:
+    """Reset matching checkpoints. Returns (n_ok, n_fail)."""
+    subset = df.copy()
+    if filter_stage and filter_stage not in ("", "all"):
+        subset = subset[subset["stage"] == filter_stage]
+    if filter_failed_only:
+        subset = subset[subset["failed"] == True]  # noqa: E712
+    ok = fail = 0
+    for path in subset["path"]:
+        success, _ = reset_checkpoint(path, to_stage_num)
+        if success:
+            ok += 1
+        else:
+            fail += 1
+    return ok, fail
+
+
+def load_network_results(output_root: str | Path) -> list[dict]:
+    """Walk output_root for network_results.json; return per-well rows."""
+    root = Path(output_root)
+    if not root.exists():
+        return []
+    rows = []
+    for f in sorted(root.rglob("network_results.json")):
+        try:
+            raw = json.loads(f.read_text())
+        except Exception:
+            continue
+        parts = f.parent.parts
+        well    = parts[-1] if len(parts) >= 1 else "?"
+        run     = parts[-2] if len(parts) >= 2 else "?"
+        chip    = parts[-3] if len(parts) >= 3 else "?"
+        date    = parts[-4] if len(parts) >= 4 else "?"
+        project = parts[-5] if len(parts) >= 5 else "?"
+
+        nb  = raw.get("network_bursts", {}).get("metrics", {})
+        bl  = raw.get("burstlets",      {}).get("metrics", {})
+        sb  = raw.get("superbursts",    {}).get("metrics", {})
+        diag = raw.get("diagnostics",   {})
+
+        rows.append({
+            "path":               str(f.parent),
+            "project":            project,
+            "date":               date,
+            "chip":               chip,
+            "run":                run,
+            "well":               well,
+            "n_units":            raw.get("n_units", diag.get("n_units")),
+            "n_bursty_units":     diag.get("n_bursty_units"),
+            "burstlets_count":    bl.get("count", 0),
+            "network_bursts_count": nb.get("count", 0),
+            "superbursts_count":  sb.get("count", 0),
+            "burst_rate_hz":      round(float(nb.get("rate", 0) or 0), 4),
+            "mean_burst_dur_s":   round(float((nb.get("duration") or {}).get("mean") or 0), 3),
+            "adaptive_bin_ms":    diag.get("adaptive_bin_ms"),
+            "_raw":               raw,
+        })
+    return rows
+
+
 def stage_cell_status(stage_num: int | None, failed: bool, failed_stage_num: int | None) -> dict[str, str]:
     """Return {col_name: css_class} for the 5 pipeline stage columns."""
     out: dict[str, str] = {}

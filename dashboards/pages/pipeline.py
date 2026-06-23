@@ -1,9 +1,4 @@
-"""Pipeline page — per-stage status matrix + well inspector.
-
-Rows = wells (from checkpoints). Columns = 5 pipeline stages.
-Cell dots: complete / running / failed / not_run.
-Click a row → inspector shows error, units, path.
-"""
+"""Pipeline page — stage matrix + inspector with reset + bulk reset."""
 
 from __future__ import annotations
 
@@ -12,18 +7,31 @@ from dash import ALL, Input, Output, State, callback, clientside_callback, dcc, 
 from flask import current_app
 
 from dashboards.components import no_config_banner
-from dashboards.data import STAGE_COLS, load_checkpoints
+from dashboards.data import (
+    STAGE_COLS, STAGE_MAP,
+    bulk_reset_checkpoints, load_checkpoints, reset_checkpoint,
+)
 
 dash.register_page(__name__, path="/pipeline", name="Pipeline", order=1)
 
 _STAGE_LABELS = ["Preproc", "Sorting", "Merge", "Analyzer", "Reports"]
-_FILTER_OPTS = ["all", "complete", "running", "failed", "not_started"]
 
+# Reset-to options: name → stage_num to write
+_RESET_TO_OPTIONS = [
+    {"label": "— pick stage —",          "value": ""},
+    {"label": "Before preprocessing (0)", "value": "0"},
+    {"label": "Before sorting (2)",       "value": "2"},
+    {"label": "Before merge (4)",         "value": "4"},
+    {"label": "Before analyzer (6)",      "value": "6"},
+    {"label": "Before reports (8)",       "value": "8"},
+]
 
 layout = html.Div(
     [
         dcc.Interval(id="pipe-interval", interval=30_000, n_intervals=0),
-        dcc.Store(id="pipe-selected-row", data=None),
+        dcc.Store(id="pipe-selected-idx", data=None),
+
+        # ── view-head ────────────────────────────────────────────────────
         html.Div(
             [
                 html.Div(
@@ -39,10 +47,15 @@ layout = html.Div(
                             [
                                 html.Button(label, id={"pipe-filter": f}, n_clicks=0,
                                             className="active" if f == "all" else "")
-                                for f, label in zip(_FILTER_OPTS, ["All", "Complete", "Running", "Failed", "Pending"])
+                                for f, label in [
+                                    ("all",         "All"),
+                                    ("complete",    "Complete"),
+                                    ("running",     "Running"),
+                                    ("failed",      "Failed"),
+                                    ("not_started", "Pending"),
+                                ]
                             ],
                             className="toggle-group",
-                            id="pipe-filter-group",
                         ),
                         html.Button("↺ Refresh", id="pipe-refresh-btn", n_clicks=0,
                                     className="btn", style={"marginLeft": "8px"}),
@@ -52,7 +65,10 @@ layout = html.Div(
             ],
             className="view-head",
         ),
+
         html.Div(id="pipe-no-config"),
+
+        # ── matrix + inspector ───────────────────────────────────────────
         html.Div(
             [
                 html.Div(
@@ -71,10 +87,97 @@ layout = html.Div(
             className="row",
             style={"alignItems": "flex-start"},
         ),
+
+        # ── bulk reset ───────────────────────────────────────────────────
+        html.Div(
+            [
+                html.Div(
+                    [
+                        html.Span("bulk reset", className="h-title"),
+                        html.Span(
+                            "Cascades later stages automatically (linear pipeline).",
+                            className="h-actions",
+                            style={"color": "var(--ink-3)", "fontFamily": "var(--font-mono)",
+                                   "fontSize": "11px", "textTransform": "none",
+                                   "letterSpacing": "0"},
+                        ),
+                    ],
+                    className="card-head",
+                ),
+                html.Div(
+                    [
+                        html.Div(
+                            [
+                                html.Div(
+                                    [
+                                        html.Label("Filter — current stage", className="section-label"),
+                                        dcc.Dropdown(
+                                            id="bulk-filter-stage",
+                                            options=[{"label": "all stages", "value": "all"}]
+                                                    + [{"label": v, "value": v}
+                                                       for v in STAGE_MAP.values()],
+                                            value="all", clearable=False,
+                                        ),
+                                    ],
+                                    style={"flex": "1 1 220px"},
+                                ),
+                                html.Div(
+                                    [
+                                        html.Label("Reset to", className="section-label"),
+                                        dcc.Dropdown(
+                                            id="bulk-reset-to",
+                                            options=_RESET_TO_OPTIONS,
+                                            value="", clearable=False,
+                                        ),
+                                    ],
+                                    style={"flex": "1 1 220px"},
+                                ),
+                                html.Div(
+                                    [
+                                        html.Label("Scope", className="section-label"),
+                                        dcc.Checklist(
+                                            id="bulk-failed-only",
+                                            options=[{"label": "  failed wells only", "value": "failed"}],
+                                            value=[],
+                                            style={"fontFamily": "var(--font-mono)", "fontSize": "12px"},
+                                        ),
+                                    ],
+                                    style={"flex": "0 0 180px"},
+                                ),
+                            ],
+                            style={"display": "flex", "gap": "16px",
+                                   "flexWrap": "wrap", "alignItems": "flex-start"},
+                        ),
+                        html.Div(
+                            [
+                                html.Button(
+                                    [html.Span("…", className="glyph"), "Preview"],
+                                    id="bulk-preview-btn", n_clicks=0, className="btn",
+                                ),
+                                html.Button(
+                                    [html.Span("⟲", className="glyph"), "Reset"],
+                                    id="bulk-execute-btn", n_clicks=0, className="btn primary",
+                                ),
+                                html.Span(id="bulk-status",
+                                          style={"fontFamily": "var(--font-mono)",
+                                                 "fontSize": "11px", "color": "var(--ink-3)"}),
+                            ],
+                            style={"display": "flex", "alignItems": "center",
+                                   "gap": "8px", "marginTop": "14px"},
+                        ),
+                    ],
+                    className="card-body",
+                ),
+            ],
+            className="card",
+            style={"marginTop": "16px"},
+        ),
     ],
     className="page",
 )
 
+
+# ── Matrix ────────────────────────────────────────────────────────────────────
 
 @callback(
     Output("pipe-no-config", "children"),
@@ -85,7 +188,7 @@ layout = html.Div(
     Input({"pipe-filter": ALL}, "n_clicks"),
     Input("dashboard-url", "pathname"),
 )
-def _refresh_matrix(_n, _refresh, filter_clicks, _path):
+def _refresh_matrix(_n, _refresh, _filter_clicks, _path):
     try:
         ctx = current_app.config.get("MEA", {})
     except RuntimeError:
@@ -96,12 +199,8 @@ def _refresh_matrix(_n, _refresh, filter_clicks, _path):
 
     checkpoint_dir = ctx.get("checkpoint_dir")
     if not checkpoint_dir:
-        return (
-            html.Div("checkpoint_dir not set.", className="banner warn"),
-            _empty_matrix(), "",
-        )
+        return html.Div("checkpoint_dir not set.", className="banner warn"), _empty_matrix(), ""
 
-    # Determine active filter from which button was clicked last.
     from dash import ctx as dash_ctx
     active_filter = "all"
     if dash_ctx.triggered_id and isinstance(dash_ctx.triggered_id, dict):
@@ -111,7 +210,6 @@ def _refresh_matrix(_n, _refresh, filter_clicks, _path):
     if df.empty:
         return None, _empty_matrix(), ""
 
-    # Apply filter
     if active_filter == "complete":
         df = df[df["stage"] == "REPORTS_COMPLETE"]
     elif active_filter == "running":
@@ -131,30 +229,11 @@ def _refresh_matrix(_n, _refresh, filter_clicks, _path):
 
     body_rows = []
     for i, r in enumerate(df.itertuples()):
-        well_label = " / ".join(
-            str(x) for x in [r.project, r.chip, r.run, r.well] if x
-        )
-
-        # Derive per-stage CSS class
-        failed_stage_num: int | None = None
-        if r.failed:
-            # Try to extract failed stage number from stage string
-            stage_str = r.stage or ""
-            if stage_str.startswith("FAILED_AT_"):
-                from dashboards.data import STAGE_MAP, LEGACY_STAGE_MAP
-                name_after = stage_str[len("FAILED_AT_"):]
-                rev = {v: k for k, v in {**STAGE_MAP, **LEGACY_STAGE_MAP}.items()}
-                failed_stage_num = rev.get(name_after)
-
+        well_label = " / ".join(str(x) for x in [r.project, r.chip, r.run, r.well] if x)
         cells = []
-        for col_name, complete_thresh, running_val in STAGE_COLS:
-            if r.failed and failed_stage_num is not None:
-                if r.stage_num is not None and r.stage_num == running_val:
-                    css = "failed"
-                elif r.stage_num is not None and r.stage_num > running_val:
-                    css = "complete"
-                else:
-                    css = "not_run"
+        for _col, complete_thresh, running_val in STAGE_COLS:
+            if r.failed and r.stage_num is not None and r.stage_num == running_val:
+                css = "failed"
             elif r.stage_num is None:
                 css = "not_run"
             elif r.stage_num >= complete_thresh:
@@ -163,41 +242,34 @@ def _refresh_matrix(_n, _refresh, filter_clicks, _path):
                 css = "running"
             else:
                 css = "not_run"
-
             cells.append(html.Td(
-                html.Button(
-                    html.Span(className="dot"),
-                    className=f"cell-btn {css}",
-                    id={"pipe-cell": f"{i}_{col_name}"},
-                    n_clicks=0,
-                ),
+                html.Button(html.Span(className="dot"),
+                            className=f"cell-btn {css}",
+                            id={"pipe-cell": i}, n_clicks=0),
             ))
 
         body_rows.append(html.Tr(
             [html.Td(well_label, className="well-cell")]
             + cells
             + [html.Td(str(r.num_units) if r.num_units is not None else "—", className="num")],
-            id={"pipe-row": i},
-            style={"cursor": "pointer"},
+            id={"pipe-row": i}, style={"cursor": "pointer"},
         ))
 
-    table = html.Table(
-        [html.Thead(header), html.Tbody(body_rows)],
-        className="matrix",
-    )
+    table = html.Table([html.Thead(header), html.Tbody(body_rows)], className="matrix")
     return None, html.Div(table, className="tbl-wrap"), count_pill
 
 
+# ── Inspector ─────────────────────────────────────────────────────────────────
+
 @callback(
     Output("pipe-inspector", "children"),
-    Output("pipe-selected-row", "data"),
+    Output("pipe-selected-idx", "data"),
     Input({"pipe-row": ALL}, "n_clicks"),
-    State("pipe-selected-row", "data"),
+    State("pipe-selected-idx", "data"),
     Input("dashboard-url", "pathname"),
-    Input("pipe-interval", "n_intervals"),
     prevent_initial_call=True,
 )
-def _show_inspector(row_clicks, selected, _path, _n):
+def _show_inspector(row_clicks, selected, _path):
     from dash import ctx as dash_ctx
     if not dash_ctx.triggered_id or not isinstance(dash_ctx.triggered_id, dict):
         return _empty_inspector(), selected
@@ -212,28 +284,18 @@ def _show_inspector(row_clicks, selected, _path, _n):
     except RuntimeError:
         return _empty_inspector(), selected
 
-    if not checkpoint_dir:
-        return _empty_inspector(), selected
-
     df = load_checkpoints(checkpoint_dir)
     if df.empty or row_idx >= len(df):
         return _empty_inspector(), selected
 
     r = df.iloc[int(row_idx)]
-
     items = [
-        ("project", r.get("project", "—")),
-        ("date", r.get("date", "—")),
-        ("chip", r.get("chip", "—")),
-        ("run", r.get("run", "—")),
-        ("well", r.get("well", "—")),
-        ("rec", r.get("rec", "—")),
-        ("stage", r.get("stage", "—")),
-        ("num_units", r.get("num_units", "—")),
-        ("last_updated", r.get("last_updated", "—")),
-        ("file", r.get("file", "—")),
+        ("project", r.get("project")), ("date", r.get("date")),
+        ("chip", r.get("chip")), ("run", r.get("run")),
+        ("well", r.get("well")), ("rec", r.get("rec")),
+        ("stage", r.get("stage")), ("num_units", r.get("num_units")),
+        ("last_updated", r.get("last_updated")), ("file", r.get("file")),
     ]
-
     kv = html.Dl(
         [child for k, v in items for child in [
             html.Dt(k), html.Dd(str(v) if v is not None else "—", className="path")
@@ -244,35 +306,139 @@ def _show_inspector(row_clicks, selected, _path, _n):
     error_block = None
     err = r.get("error")
     if err:
-        error_block = html.Div(
-            [
-                html.Div("error", className="section-label"),
-                html.Pre(str(err), className="code"),
-            ],
-            style={"marginTop": "12px"},
-        )
+        error_block = html.Div([
+            html.Div("error", className="section-label", style={"marginTop": "12px"}),
+            html.Pre(str(err), className="code",
+                     style={"background": "var(--fail-soft)",
+                            "borderColor": "oklch(0.6 0.16 28 / 0.35)",
+                            "color": "oklch(0.4 0.16 28)", "maxHeight": "100px"}),
+        ])
 
-    return html.Div(
+    reset_block = html.Div(
         [
+            html.Div("reset stage", className="section-label",
+                     style={"marginTop": "14px"}),
             html.Div(
                 [
-                    html.Div("Well detail", style={"fontWeight": 600, "fontSize": "13px"}),
-                    html.Div(
-                        str(r.get("well", "")),
-                        style={"color": "var(--ink-3)", "fontFamily": "var(--font-mono)", "fontSize": "11px"},
+                    dcc.Dropdown(
+                        id="insp-reset-to",
+                        options=_RESET_TO_OPTIONS,
+                        value="", clearable=False,
+                        style={"flex": "1", "fontFamily": "var(--font-mono)", "fontSize": "11px"},
+                    ),
+                    html.Button(
+                        [html.Span("⟲", className="glyph"), "Reset"],
+                        id="insp-reset-btn", n_clicks=0, className="btn primary",
+                        style={"height": "32px"},
                     ),
                 ],
-                className="inspector-head",
+                style={"display": "flex", "gap": "8px", "alignItems": "center",
+                       "marginTop": "6px"},
             ),
-            html.Div(
-                [kv, error_block] if error_block else [kv],
-                className="inspector-body",
-            ),
+            html.Div(id="insp-reset-status",
+                     style={"fontFamily": "var(--font-mono)", "fontSize": "11px",
+                            "color": "var(--ink-3)", "marginTop": "6px",
+                            "minHeight": "16px"}),
         ]
-    ), row_idx
+    )
+
+    body = [kv]
+    if error_block:
+        body.append(error_block)
+    body.append(reset_block)
+
+    return html.Div([
+        html.Div(
+            [html.Div(str(r.get("well") or "Well"), style={"fontWeight": 600}),
+             html.Div(str(r.get("stage") or ""), style={"color": "var(--ink-3)",
+                      "fontFamily": "var(--font-mono)", "fontSize": "11px"})],
+            className="inspector-head",
+        ),
+        html.Div(body, className="inspector-body"),
+    ]), row_idx
 
 
-def _empty_matrix() -> html.Div:
+@callback(
+    Output("insp-reset-status", "children"),
+    Input("insp-reset-btn", "n_clicks"),
+    State("insp-reset-to", "value"),
+    State("pipe-selected-idx", "data"),
+    prevent_initial_call=True,
+)
+def _inspector_reset(_n, to_stage, row_idx):
+    if not to_stage:
+        return "Pick a stage first."
+    if row_idx is None:
+        return "No well selected."
+    try:
+        ctx = current_app.config.get("MEA", {})
+        checkpoint_dir = ctx.get("checkpoint_dir")
+    except RuntimeError:
+        return "Error: no app context."
+    df = load_checkpoints(checkpoint_dir)
+    if df.empty or row_idx >= len(df):
+        return "Well not found."
+    path = df.iloc[int(row_idx)]["path"]
+    ok, err = reset_checkpoint(path, int(to_stage))
+    if ok:
+        return f"Reset to stage {to_stage}. Refresh to update."
+    return f"Failed: {err}"
+
+
+# ── Bulk reset ────────────────────────────────────────────────────────────────
+
+@callback(
+    Output("bulk-status", "children"),
+    Input("bulk-preview-btn", "n_clicks"),
+    State("bulk-filter-stage", "value"),
+    State("bulk-reset-to", "value"),
+    State("bulk-failed-only", "value"),
+    prevent_initial_call=True,
+)
+def _bulk_preview(_n, filter_stage, reset_to, failed_only):
+    if not reset_to:
+        return "Pick a reset-to stage."
+    try:
+        ctx = current_app.config.get("MEA", {})
+        checkpoint_dir = ctx.get("checkpoint_dir")
+    except RuntimeError:
+        return "No app context."
+    df = load_checkpoints(checkpoint_dir)
+    subset = df
+    if filter_stage and filter_stage != "all":
+        subset = df[df["stage"] == filter_stage]
+    if "failed" in (failed_only or []):
+        subset = subset[subset["failed"] == True]  # noqa: E712
+    return f"Preview: {len(subset)} checkpoint(s) would reset to stage {reset_to}."
+
+
+@callback(
+    Output("bulk-status", "children", allow_duplicate=True),
+    Input("bulk-execute-btn", "n_clicks"),
+    State("bulk-filter-stage", "value"),
+    State("bulk-reset-to", "value"),
+    State("bulk-failed-only", "value"),
+    prevent_initial_call=True,
+)
+def _bulk_execute(_n, filter_stage, reset_to, failed_only):
+    if not reset_to:
+        return "Pick a reset-to stage."
+    try:
+        ctx = current_app.config.get("MEA", {})
+        checkpoint_dir = ctx.get("checkpoint_dir")
+    except RuntimeError:
+        return "No app context."
+    df = load_checkpoints(checkpoint_dir)
+    ok, fail = bulk_reset_checkpoints(
+        df,
+        to_stage_num=int(reset_to),
+        filter_stage=filter_stage if filter_stage != "all" else None,
+        filter_failed_only="failed" in (failed_only or []),
+    )
+    return f"Reset {ok} checkpoint(s){f', {fail} failed' if fail else ''}. Refresh to update."
+
+
+def _empty_matrix():
     return html.Div(
         "No checkpoint data.",
         style={"padding": "24px 14px", "color": "var(--ink-3)",
@@ -280,19 +446,13 @@ def _empty_matrix() -> html.Div:
     )
 
 
-def _empty_inspector() -> html.Div:
-    return html.Div(
-        [
-            html.Div(
-                html.Div("Inspector", style={"fontWeight": 600, "fontSize": "13px"}),
-                className="inspector-head",
-            ),
-            html.Div(
-                html.Div(
-                    "Click a row to inspect.",
-                    style={"color": "var(--ink-3)", "fontFamily": "var(--font-mono)", "fontSize": "12px"},
-                ),
-                className="inspector-body",
-            ),
-        ]
-    )
+def _empty_inspector():
+    return html.Div([
+        html.Div(html.Div("Inspector", style={"fontWeight": 600}), className="inspector-head"),
+        html.Div(
+            html.Div("Click a row to inspect.",
+                     style={"color": "var(--ink-3)", "fontFamily": "var(--font-mono)",
+                            "fontSize": "12px"}),
+            className="inspector-body",
+        ),
+    ])
