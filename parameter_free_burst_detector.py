@@ -9,7 +9,7 @@ def compute_network_bursts(
     extent_frac=0.30,
     network_merge_gap_min=0.75,
     threshold_mad_scale=0.75,
-    min_burstlet_participation=0.0,
+    min_fragment_participation=0.0,
     min_burst_density_Hz=0.0,
     min_absolute_rate_Hz=0.0,
 ):
@@ -26,7 +26,7 @@ def compute_network_bursts(
         return {"error": "no_spikes"}
 
     rec_start = float(all_spikes[0])
-    rec_end = float(all_spikes[-1])
+    rec_end   = float(all_spikes[-1])
     total_dur = rec_end - rec_start
 
     # ---------------------------------------------------------
@@ -78,12 +78,12 @@ def compute_network_bursts(
         is_bursty = bool((not np.isnan(bc)) and bc > 0.555 and (np.isnan(lv) or lv > 1.0))
 
         unit_stats[u] = {
-            "mean_firing_rate_hz": mean_fr,
-            "cv_isi":              cv_isi,
-            "cv2":                 cv2,
-            "lv":                  lv,
-            "bimodality_coeff":    float(bc) if not np.isnan(bc) else None,
-            "is_bursty":           is_bursty,
+            "mean_firing_rate_hz":   mean_fr,
+            "cv_isi":                cv_isi,
+            "cv2":                   cv2,
+            "lv":                    lv,
+            "bimodality_coefficient": float(bc) if not np.isnan(bc) else None,
+            "is_bursty":             is_bursty,
         }
 
         if is_bursty:
@@ -95,19 +95,19 @@ def compute_network_bursts(
         hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
         peaks, _    = find_peaks(hist_smooth, prominence=5)
         if len(peaks) > 0:
-            biological_isi_s = float(10 ** centers[peaks[0]])   # short-mode peak
+            reference_isi_s = float(10 ** centers[peaks[0]])   # short-mode peak
         else:
-            biological_isi_s = float(10 ** np.percentile(bursty_log_isis, 15))
+            reference_isi_s = float(10 ** np.percentile(bursty_log_isis, 15))
     elif all_log_isis:
         # Fallback: no bursty units detected (young / sparse culture)
-        biological_isi_s = float(10 ** np.percentile(all_log_isis, 15))
+        reference_isi_s = float(10 ** np.percentile(all_log_isis, 15))
     else:
-        biological_isi_s = 0.05
+        reference_isi_s = 0.05
 
-    adaptive_bin_ms = np.clip(biological_isi_s * 1000, 10, 30)
-    bin_size = adaptive_bin_ms / 1000.0
+    bin_size_ms = np.clip(reference_isi_s * 1000, 10, 30)
+    bin_size    = bin_size_ms / 1000.0
 
-    bins = np.arange(rec_start, rec_end + bin_size, bin_size)
+    bins      = np.arange(rec_start, rec_end + bin_size, bin_size)
     t_centers = (bins[:-1] + bins[1:]) / 2
 
     # ---------------------------------------------------------
@@ -128,94 +128,92 @@ def compute_network_bursts(
         active_unit_counts += (counts > 0)
         spike_counts_total += counts
 
-    participation_signal_raw = active_unit_counts / max(1, n_units)
-    rate_signal_raw = spike_counts_total / bin_size / max(1, n_units)
+    participation_fraction_signal_raw = active_unit_counts / max(1, n_units)
+    rate_signal_raw                   = spike_counts_total / bin_size / max(1, n_units)
 
-    PFR = spike_counts_total / bin_size
+    population_firing_rate_hz = spike_counts_total / bin_size
 
     # ---------------------------------------------------------
     # 3. Smoothing
     # ---------------------------------------------------------
-    isi_bins = biological_isi_s / bin_size
+    isi_bins = reference_isi_s / bin_size
 
-    sigma_fast = np.clip(isi_bins, 1, 2)
-    sigma_slow = np.clip(5.0 * isi_bins, 3, 8)
+    sigma_participation_bins   = np.clip(isi_bins, 1, 2)
+    sigma_firing_rate_bins     = np.clip(5.0 * isi_bins, 3, 8)
 
-    ws_sharp = gaussian_filter1d(participation_signal_raw, sigma_fast)
-    ws_smooth = gaussian_filter1d(rate_signal_raw, sigma_slow)
+    participation_fraction_signal = gaussian_filter1d(participation_fraction_signal_raw, sigma_participation_bins)
+    population_firing_rate_signal = gaussian_filter1d(rate_signal_raw, sigma_firing_rate_bins)
 
     # adaptive merge gaps
-    burstlet_merge_gap_s = 3 * biological_isi_s
-    network_merge_gap_s = max(10 * biological_isi_s, network_merge_gap_min)  # or even 1.0
+    fragment_merge_gap_s = 3 * reference_isi_s
+    nb_merge_gap_s       = max(10 * reference_isi_s, network_merge_gap_min)
 
     # ---------------------------------------------------------
     # 4. Detection thresholds
     # ---------------------------------------------------------
     participation_floor_count = max(5, 0.15 * n_units) if n_units < 50 else max(10, 0.05 * n_units)
-    participation_floor = participation_floor_count / max(1, n_units)
+    participation_floor       = participation_floor_count / max(1, n_units)
 
-    baseline_val = np.median(ws_sharp)
-    spread_mad = np.median(np.abs(ws_sharp - baseline_val))
+    participation_baseline = np.median(participation_fraction_signal)
+    participation_mad      = np.median(np.abs(participation_fraction_signal - participation_baseline))
 
-    relative_threshold_val = max(participation_floor, baseline_val + threshold_mad_scale * spread_mad)
+    detection_threshold = max(participation_floor, participation_baseline + threshold_mad_scale * participation_mad)
 
     # ---------------------------------------------------------
-    # 5. Peak detection (FIXED)
+    # 5. Peak detection
     # ---------------------------------------------------------
-    min_prominence = max(0.5 * spread_mad, 0.02)
-
+    min_prominence = max(0.5 * participation_mad, 0.02)
 
     peaks, _ = find_peaks(
-        ws_sharp,
-        height=relative_threshold_val,
+        participation_fraction_signal,
+        height=detection_threshold,
         prominence=min_prominence,
     )
 
-    burstlets = []
+    burst_fragments = []
 
     # ---------------------------------------------------------
-    # 6. Burstlet extraction (FIXED EXTENT + DURATION)
+    # 6. Fragment extraction
     # ---------------------------------------------------------
     for p in peaks:
 
-        peak_val = ws_sharp[p]
-        extent_threshold = max(relative_threshold_val, extent_frac * peak_val)
+        peak_val         = participation_fraction_signal[p]
+        extent_threshold = max(detection_threshold, extent_frac * peak_val)
 
         # LEFT boundary
         s = p
-        while s > 0 and ws_sharp[s - 1] >= extent_threshold:
+        while s > 0 and participation_fraction_signal[s - 1] >= extent_threshold:
             s -= 1
 
         # RIGHT boundary
         e = p
-        while e < n_bins - 1 and ws_sharp[e + 1] >= extent_threshold:
+        while e < n_bins - 1 and participation_fraction_signal[e + 1] >= extent_threshold:
             e += 1
 
         start_idx = s
-        end_idx = e
+        end_idx   = e
 
-        # FIX: use bin edges
-        start_t = bins[start_idx]
-        end_t = bins[end_idx + 1]
+        start_time_s = bins[start_idx]
+        end_time_s   = bins[end_idx + 1]
 
-        duration_s = end_t - start_t
-        if duration_s <= 0:
+        burst_duration_s = end_time_s - start_time_s
+        if burst_duration_s <= 0:
             continue
 
         participating = sum(
             1 for u in units
-            if np.any((SpikeTimes[u] >= start_t) & (SpikeTimes[u] < end_t))
+            if np.any((SpikeTimes[u] >= start_time_s) & (SpikeTimes[u] < end_time_s))
         )
 
-        participation_frac = participating / n_units
+        participation_fraction = participating / n_units
 
-        if min_burstlet_participation > 0 and participation_frac < min_burstlet_participation:
+        if min_fragment_participation > 0 and participation_fraction < min_fragment_participation:
             continue
 
-        total_spikes = int(np.sum(spike_counts_total[start_idx:end_idx + 1]))
+        spike_count = int(np.sum(spike_counts_total[start_idx:end_idx + 1]))
 
-        denom = duration_s * max(1, participating)
-        burst_density = total_spikes / denom if denom > 0 else 0
+        denom         = burst_duration_s * max(1, participating)
+        burst_density = spike_count / denom if denom > 0 else 0
 
         peak_drive_rate = np.max(rate_signal_raw[start_idx:end_idx + 1])
 
@@ -225,24 +223,24 @@ def compute_network_bursts(
         if min_absolute_rate_Hz > 0 and peak_drive_rate < min_absolute_rate_Hz:
             continue
 
-        burstlets.append({
-            "start": float(start_t),
-            "end": float(end_t),
-            "duration_s": float(duration_s),
-            "peak_synchrony": float(peak_val),
-            "peak_time": float(t_centers[p]),
-            "synchrony_energy": float(np.sum(ws_smooth[start_idx:end_idx + 1]) * bin_size),
-            "participation": participation_frac,
-            "total_spikes": total_spikes,
-            "burst_peak": float(np.max(PFR[start_idx:end_idx + 1]))
+        burst_fragments.append({
+            "start_time_s":                    float(start_time_s),
+            "end_time_s":                      float(end_time_s),
+            "burst_duration_s":                float(burst_duration_s),
+            "peak_participation_fraction":     float(peak_val),
+            "peak_time_s":                     float(t_centers[p]),
+            "burst_area":                      float(np.sum(population_firing_rate_signal[start_idx:end_idx + 1]) * bin_size),
+            "participation_fraction":          float(participation_fraction),
+            "spike_count":                     spike_count,
+            "peak_population_firing_rate_hz":  float(np.max(population_firing_rate_hz[start_idx:end_idx + 1]))
         })
 
     # ---------------------------------------------------------
-    # 7. Merge logic (RELAXED ONLY WHERE NECESSARY)
+    # 7. Merge logic
     # ---------------------------------------------------------
     def finalize(evs, s, e):
 
-        best = max(evs, key=lambda x: x["peak_synchrony"])
+        best = max(evs, key=lambda x: x["peak_participation_fraction"])
 
         participating_units = sum(
             1 for u in units
@@ -250,135 +248,123 @@ def compute_network_bursts(
         )
 
         return {
-            "start": s,
-            "end": e,
-            "duration_s": e - s,
-            "peak_synchrony": best["peak_synchrony"],
-            "peak_time": best["peak_time"],
-            "synchrony_energy": sum(ev["synchrony_energy"] for ev in evs),
-            "fragment_count": sum(ev.get("fragment_count", 1) for ev in evs),
-            "total_spikes": sum(ev["total_spikes"] for ev in evs),
-            "participation": participating_units / n_units,
-            "burst_peak": max(ev["burst_peak"] for ev in evs),
-            "n_sub_events": len(evs)
+            "start_time_s":                    s,
+            "end_time_s":                      e,
+            "burst_duration_s":                e - s,
+            "peak_participation_fraction":     best["peak_participation_fraction"],
+            "peak_time_s":                     best["peak_time_s"],
+            "burst_area":                      sum(ev["burst_area"] for ev in evs),
+            "component_count":                 sum(ev.get("component_count", 1) for ev in evs),
+            "spike_count":                     sum(ev["spike_count"] for ev in evs),
+            "participation_fraction":          participating_units / n_units,
+            "peak_population_firing_rate_hz":  max(ev["peak_population_firing_rate_hz"] for ev in evs),
+            "n_components":                    len(evs)
         }
-    def get_valley_min(prev, nxt, ws_sharp, t_centers):
-        valley_mask = (t_centers >= prev["end"]) & (t_centers <= nxt["start"])
+
+    def get_valley_min(prev, nxt, participation_fraction_signal, t_centers):
+        valley_mask = (t_centers >= prev["end_time_s"]) & (t_centers <= nxt["start_time_s"])
         if not np.any(valley_mask):
             return None
-        valley_vals = ws_sharp[valley_mask]
+        valley_vals = participation_fraction_signal[valley_mask]
         if valley_vals.size == 0:
             return None
         return float(np.min(valley_vals))
-    
+
     def merge_strict(events, gap, floor_val, min_dur=0):
 
         if not events:
             return []
 
-        events = sorted(events, key=lambda x: x["start"])
+        events = sorted(events, key=lambda x: x["start_time_s"])
 
         merged = []
-        curr = [events[0]]
-
-        s = events[0]["start"]
-        e = events[0]["end"]
+        curr   = [events[0]]
+        s      = events[0]["start_time_s"]
+        e      = events[0]["end_time_s"]
 
         for nxt in events[1:]:
 
-            valley_duration = nxt["start"] - e
-            valley_min = get_valley_min(curr[-1], nxt, ws_sharp, t_centers)
+            valley_duration = nxt["start_time_s"] - e
+            valley_min      = get_valley_min(curr[-1], nxt, participation_fraction_signal, t_centers)
 
             if valley_min is None:
                 valley_ok = (valley_duration <= bin_size)
             else:
-                # STRICT: must stay in burst regime
                 valley_ok = (valley_min >= floor_val)
 
-            merge_condition = (
-                (valley_duration <= gap)
-                and valley_ok
-            )
+            merge_condition = (valley_duration <= gap) and valley_ok
 
             if merge_condition:
                 curr.append(nxt)
-                e = max(e, nxt["end"])
+                e = max(e, nxt["end_time_s"])
             else:
                 merged.append(finalize(curr, s, e))
                 curr = [nxt]
-                s = nxt["start"]
-                e = nxt["end"]
+                s    = nxt["start_time_s"]
+                e    = nxt["end_time_s"]
 
         merged.append(finalize(curr, s, e))
 
-        return [m for m in merged if m["duration_s"] >= min_dur]
-    
+        return [m for m in merged if m["burst_duration_s"] >= min_dur]
 
     def merge_clustered(events, gap, baseline_val, threshold_val, min_dur=0):
 
         if not events:
             return []
 
-        events = sorted(events, key=lambda x: x["start"])
+        events = sorted(events, key=lambda x: x["start_time_s"])
 
         merged = []
-        curr = [events[0]]
-
-        s = events[0]["start"]
-        e = events[0]["end"]
+        curr   = [events[0]]
+        s      = events[0]["start_time_s"]
+        e      = events[0]["end_time_s"]
 
         for nxt in events[1:]:
 
-            valley_duration = nxt["start"] - e
-            valley_min = get_valley_min(curr[-1], nxt, ws_sharp, t_centers)
+            valley_duration = nxt["start_time_s"] - e
+            valley_min      = get_valley_min(curr[-1], nxt, participation_fraction_signal, t_centers)
 
             if valley_min is None:
                 valley_ok = (valley_duration <= bin_size)
             else:
-                # RELAXED: allow dip below burst threshold but not to silence
                 valley_ok = (
                     valley_min > baseline_val and
                     valley_min < threshold_val
                 )
 
-            merge_condition = (
-                (valley_duration <= gap)
-                and valley_ok
-            )
+            merge_condition = (valley_duration <= gap) and valley_ok
 
             if merge_condition:
                 curr.append(nxt)
-                e = max(e, nxt["end"])
+                e = max(e, nxt["end_time_s"])
             else:
                 merged.append(finalize(curr, s, e))
                 curr = [nxt]
-                s = nxt["start"]
-                e = nxt["end"]
+                s    = nxt["start_time_s"]
+                e    = nxt["end_time_s"]
 
         merged.append(finalize(curr, s, e))
 
         return [
             m for m in merged
-            if m["duration_s"] >= min_dur and m["n_sub_events"] >= 2
+            if m["burst_duration_s"] >= min_dur and m["n_components"] >= 2
         ]
-    
-    
+
     network_bursts = merge_strict(
-        burstlets,
-        burstlet_merge_gap_s,
-        relative_threshold_val
+        burst_fragments,
+        fragment_merge_gap_s,
+        detection_threshold
     )
 
-    superbursts = merge_clustered(
+    reverberating_network_bursts = merge_clustered(
         network_bursts,
-        network_merge_gap_s,
-        baseline_val,
-        relative_threshold_val,
+        nb_merge_gap_s,
+        participation_baseline,
+        detection_threshold,
     )
-    #superbursts = [sb for sb in superbursts if sb["n_sub_events"] >= 2]
 
     # ---------------------------------------------------------
-    # 8. Metrics (FIX CV)
+    # 8. Metrics
     # ---------------------------------------------------------
     def stats(x):
 
@@ -388,68 +374,76 @@ def compute_network_bursts(
             return {"mean": 0.0, "std": 0.0, "cv": 0.0}
 
         mean_val = x.mean()
-        std_val = x.std()
-
-        cv = std_val / mean_val if abs(mean_val) > 1e-12 else np.nan
+        std_val  = x.std()
+        cv       = std_val / mean_val if abs(mean_val) > 1e-12 else np.nan
 
         return {
             "mean": float(mean_val),
-            "std": float(std_val),
-            "cv": float(cv)
+            "std":  float(std_val),
+            "cv":   float(cv)
         }
 
-    def level_metrics(events):
+    def level_metrics(events, ibi_key="ibi_s"):
 
         if not events:
             return {}
 
-        starts = [ev["start"] for ev in events]
+        starts = [ev["start_time_s"] for ev in events]
 
         return {
-            "count": len(events),
-            "rate": len(events) / total_dur,
-            "duration": stats([ev["duration_s"] for ev in events]),
-            "inter_event_interval": stats(np.diff(starts)) if len(starts) > 1 else stats([]),
-            "intensity": stats([ev["synchrony_energy"] for ev in events]),
-            "participation": stats([ev["participation"] for ev in events]),
-            "spikes_per_burst": stats([ev["total_spikes"] for ev in events]),
-            "burst_peak": stats([ev["burst_peak"] for ev in events]),
-            "peak_synchrony": stats([ev["peak_synchrony"] for ev in events])
+            "burst_count":                    len(events),
+            "burst_rate_hz":                  len(events) / total_dur,
+            "burst_duration_s":               stats([ev["burst_duration_s"] for ev in events]),
+            ibi_key:                          stats(np.diff(starts)) if len(starts) > 1 else stats([]),
+            "burst_area":                     stats([ev["burst_area"] for ev in events]),
+            "participation_fraction":         stats([ev["participation_fraction"] for ev in events]),
+            "spike_count_per_burst":          stats([ev["spike_count"] for ev in events]),
+            "peak_population_firing_rate_hz": stats([ev["peak_population_firing_rate_hz"] for ev in events]),
+            "peak_participation_fraction":    stats([ev["peak_participation_fraction"] for ev in events]),
         }
 
     # ---------------------------------------------------------
-    # 9. Return (unchanged)
+    # 9. Return
     # ---------------------------------------------------------
     return {
 
-        "burstlets": {"events": burstlets, "metrics": level_metrics(burstlets)},
-        "network_bursts": {"events": network_bursts, "metrics": level_metrics(network_bursts)},
-        "superbursts": {"events": superbursts, "metrics": level_metrics(superbursts)},
+        "burst_fragments": {
+            "events":  burst_fragments,
+            "metrics": level_metrics(burst_fragments, ibi_key="ifbi_s")
+        },
+        "network_bursts": {
+            "events":  network_bursts,
+            "metrics": level_metrics(network_bursts, ibi_key="ibi_s")
+        },
+        "reverberating_network_bursts": {
+            "events":  reverberating_network_bursts,
+            "metrics": level_metrics(reverberating_network_bursts, ibi_key="irnbi_s")
+        },
 
         "diagnostics": {
-            "adaptive_bin_ms":       adaptive_bin_ms,
-            "biological_isi_s":      biological_isi_s,
-            "biological_isi_source": "bursty_peak" if len(bursty_log_isis) > 50 else ("all_percentile15" if all_log_isis else "default"),
-            "baseline_value":        baseline_val,
-            "spread_mad":            spread_mad,
-            "merge_floor":           relative_threshold_val,
-            "burstlet_merge_gap_s":  burstlet_merge_gap_s,
-            "network_merge_gap_s":   network_merge_gap_s,
-            "n_units":               n_units,
-            "n_bursty_units":        sum(1 for s in unit_stats.values() if s.get("is_bursty")),
-            "sigma_fast_bins":       sigma_fast,
-            "sigma_slow_bins":       sigma_slow
+            "bin_size_ms":            bin_size_ms,
+            "reference_isi_s":        reference_isi_s,
+            "reference_isi_source":   "bursty_peak" if len(bursty_log_isis) > 50 else ("all_percentile15" if all_log_isis else "default"),
+            "participation_baseline": participation_baseline,
+            "participation_mad":      participation_mad,
+            "detection_threshold":    detection_threshold,
+            "fragment_merge_gap_s":   fragment_merge_gap_s,
+            "nb_merge_gap_s":         nb_merge_gap_s,
+            "n_units":                n_units,
+            "n_bursty_units":         sum(1 for s in unit_stats.values() if s.get("is_bursty")),
+            "sigma_participation_bins":  sigma_participation_bins,
+            "sigma_firing_rate_bins":    sigma_firing_rate_bins,
         },
 
         "unit_stats": unit_stats,
 
         "plot_data": {
-            "t": t_centers,
-            "participation_signal": ws_sharp,
-            "rate_signal": ws_smooth,
-            "burst_peak_times": np.array([b["peak_time"] for b in network_bursts]),
-            "burst_peak_values": np.array([b["peak_synchrony"] for b in network_bursts]),
-            "participation_baseline": baseline_val,
-            "participation_threshold": relative_threshold_val
+            "time_s":                          t_centers,
+            "participation_fraction_signal":   participation_fraction_signal,
+            "population_firing_rate_hz":       population_firing_rate_signal,
+            "nb_peak_times_s":                 np.array([b["peak_time_s"] for b in network_bursts]),
+            "nb_peak_participation_fraction":  np.array([b["peak_participation_fraction"] for b in network_bursts]),
+            "participation_baseline":          participation_baseline,
+            "detection_threshold":             detection_threshold,
         }
     }
