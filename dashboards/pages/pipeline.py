@@ -9,7 +9,8 @@ from flask import current_app
 from dashboards.components import no_config_banner
 from dashboards.data import (
     STAGE_COLS, STAGE_MAP,
-    bulk_reset_checkpoints, load_checkpoints, reset_checkpoint,
+    bulk_delete_checkpoints, bulk_reset_checkpoints,
+    delete_checkpoint, load_checkpoints, reset_checkpoint,
 )
 
 dash.register_page(__name__, path="/pipeline", name="Pipeline", order=1)
@@ -172,6 +173,91 @@ layout = html.Div(
             className="card",
             style={"marginTop": "16px"},
         ),
+        # ── bulk delete ──────────────────────────────────────────────────
+        html.Div(
+            [
+                html.Div(
+                    [
+                        html.Span("bulk delete", className="h-title"),
+                        html.Span(
+                            "Permanently removes checkpoint JSON files.",
+                            className="h-actions",
+                            style={"color": "var(--fail)", "fontFamily": "var(--font-mono)",
+                                   "fontSize": "11px", "textTransform": "none",
+                                   "letterSpacing": "0"},
+                        ),
+                    ],
+                    className="card-head",
+                ),
+                html.Div(
+                    [
+                        html.Div(
+                            [
+                                html.Div(
+                                    [
+                                        html.Label("Filter — current stage", className="section-label"),
+                                        dcc.Dropdown(
+                                            id="bulk-del-filter-stage",
+                                            options=[{"label": "all stages", "value": "all"}]
+                                                    + [{"label": v, "value": v}
+                                                       for v in STAGE_MAP.values()],
+                                            value="all", clearable=False,
+                                        ),
+                                    ],
+                                    style={"flex": "1 1 220px"},
+                                ),
+                                html.Div(
+                                    [
+                                        html.Label("Scope", className="section-label"),
+                                        dcc.Checklist(
+                                            id="bulk-del-failed-only",
+                                            options=[{"label": "  failed wells only", "value": "failed"}],
+                                            value=[],
+                                            style={"fontFamily": "var(--font-mono)", "fontSize": "12px"},
+                                        ),
+                                    ],
+                                    style={"flex": "0 0 180px"},
+                                ),
+                            ],
+                            style={"display": "flex", "gap": "16px",
+                                   "flexWrap": "wrap", "alignItems": "flex-start"},
+                        ),
+                        html.Div(
+                            dcc.Checklist(
+                                id="bulk-del-confirm",
+                                options=[{"label": "  I understand this permanently deletes the selected checkpoint files",
+                                          "value": "confirmed"}],
+                                value=[],
+                                style={"fontFamily": "var(--font-mono)", "fontSize": "11px",
+                                       "color": "var(--ink-3)"},
+                            ),
+                            style={"marginTop": "12px"},
+                        ),
+                        html.Div(
+                            [
+                                html.Button(
+                                    [html.Span("…", className="glyph"), "Preview"],
+                                    id="bulk-del-preview-btn", n_clicks=0, className="btn",
+                                ),
+                                html.Button(
+                                    [html.Span("✕", className="glyph"), "Delete files"],
+                                    id="bulk-del-execute-btn", n_clicks=0, className="btn",
+                                    style={"borderColor": "var(--fail)", "color": "var(--fail)"},
+                                ),
+                                html.Span(id="bulk-del-status",
+                                          style={"fontFamily": "var(--font-mono)",
+                                                 "fontSize": "11px", "color": "var(--ink-3)"}),
+                            ],
+                            style={"display": "flex", "alignItems": "center",
+                                   "gap": "8px", "marginTop": "12px"},
+                        ),
+                    ],
+                    className="card-body",
+                ),
+            ],
+            className="card",
+            style={"marginTop": "12px", "borderColor": "rgba(224,49,49,0.25)"},
+        ),
     ],
     className="page",
 )
@@ -310,8 +396,8 @@ def _show_inspector(row_clicks, selected, _path):
             html.Div("error", className="section-label", style={"marginTop": "12px"}),
             html.Pre(str(err), className="code",
                      style={"background": "var(--fail-soft)",
-                            "borderColor": "oklch(0.6 0.16 28 / 0.35)",
-                            "color": "oklch(0.4 0.16 28)", "maxHeight": "100px"}),
+                            "borderColor": "rgba(224,49,49,0.35)",
+                            "color": "#b02525", "maxHeight": "100px"}),
         ])
 
     reset_block = html.Div(
@@ -342,10 +428,36 @@ def _show_inspector(row_clicks, selected, _path):
         ]
     )
 
+    delete_block = html.Div(
+        [
+            html.Div(
+                style={"borderTop": "1px solid var(--line-soft)", "margin": "14px 0 0"}
+            ),
+            html.Div("delete checkpoint", className="section-label",
+                     style={"marginTop": "10px", "color": "var(--fail)"}),
+            dcc.Checklist(
+                id="insp-delete-confirm",
+                options=[{"label": "  Permanently delete this file", "value": "confirmed"}],
+                value=[],
+                style={"fontFamily": "var(--font-mono)", "fontSize": "11px",
+                       "color": "var(--ink-3)", "marginBottom": "6px"},
+            ),
+            html.Button(
+                [html.Span("✕", className="glyph"), "Delete file"],
+                id="insp-delete-btn", n_clicks=0, className="btn",
+                style={"height": "32px", "borderColor": "var(--fail)", "color": "var(--fail)"},
+            ),
+            html.Div(id="insp-delete-status",
+                     style={"fontFamily": "var(--font-mono)", "fontSize": "11px",
+                            "color": "var(--ink-3)", "marginTop": "6px", "minHeight": "16px"}),
+        ]
+    )
+
     body = [kv]
     if error_block:
         body.append(error_block)
     body.append(reset_block)
+    body.append(delete_block)
 
     return html.Div([
         html.Div(
@@ -436,6 +548,80 @@ def _bulk_execute(_n, filter_stage, reset_to, failed_only):
         filter_failed_only="failed" in (failed_only or []),
     )
     return f"Reset {ok} checkpoint(s){f', {fail} failed' if fail else ''}. Refresh to update."
+
+
+@callback(
+    Output("insp-delete-status", "children"),
+    Input("insp-delete-btn", "n_clicks"),
+    State("insp-delete-confirm", "value"),
+    State("pipe-selected-idx", "data"),
+    prevent_initial_call=True,
+)
+def _inspector_delete(_n, confirmed, row_idx):
+    if "confirmed" not in (confirmed or []):
+        return "Check the box to confirm deletion."
+    if row_idx is None:
+        return "No well selected."
+    try:
+        ctx = current_app.config.get("MEA", {})
+        checkpoint_dir = ctx.get("checkpoint_dir")
+    except RuntimeError:
+        return "Error: no app context."
+    df = load_checkpoints(checkpoint_dir)
+    if df.empty or row_idx >= len(df):
+        return "Well not found."
+    path = df.iloc[int(row_idx)]["path"]
+    ok, err = delete_checkpoint(path)
+    if ok:
+        return "Deleted. Refresh to update."
+    return f"Failed: {err}"
+
+
+@callback(
+    Output("bulk-del-status", "children"),
+    Input("bulk-del-preview-btn", "n_clicks"),
+    State("bulk-del-filter-stage", "value"),
+    State("bulk-del-failed-only", "value"),
+    prevent_initial_call=True,
+)
+def _bulk_del_preview(_n, filter_stage, failed_only):
+    try:
+        ctx = current_app.config.get("MEA", {})
+        checkpoint_dir = ctx.get("checkpoint_dir")
+    except RuntimeError:
+        return "No app context."
+    df = load_checkpoints(checkpoint_dir)
+    subset = df
+    if filter_stage and filter_stage != "all":
+        subset = df[df["stage"] == filter_stage]
+    if "failed" in (failed_only or []):
+        subset = subset[subset["failed"] == True]  # noqa: E712
+    return f"Preview: {len(subset)} checkpoint file(s) would be deleted."
+
+
+@callback(
+    Output("bulk-del-status", "children", allow_duplicate=True),
+    Input("bulk-del-execute-btn", "n_clicks"),
+    State("bulk-del-filter-stage", "value"),
+    State("bulk-del-failed-only", "value"),
+    State("bulk-del-confirm", "value"),
+    prevent_initial_call=True,
+)
+def _bulk_del_execute(_n, filter_stage, failed_only, confirmed):
+    if "confirmed" not in (confirmed or []):
+        return "Check the confirmation box first."
+    try:
+        ctx = current_app.config.get("MEA", {})
+        checkpoint_dir = ctx.get("checkpoint_dir")
+    except RuntimeError:
+        return "No app context."
+    df = load_checkpoints(checkpoint_dir)
+    ok, fail = bulk_delete_checkpoints(
+        df,
+        filter_stage=filter_stage if filter_stage != "all" else None,
+        filter_failed_only="failed" in (failed_only or []),
+    )
+    return f"Deleted {ok} file(s){f', {fail} failed' if fail else ''}. Refresh to update."
 
 
 def _empty_matrix():

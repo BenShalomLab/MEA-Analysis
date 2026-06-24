@@ -151,25 +151,37 @@ def _select_recording(clicks):
 
 @callback(
     Output("rec-detail", "children"),
+    Output("mea-rerun-dir", "data"),
     Input("rec-selected-key", "data"),
     Input("rec-interval", "n_intervals"),
+    Input({"rec-rerun": ALL}, "n_clicks"),
+    State("mea-rerun-dir", "data"),
+    prevent_initial_call=False,
 )
-def _render_detail(key, _n):
+def _render_detail(key, _n, rerun_clicks, _store):
+    from dash import ctx as dash_ctx
+
+    # If rerun button clicked, just update the store (detail re-render happens on next input)
+    if dash_ctx.triggered_id and isinstance(dash_ctx.triggered_id, dict) and \
+            "rec-rerun" in dash_ctx.triggered_id:
+        data_dir = dash_ctx.triggered_id["rec-rerun"]
+        return dash.no_update, data_dir
+
     if not key:
         return html.Div(
             "Select a recording to view well details.",
             style={"padding": "24px", "color": "var(--ink-3)",
                    "fontFamily": "var(--font-mono)", "fontSize": "12px"},
-        )
+        ), dash.no_update
 
     try:
         ctx = current_app.config.get("MEA", {})
         checkpoint_dir = ctx.get("checkpoint_dir")
     except RuntimeError:
-        return []
+        return [], dash.no_update
 
     if not checkpoint_dir:
-        return []
+        return [], dash.no_update
 
     df = load_checkpoints(checkpoint_dir)
     df["rec_key"] = df.apply(
@@ -178,9 +190,11 @@ def _render_detail(key, _n):
     )
     grp = df[df["rec_key"] == key]
     if grp.empty:
-        return html.Div("Recording not found.", className="banner warn")
+        return html.Div("Recording not found.", className="banner warn"), dash.no_update
 
     r0 = grp.iloc[0]
+    data_dir = str(r0.get("data_dir") or "")
+
     meta_items = [
         ("project", r0.get("project", "—")),
         ("date",    r0.get("date", "—")),
@@ -193,28 +207,59 @@ def _render_detail(key, _n):
         className="kv",
     )
 
+    data_dir_row = html.Div(
+        [
+            html.Div("data dir", className="section-label"),
+            html.Div(
+                [
+                    html.Code(
+                        data_dir or "—",
+                        style={"fontSize": "11px", "wordBreak": "break-all",
+                               "flex": "1", "userSelect": "all"},
+                    ),
+                    dcc.Link(
+                        html.Button("Rerun →", className="btn ghost",
+                                    style={"fontSize": "11px", "whiteSpace": "nowrap"}),
+                        href="/run",
+                        id={"rec-rerun": data_dir},
+                        style={"textDecoration": "none"},
+                    ) if data_dir else None,
+                ],
+                style={"display": "flex", "alignItems": "flex-start",
+                       "gap": "10px", "padding": "6px 0"},
+            ),
+        ],
+        style={"padding": "0 0 8px"},
+    )
+
     header = html.Tr([
-        html.Th(c) for c in ["well", "rec", "stage", "units", "updated"]
+        html.Th(c) for c in ["well", "stage", "units", "inspect", "updated"]
     ])
     rows = [
         html.Tr([
             html.Td(str(r.well or "—"), className="mono"),
-            html.Td(str(r.rec or "—"), className="mono"),
             html.Td(_stage_pill(r.stage, r.failed)),
             html.Td(str(r.num_units) if r.num_units is not None else "—", className="num"),
+            html.Td(
+                dcc.Link("→", href="/burst-inspector",
+                         style={"fontFamily": "var(--font-mono)", "fontSize": "12px"})
+                if r.stage == TERMINAL_STAGE else html.Span("—", className="muted")
+            ),
             html.Td(str(r.last_updated or "—"), className="muted"),
         ])
         for r in grp.itertuples()
     ]
     table = html.Table([html.Thead(header), html.Tbody(rows)], className="tbl")
 
-    return html.Div(
+    detail = html.Div(
         [
             html.Div(
                 [html.Span("recording detail", className="h-title")],
                 className="card-head",
             ),
             html.Div(meta, className="card-body"),
+            html.Div(data_dir_row, className="card-body",
+                     style={"borderTop": "1px solid var(--line-soft)"}),
             html.Div(
                 [html.Div("wells", className="section-label"),
                  html.Div(table, className="tbl-wrap")],
@@ -224,6 +269,7 @@ def _render_detail(key, _n):
         className="card",
         style={"margin": "0 0 0 1px"},
     )
+    return detail, dash.no_update
 
 
 def _stage_pill(stage: str, failed: bool) -> html.Span:

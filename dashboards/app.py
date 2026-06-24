@@ -10,7 +10,10 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+import re as _re
+
 from dash import Dash  # noqa: E402
+from flask import abort, request, send_file  # noqa: E402
 
 from .components.layout import build_layout  # noqa: E402
 from .theme import apply_default_theme  # noqa: E402
@@ -18,7 +21,7 @@ from .theme import apply_default_theme  # noqa: E402
 
 _INDEX_STRING = """\
 <!DOCTYPE html>
-<html data-theme="warm">
+<html>
     <head>
         {%metas%}
         <title>{%title%}</title>
@@ -75,4 +78,17 @@ def build_app(
         "checkpoint_dir": checkpoint_dir,
     }
     app.layout = build_layout()
+
+    @app.server.route("/raster-img")
+    def _serve_raster_img():
+        p = Path(request.args.get("p", "")).resolve()
+        if p.suffix not in (".png", ".svg"):
+            abort(403)
+        if not _re.search(r"raster_burst_plot", p.name):
+            abort(403)
+        if not p.exists():
+            abort(404)
+        mime = "image/png" if p.suffix == ".png" else "image/svg+xml"
+        return send_file(str(p), mimetype=mime)
+
     return app

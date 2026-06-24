@@ -20,6 +20,7 @@ _NAV_META: dict[str, tuple[str, str]] = {
     "Run":               ("operations", "▸"),
     "Burst Diagnostic":  ("analysis",   "∿"),
     "Burst Inspector":   ("analysis",   "⌇"),
+    "Raster Gallery":    ("analysis",   "⊞"),
     "Settings":          ("system",     "{}"),
 }
 
@@ -58,6 +59,8 @@ def build_layout() -> html.Div:
     return html.Div(
         [
             dcc.Location(id="dashboard-url"),
+            # Shared store: recordings page writes, run page reads to pre-fill data dir.
+            dcc.Store(id="mea-rerun-dir", storage_type="session"),
             _topbar(),
             _rail(),
             html.Main(

@@ -8,7 +8,7 @@ from dash import Input, Output, callback, dcc, html
 from flask import current_app
 
 from dashboards.components import no_config_banner
-from dashboards.data import load_network_results
+from dashboards.data import load_checkpoints, load_network_results, load_network_results_from_checkpoints
 from dashboards.theme import apply_default_theme as _adt; _adt()
 
 dash.register_page(__name__, path="/burst-diagnostic", name="Burst Diagnostic", order=5)
@@ -97,14 +97,15 @@ def _refresh(_n, _refresh, _path):
     if not ctx.get("config_exists"):
         return no_config_banner(), [], _empty_fig(), _empty_msg()
 
-    config = ctx.get("config") or {}
-    output_root = (config.get("io") or {}).get("output_dir") or ""
-
-    if not output_root:
-        warn = html.Div("io.output_dir not set in config.", className="banner warn")
-        return warn, [], _empty_fig(), _empty_msg()
-
-    rows = load_network_results(output_root)
+    checkpoint_dir = ctx.get("checkpoint_dir")
+    if checkpoint_dir:
+        rows = load_network_results_from_checkpoints(load_checkpoints(checkpoint_dir))
+    else:
+        output_root = ((ctx.get("config") or {}).get("io") or {}).get("output_dir") or ""
+        if not output_root:
+            warn = html.Div("io.output_dir not set in config.", className="banner warn")
+            return warn, [], _empty_fig(), _empty_msg()
+        rows = load_network_results(output_root)
     if not rows:
         return None, [], _empty_fig(), html.Div(
             "No network_results.json found under output_dir.",

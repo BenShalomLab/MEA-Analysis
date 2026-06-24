@@ -6,7 +6,7 @@ Builds the invocation string; does NOT spawn the process.
 from __future__ import annotations
 
 import dash
-from dash import Input, Output, callback, dcc, html
+from dash import Input, Output, State, callback, dcc, html
 from flask import current_app
 
 from dashboards.components import no_config_banner
@@ -164,18 +164,24 @@ layout = html.Div(
     Output("run-preview-body", "children"),
     Output("run-preview-count", "children"),
     Output("run-config-path", "value"),
+    Output("run-data-dir", "value"),
     Input("run-data-dir", "value"),
     Input("run-config-path", "value"),
     Input("run-sorter", "value"),
     Input("run-resume-from", "value"),
     Input("run-flags", "value"),
     Input("dashboard-url", "pathname"),
+    State("mea-rerun-dir", "data"),
 )
-def _build_command(data_dir, config_path, sorter, resume_from, flags, _path):
+def _build_command(data_dir, config_path, sorter, resume_from, flags, _path, prefill_dir):
     try:
         ctx = current_app.config.get("MEA", {})
     except RuntimeError:
-        return no_config_banner(), "", [], "", "mea_config.json"
+        return no_config_banner(), "", [], "", "mea_config.json", dash.no_update
+
+    # Pre-fill data dir from store when arriving via Rerun button
+    if not data_dir and prefill_dir:
+        data_dir = prefill_dir
 
     # Pre-fill config path from loaded config
     if not config_path:
@@ -186,7 +192,7 @@ def _build_command(data_dir, config_path, sorter, resume_from, flags, _path):
     flags = flags or []
 
     if not data_dir:
-        return no_config, "# Enter a data directory above.", [], "", config_path
+        return no_config, "# Enter a data directory above.", [], "", config_path, dash.no_update
 
     parts = ["python run_pipeline_driver.py", f'"{data_dir}"']
     parts.append(f"--config '{config_path}'")
@@ -231,7 +237,7 @@ def _build_command(data_dir, config_path, sorter, resume_from, flags, _path):
                            "fontFamily": "var(--font-mono)", "fontSize": "12px"},
                 )
 
-    return no_config, command, preview_body, count_pill, config_path
+    return no_config, command, preview_body, count_pill, config_path, data_dir
 
 
 # Wire copy button → clipboard

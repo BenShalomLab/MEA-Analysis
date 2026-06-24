@@ -109,7 +109,7 @@ def compute_network_bursts(
     else:
         reference_isi_s = 0.05
 
-    bin_size_ms = np.clip(reference_isi_s * 1000, 10, 30)
+    bin_size_ms = np.clip(reference_isi_s * 1000, 20, 100)
     bin_size    = bin_size_ms / 1000.0
 
     bins      = np.arange(rec_start, rec_end + bin_size, bin_size)

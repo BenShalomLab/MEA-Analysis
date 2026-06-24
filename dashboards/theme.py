@@ -1,13 +1,12 @@
-"""Plotly template matching the dashboard's `mea-chip` warm-paper design.
+"""Plotly template matching the dashboard's clean neutral design.
 
 Hex values mirror the CSS custom properties in `assets/styles.css`:
-- `--bg`     → `#f4f1ea`  (paper background)
-- `--bg-elev`→ `#fbf9f3`  (plot area background)
-- `--ink`    → `#1c1a15`  (text)
-- `--ink-3`  → `#84807a`  (axis labels)
-- `--line`   → `#d9d3c5`  (gridlines)
-- accents (oklch in CSS, hex here for Plotly compatibility):
-  sage `#5d9e7e` · amber `#c89a3a` · fail `#c0623a` · info `#5b7fac`
+- `--bg`     → `#f6f8fa`  (app background)
+- `--bg-elev`→ `#ffffff`  (plot area / card surface)
+- `--ink`    → `#1a1d21`  (text)
+- `--ink-3`  → `#6e757c`  (axis labels)
+- `--line`   → `#d0d3d9`  (gridlines)
+- status:  ok `#1f9d55` · run `#e67700` · fail `#e03131` · info `#1971c2`
 """
 
 from __future__ import annotations
@@ -18,14 +17,14 @@ import plotly.io as pio
 
 TEMPLATE_NAME = "mea_paper"
 
-_PAPER = "#f4f1ea"
-_PLOT = "#fbf9f3"
-_INK = "#1c1a15"
-_INK3 = "#84807a"
-_LINE = "#d9d3c5"
-_LINE_SOFT = "#e6e1d2"
+_PAPER = "#f6f8fa"
+_PLOT = "#ffffff"
+_INK = "#1a1d21"
+_INK3 = "#6e757c"
+_LINE = "#d0d3d9"
+_LINE_SOFT = "#e5e7eb"
 
-_STATUS_PALETTE = ["#5d9e7e", "#c89a3a", "#c0623a", "#5b7fac", "#84807a"]
+_STATUS_PALETTE = ["#1f9d55", "#e67700", "#e03131", "#1971c2", "#a0a6ad"]
 
 
 def _build_template() -> go.layout.Template:

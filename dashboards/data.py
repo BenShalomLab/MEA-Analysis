@@ -53,7 +53,7 @@ STAGE_COLS = [
 _EMPTY_COLS = [
     "file", "path", "project", "date", "chip", "run", "well", "rec",
     "stage", "stage_num", "failed", "error", "num_units",
-    "analyzer_folder", "last_updated",
+    "analyzer_folder", "data_dir", "last_updated",
 ]
 
 
@@ -131,6 +131,7 @@ def load_checkpoints(checkpoint_dir: str | Path) -> pd.DataFrame:
             "error": raw.get("error"),
             "num_units": _safe(raw, "num_units_filtered", "num_units", "n_units"),
             "analyzer_folder": _safe(raw, "analyzer_folder", "output_dir"),
+            "data_dir": raw.get("data_dir"),
             "last_updated": raw.get("last_updated"),
         })
 
@@ -173,6 +174,39 @@ def stage_throughput(df: pd.DataFrame) -> list[dict]:
     return rows
 
 
+def delete_checkpoint(path: str | Path) -> tuple[bool, str]:
+    """Permanently delete a checkpoint JSON file. Returns (ok, error_message)."""
+    path = Path(path)
+    try:
+        if not path.exists():
+            return False, "File not found."
+        path.unlink()
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def bulk_delete_checkpoints(
+    df: pd.DataFrame,
+    filter_stage: str | None = None,
+    filter_failed_only: bool = False,
+) -> tuple[int, int]:
+    """Delete matching checkpoint files. Returns (n_ok, n_fail)."""
+    subset = df.copy()
+    if filter_stage and filter_stage not in ("", "all"):
+        subset = subset[subset["stage"] == filter_stage]
+    if filter_failed_only:
+        subset = subset[subset["failed"] == True]  # noqa: E712
+    ok = fail = 0
+    for path in subset["path"]:
+        success, _ = delete_checkpoint(path)
+        if success:
+            ok += 1
+        else:
+            fail += 1
+    return ok, fail
+
+
 def reset_checkpoint(path: str | Path, to_stage_num: int) -> tuple[bool, str]:
     """Set checkpoint stage to to_stage_num and clear failure state."""
     import datetime as _dt
@@ -212,6 +246,46 @@ def bulk_reset_checkpoints(
     return ok, fail
 
 
+def load_network_results_from_checkpoints(df: pd.DataFrame) -> list[dict]:
+    """Load network_results.json using output paths already stored in checkpoints."""
+    rows = []
+    for r in df.itertuples(index=False):
+        folder = getattr(r, "analyzer_folder", None)
+        if not folder:
+            continue
+        f = Path(folder) / "network_results.json"
+        if not f.exists():
+            continue
+        try:
+            raw = json.loads(f.read_text())
+        except Exception:
+            continue
+
+        nb   = raw.get("network_bursts", {}).get("metrics", {})
+        bl   = raw.get("burst_fragments", {}).get("metrics", {})
+        sb   = raw.get("superbursts",    {}).get("metrics", {})
+        diag = raw.get("diagnostics",    {})
+
+        rows.append({
+            "path":                 str(folder),
+            "project":              r.project,
+            "date":                 r.date,
+            "chip":                 r.chip,
+            "run":                  r.run,
+            "well":                 r.well,
+            "n_units":              raw.get("n_units", diag.get("n_units")),
+            "n_bursty_units":       diag.get("n_bursty_units"),
+            "burstlets_count":      bl.get("burst_count", 0),
+            "network_bursts_count": nb.get("burst_count", 0),
+            "superbursts_count":    sb.get("burst_count", 0),
+            "burst_rate_hz":        round(float(nb.get("burst_rate_hz", 0) or 0), 4),
+            "mean_burst_dur_s":     round(float((nb.get("burst_duration_s") or {}).get("mean") or 0), 3),
+            "adaptive_bin_ms":      diag.get("bin_size_ms"),
+            "_raw":                 raw,
+        })
+    return rows
+
+
 def load_network_results(output_root: str | Path) -> list[dict]:
     """Walk output_root for network_results.json; return per-well rows."""
     root = Path(output_root)
@@ -231,7 +305,7 @@ def load_network_results(output_root: str | Path) -> list[dict]:
         project = parts[-5] if len(parts) >= 5 else "?"
 
         nb  = raw.get("network_bursts", {}).get("metrics", {})
-        bl  = raw.get("burstlets",      {}).get("metrics", {})
+        bl  = raw.get("burst_fragments", {}).get("metrics", {})
         sb  = raw.get("superbursts",    {}).get("metrics", {})
         diag = raw.get("diagnostics",   {})
 
@@ -244,12 +318,12 @@ def load_network_results(output_root: str | Path) -> list[dict]:
             "well":               well,
             "n_units":            raw.get("n_units", diag.get("n_units")),
             "n_bursty_units":     diag.get("n_bursty_units"),
-            "burstlets_count":    bl.get("count", 0),
-            "network_bursts_count": nb.get("count", 0),
-            "superbursts_count":  sb.get("count", 0),
-            "burst_rate_hz":      round(float(nb.get("rate", 0) or 0), 4),
-            "mean_burst_dur_s":   round(float((nb.get("duration") or {}).get("mean") or 0), 3),
-            "adaptive_bin_ms":    diag.get("adaptive_bin_ms"),
+            "burstlets_count":    bl.get("burst_count", 0),
+            "network_bursts_count": nb.get("burst_count", 0),
+            "superbursts_count":  sb.get("burst_count", 0),
+            "burst_rate_hz":      round(float(nb.get("burst_rate_hz", 0) or 0), 4),
+            "mean_burst_dur_s":   round(float((nb.get("burst_duration_s") or {}).get("mean") or 0), 3),
+            "adaptive_bin_ms":    diag.get("bin_size_ms"),
             "_raw":               raw,
         })
     return rows

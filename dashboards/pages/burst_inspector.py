@@ -11,7 +11,7 @@ from dash import Input, Output, State, callback, dcc, html
 from flask import current_app
 
 from dashboards.components import no_config_banner
-from dashboards.data import load_network_results
+from dashboards.data import load_checkpoints, load_network_results, load_network_results_from_checkpoints
 from dashboards.theme import apply_default_theme as _adt; _adt()
 
 dash.register_page(__name__, path="/burst-inspector", name="Burst Inspector", order=6)
@@ -82,12 +82,14 @@ def _populate_selector(_path):
     if not ctx.get("config_exists"):
         return no_config_banner(), [], None
 
-    config = ctx.get("config") or {}
-    output_root = (config.get("io") or {}).get("output_dir") or ""
-    if not output_root:
-        return html.Div("io.output_dir not set.", className="banner warn"), [], None
-
-    rows = load_network_results(output_root)
+    checkpoint_dir = ctx.get("checkpoint_dir")
+    if checkpoint_dir:
+        rows = load_network_results_from_checkpoints(load_checkpoints(checkpoint_dir))
+    else:
+        output_root = ((ctx.get("config") or {}).get("io") or {}).get("output_dir") or ""
+        if not output_root:
+            return html.Div("io.output_dir not set.", className="banner warn"), [], None
+        rows = load_network_results(output_root)
     options = [
         {"label": f"{r['run']} / {r['well']} ({r['chip']})",
          "value": r["path"]}
@@ -188,19 +190,19 @@ def _participation_card(p: Path) -> html.Div:
 
     traces = [
         go.Scatter(x=x, y=sig.tolist(), mode="lines", name="participation",
-                   line=dict(color="oklch(0.52 0.14 165)", width=1.5)),
+                   line=dict(color="#1f9d55", width=1.5)),
     ]
     if rate is not None:
         traces.append(go.Scatter(x=x, y=rate.tolist(), mode="lines", name="rate signal",
-                                 line=dict(color="oklch(0.62 0.16 60)", width=1, dash="dot"),
+                                 line=dict(color="#e67700", width=1, dash="dot"),
                                  opacity=0.7, yaxis="y2"))
     shapes = []
     if baseline is not None:
         shapes.append(dict(type="line", x0=x[0], x1=x[-1], y0=baseline, y1=baseline,
-                           line=dict(color="oklch(0.55 0.1 165 / 0.5)", width=1, dash="dash")))
+                           line=dict(color="rgba(31,157,85,0.45)", width=1, dash="dash")))
     if threshold is not None:
         shapes.append(dict(type="line", x0=x[0], x1=x[-1], y0=threshold, y1=threshold,
-                           line=dict(color="oklch(0.55 0.16 28 / 0.6)", width=1, dash="dash")))
+                           line=dict(color="rgba(224,49,49,0.55)", width=1, dash="dash")))
 
     fig = go.Figure(
         traces,
@@ -227,7 +229,7 @@ def _participation_card(p: Path) -> html.Div:
 
 
 def _raster_card(p: Path) -> html.Div:
-    svgs = sorted(p.glob("*_raster_burst_plot.svg"))
+    svgs = sorted(p.glob("*raster_burst_plot.svg"))
     if not svgs:
         return _info_card("raster plot", "No *_raster_burst_plot.svg found.")
 

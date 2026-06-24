@@ -281,71 +281,88 @@ class ReportsMixin:
 
             ax_network_red = None
 
-            if plot_mode == "separate":
-                fig, axs = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-                ax_raster, ax_network = axs
+            _rc = {
+                "font.size": 10,
+                "axes.labelsize": 10,
+                "xtick.labelsize": 9,
+                "ytick.labelsize": 9,
+                "legend.fontsize": 9,
+                "axes.linewidth": 0.8,
+                "xtick.major.width": 0.8,
+                "ytick.major.width": 0.8,
+                "xtick.direction": "out",
+                "ytick.direction": "out",
+            }
 
-                helper.plot_clean_raster(
-                    ax_raster, spike_times, sorted_units,
-                    color="gray", markersize=4, markeredgewidth=0.5, alpha=1.0
+            with plt.rc_context(_rc):
+                if plot_mode == "separate":
+                    fig, axs = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
+                    ax_raster, ax_network = axs
+
+                    helper.plot_clean_raster(
+                        ax_raster, spike_times, sorted_units,
+                        color="#2d3436", markersize=3, markeredgewidth=0.4, alpha=0.85
+                    )
+                    ax_network, ax_network_red = helper.plot_clean_network(
+                        ax_network, **plot_data, use_twinx=True
+                    )
+
+                elif plot_mode == "merged":
+                    fig, ax_raster = plt.subplots(figsize=(14, 6))
+
+                    helper.plot_clean_raster(
+                        ax_raster, spike_times, sorted_units,
+                        color="#2d3436", markersize=3, markeredgewidth=0.4, alpha=0.85
+                    )
+
+                    ax_network = ax_raster.twinx()
+                    ax_network, ax_network_red = helper.plot_clean_network(
+                        ax_network, **plot_data, use_twinx=False
+                    )
+
+                    ax_raster.spines["right"].set_visible(False)
+                    ax_network.spines["right"].set_visible(True)
+
+                else:
+                    self.logger.warning(f"Unknown plot mode: {plot_mode}")
+                    return
+
+                burstlet_events      = network_data["burst_fragments"]["events"]
+                network_burst_events = network_data["network_bursts"]["events"]
+                superburst_events    = network_data["superbursts"]["events"]
+
+                helper.mark_burst_hierarchy(
+                    ax_raster=ax_raster,
+                    ax_network=ax_network,
+                    burstlets=burstlet_events,
+                    network_bursts=network_burst_events,
+                    superbursts=superburst_events,
+                    show_raster_spans=False,
+                    show_burstlet_ticks=True,
+                    show_network_ticks=True,
+                    show_superburst_bars=True,
+                    min_superburst_duration_s=2.5
                 )
-                ax_network, ax_network_red = helper.plot_clean_network(
-                    ax_network, **plot_data, use_twinx=True
-                )
 
-            elif plot_mode == "merged":
-                fig, ax_raster = plt.subplots(figsize=(12, 5))
+                hierarchy_handles = [
+                    Line2D([0], [0], color="#636e72",  lw=1.2, label="Burstlet"),
+                    Line2D([0], [0], color="#0984e3",  lw=2.0, label="Network burst"),
+                    Line2D([0], [0], color="#6c5ce7",  lw=2.2, label="Superburst"),
+                    Line2D([0], [0], marker='o', color='#d63031', lw=0, markersize=5, label="NB peak"),
+                ]
+                ax_network.legend(handles=hierarchy_handles, loc="upper right",
+                                  frameon=False, ncol=2)
 
-                helper.plot_clean_raster(
-                    ax_raster, spike_times, sorted_units,
-                    color="gray", markersize=4, markeredgewidth=0.5, alpha=1.0
-                )
-
-                ax_network = ax_raster.twinx()
-                ax_network, ax_network_red = helper.plot_clean_network(
-                    ax_network, **plot_data, use_twinx=False
-                )
-
-                ax_raster.spines["right"].set_visible(False)
-                ax_network.spines["right"].set_visible(True)
-
-            else:
-                self.logger.warning(f"Unknown plot mode: {plot_mode}")
-                return
-
-            burstlet_events      = network_data["burst_fragments"]["events"]
-            network_burst_events = network_data["network_bursts"]["events"]
-            superburst_events    = network_data["superbursts"]["events"]
-
-            helper.mark_burst_hierarchy(
-                ax_raster=ax_raster,
-                ax_network=ax_network,
-                burstlets=burstlet_events,
-                network_bursts=network_burst_events,
-                superbursts=superburst_events,
-                show_raster_spans=False,
-                show_burstlet_ticks=True,
-                show_network_ticks=True,
-                show_superburst_bars=True,
-                min_superburst_duration_s=2.5
-            )
-
-            hierarchy_handles = [
-                Line2D([0], [0], color="black",       lw=1.2, label="Burstlet ticks"),
-                Line2D([0], [0], color="steelblue",   lw=2.0, label="Network burst ticks"),
-                Line2D([0], [0], color="mediumpurple", lw=2.2, label="Superbursts"),
-                Line2D([0], [0], marker='o', color='red', lw=0, markersize=5, label="Network burst centers"),
-            ]
-            ax_raster.legend(handles=hierarchy_handles, loc="upper right", frameon=False, fontsize=8)
-
-            plt.tight_layout()
-            if plot_mode == "separate":
-                plt.subplots_adjust(hspace=0.05)
+                plt.tight_layout()
+                if plot_mode == "separate":
+                    plt.subplots_adjust(hspace=0.10)
 
             full_svg   = self.output_dir / "raster_burst_plot.svg"
             full_png   = self.output_dir / "raster_burst_plot.png"
             zoom60_svg = self.output_dir / "raster_burst_plot_60s.svg"
+            zoom60_png = self.output_dir / "raster_burst_plot_60s.png"
             zoom30_svg = self.output_dir / "raster_burst_plot_30s.svg"
+            zoom30_png = self.output_dir / "raster_burst_plot_30s.png"
 
             plt.savefig(full_svg)
 
@@ -354,6 +371,7 @@ class ReportsMixin:
             if ax_network_red is not None and ax_network_red is not ax_network:
                 ax_network_red.set_xlim(0, 60)
             plt.savefig(zoom60_svg)
+            plt.savefig(zoom60_png, dpi=150)
 
             ax_raster.set_xlim(0, 30)
             ax_network.set_xlim(0, 30)
@@ -361,6 +379,7 @@ class ReportsMixin:
                 ax_network_red.set_xlim(0, 30)
             ax_network.set_xlabel("Time (s)")
             plt.savefig(zoom30_svg)
+            plt.savefig(zoom30_png, dpi=150)
 
             plt.savefig(full_png, dpi=300)
 
@@ -415,11 +434,12 @@ class ReportsMixin:
                     ax_raster2.set_xlim(0, 60)
                     ax_network2.set_xlim(0, 60)
                     plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_60s.svg")
+                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_60s.png", dpi=150)
                     ax_raster2.set_xlim(0, 30)
                     ax_network2.set_xlim(0, 30)
                     ax_network2.set_xlabel("Time (s)")
                     plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_30s.svg")
-                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_30s.png", dpi=300)
+                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_30s.png", dpi=150)
                     plt.close(fig2)
 
         except Exception as e:

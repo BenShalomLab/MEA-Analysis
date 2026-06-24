@@ -123,7 +123,7 @@ layout = html.Div(
                             },
                         ),
                         html.Div(id="settings-parse-error",
-                                 style={"color": "oklch(0.43 0.16 28)",
+                                 style={"color": "#b02525",
                                         "fontFamily": "var(--font-mono)",
                                         "fontSize": "11px",
                                         "marginTop": "6px",
