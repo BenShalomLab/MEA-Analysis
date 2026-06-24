@@ -232,7 +232,7 @@ def _refresh(_n, _refresh, _path):
     # Recent activity
     recent = (
         df.sort_values("last_updated", ascending=False, na_position="last")
-        .head(20)[["project", "date", "chip", "run", "well", "stage", "num_units", "last_updated"]]
+        .head(20)[["project", "date", "chip", "run", "well", "stage", "failed", "num_units", "last_updated"]]
     )
     header = html.Tr([
         html.Th(c) for c in ["project", "date", "chip", "run", "well", "stage", "units", "updated"]

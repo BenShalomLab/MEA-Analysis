@@ -12,3 +12,7 @@ requires-python = ">=3.9"
 # Keep dependencies empty here; this repo is used in multiple environments and
 # heavyweight scientific deps are managed externally (conda/pip envs).
 dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-x -q --tb=short"

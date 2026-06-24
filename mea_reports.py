@@ -313,9 +313,9 @@ class ReportsMixin:
                 self.logger.warning(f"Unknown plot mode: {plot_mode}")
                 return
 
-            burstlet_events     = network_data["burstlets"]["events"]
+            burstlet_events      = network_data["burst_fragments"]["events"]
             network_burst_events = network_data["network_bursts"]["events"]
-            superburst_events   = network_data["superbursts"]["events"]
+            superburst_events    = network_data["superbursts"]["events"]
 
             helper.mark_burst_hierarchy(
                 ax_raster=ax_raster,
@@ -408,7 +408,7 @@ class ReportsMixin:
                     ax_network2.set_ylim(0, global_max)
                     plt.tight_layout()
                     plt.subplots_adjust(hspace=0.05)
-                    for start, end in [(sb["start"], sb["end"]) for sb in superburst_events]:
+                    for start, end in [(sb["start_time_s"], sb["end_time_s"]) for sb in superburst_events]:
                         ax_network2.axvspan(start, end, color='gray', alpha=0.3)
                     plt.savefig(self.output_dir / "fixed_y_raster_burst_plot.svg")
                     plt.savefig(self.output_dir / "fixed_y_raster_burst_plot.png", dpi=300)
