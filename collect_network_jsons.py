@@ -1,257 +1,391 @@
-
 #!/usr/bin/env python3
-"""Collect MEA network JSON metrics into a CSV.
+"""Collect network_results.json files and export per-project CSVs.
 
-This script:
-- recursively finds *network*.json files under a root folder
-- extracts path metadata (Project, Date, Chip_ID, RunID, Well)
-- parses network_bursts / superbursts / burstlets metrics
-- writes one CSV row per JSON file
+Handles both v1 (burstlets) and v2 (burst_fragments) schema formats.
+Extracts per-section summary stats (mean/std/cv) AND per-event distribution
+metrics (min/p25/p50/p75/p95/max) from the events arrays.
 
-Usage:
-    python collect_network_metrics.py \
-        --root /path/to/AnalyzedData/ProjectFolder \
-        --output metrics.csv
+Usage
+-----
+# From the output root (AnalyzedData/…)
+python collect_network_jsons.py --root /path/to/AnalyzedData --out-dir ./metrics
+
+# Or point at the checkpoint dir so paths come from checkpoint JSON metadata
+python collect_network_jsons.py --checkpoint-dir /path/to/checkpoints --out-dir ./metrics
+
+# Single combined CSV instead of per-project files
+python collect_network_jsons.py --root /path/to/AnalyzedData --out-dir ./metrics --combined
 """
 
 from __future__ import annotations
 
 import argparse
-import glob
 import json
-import os
-import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
 
-DEFAULT_ROOT = "/mnt/Vol20tb1/user_workspaces/shruti/MEA_Analysis/MEA_Analysis_V2/MEA_Analysis/AnalyzedData/KCNT1_T4_C1_04122024/"
-DEFAULT_OUTPUT = "mea_network_metrics.csv"
-ANCHOR = "AnalyzedData"
-WELL_RE = re.compile(r"^well\d+$", re.IGNORECASE)
+# ── Section keys ─────────────────────────────────────────────────────────────
+
+# Map prefix → (v2 key, v1 fallback key)
+_SECTIONS = {
+    "bf": ("burst_fragments", "burstlets"),
+    "nb": ("network_bursts", None),
+    "sb": ("superbursts", None),
+}
+
+# Inter-burst interval key per section (v2 names)
+_IBI_KEY = {
+    "bf": "ifbi_s",
+    "nb": "ibi_s",
+    "sb": "isbi_s",
+}
+
+# ── Old-format (v1) metric key normalisation ──────────────────────────────────
+
+_V1_METRIC_RENAMES: dict[str, dict[str, str]] = {
+    "bf": {
+        "count": "burst_count",
+        "rate": "burst_rate_hz",
+        "duration": "burst_duration_s",
+        "inter_event_interval": "ifbi_s",
+        "participation": "participation_fraction",
+        "spikes_per_burst": "spike_count_per_burst",
+    },
+    "nb": {
+        "count": "burst_count",
+        "rate": "burst_rate_hz",
+        "duration": "burst_duration_s",
+        "inter_event_interval": "ibi_s",
+        "participation": "participation_fraction",
+        "spikes_per_burst": "spike_count_per_burst",
+    },
+    "sb": {
+        "count": "burst_count",
+        "rate": "burst_rate_hz",
+        "duration": "burst_duration_s",
+        "inter_event_interval": "isbi_s",
+        "participation": "participation_fraction",
+        "spikes_per_burst": "spike_count_per_burst",
+    },
+}
+
+# Old-format (v1) event field normalisation
+_V1_EVENT_RENAMES = {
+    "start": "start_time_s",
+    "end": "end_time_s",
+    "duration_s": "burst_duration_s",
+    "peak_time": "peak_time_s",
+    "participation": "participation_fraction",
+    "total_spikes": "spike_count",
+    "peak_synchrony": "peak_population_firing_rate_hz",
+    # fragment_count → component_count (nb only)
+    "fragment_count": "component_count",
+    # synchrony_energy, burst_peak kept as-is (no v2 equivalent)
+}
+
+# Old-format diagnostics key normalisation → v2 names
+_V1_DIAG_RENAMES = {
+    "adaptive_bin_ms": "bin_size_ms",
+    "biological_isi_s": "reference_isi_s",
+    "baseline_value": "participation_baseline",
+    "spread_mad": "participation_mad",
+    "burstlet_merge_gap_s": "fragment_merge_gap_s",
+    "network_merge_gap_s": "nb_merge_gap_s",
+    "participation_quorum_floor": "detection_threshold",
+    "threshold_merge_1.05x": "merge_threshold",
+    "threshold_detect_1.2x": "detect_threshold",
+    "merge_floor": "merge_floor",
+}
+
+# Diagnostics columns to extract (v2 names after normalisation)
+_DIAG_KEYS = [
+    "n_units", "n_bursty_units",
+    "bin_size_ms",
+    "participation_baseline", "participation_mad", "detection_threshold",
+    "reference_isi_s", "reference_isi_source",
+    "fragment_merge_gap_s", "fragment_merge_gap_source",
+    "nb_merge_gap_s", "nb_merge_gap_source",
+    "superburst_min_dur_s", "superburst_merge_gap_s",
+    "sigma_participation_bins", "sigma_firing_rate_bins",
+    # v1-only diagnostics kept under their normalised names
+    "merge_threshold", "detect_threshold", "merge_floor",
+]
+
+# Event fields that are useful for distribution stats (subset to avoid bloat)
+_EVT_DISTRIBUTION_FIELDS = {
+    "burst_duration_s",
+    "participation_fraction",
+    "spike_count",
+    "peak_population_firing_rate_hz",
+    "peak_participation_fraction",
+    "burst_area",
+    # v1-specific
+    "synchrony_energy",
+    "burst_peak",
+}
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Collect MEA network JSON files and export extracted metrics to CSV."
-    )
-    parser.add_argument(
-        "--root",
-        default=DEFAULT_ROOT,
-        help=f"Root directory to search recursively (default: {DEFAULT_ROOT})",
-    )
-    parser.add_argument(
-        "--output",
-        default=DEFAULT_OUTPUT,
-        help=f"Output CSV path (default: {DEFAULT_OUTPUT})",
-    )
-    parser.add_argument(
-        "--pattern",
-        default="*network*.json",
-        help="Glob pattern used for JSON discovery (default: *network*.json)",
-    )
-    parser.add_argument(
-        "--anchor",
-        default=ANCHOR,
-        help="Optional path segment used to locate Project/Date/Chip_ID/RunID (default: AnalyzedData). Set to empty to disable anchor-based parsing.",
-    )
-    parser.add_argument(
-        "--include-lists",
-        action="store_true",
-        help="Keep list-valued metrics as JSON strings in the CSV. If omitted, they are still serialized as JSON strings.",
-    )
-    return parser.parse_args()
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _is_v1(raw: dict) -> bool:
+    return "burstlets" in raw and "burst_fragments" not in raw
 
 
-def find_json_files(root: str, pattern: str) -> List[str]:
-    search_path = os.path.join(root, "**", pattern)
-    return sorted(glob.glob(search_path, recursive=True))
+def _get_section(raw: dict, prefix: str) -> dict:
+    v2_key, v1_key = _SECTIONS[prefix]
+    sec = raw.get(v2_key) or {}
+    if not sec and v1_key:
+        sec = raw.get(v1_key) or {}
+    return sec
 
 
-def parse_path_metadata(path: str, root: Optional[str] = None, anchor: Optional[str] = ANCHOR) -> Dict[str, Optional[str]]:
-    parts = Path(path).parts
-    out = {"Project": None, "Date": None, "Chip_ID": None, "RunID": None, "Well": None}
-
-    candidates = []
-    if root:
-        try:
-            candidates.append(Path(path).relative_to(root).parts)
-        except ValueError:
-            pass
-    candidates.append(parts)
-
-    for candidate in candidates:
-        if anchor and anchor in candidate:
-            idx = candidate.index(anchor)
-            # Expected structure:
-            # .../AnalyzedData/Project/Date/ChipID/Network/RunID/Well/...
-            try:
-                out["Project"] = candidate[idx + 1]
-                out["Date"] = candidate[idx + 2]
-                out["Chip_ID"] = candidate[idx + 3]
-                out["RunID"] = candidate[idx + 5]
-                out["Well"] = candidate[idx + 6]
-                return out
-            except IndexError:
-                pass
-
-        well_idx = next((i for i, part in enumerate(candidate) if WELL_RE.match(part)), None)
-        if well_idx is not None and well_idx >= 4:
-            out["Project"] = candidate[well_idx - 4]
-            out["Date"] = candidate[well_idx - 3]
-            out["Chip_ID"] = candidate[well_idx - 2]
-            out["RunID"] = candidate[well_idx - 1]
-            out["Well"] = candidate[well_idx]
-            return out
-
-    # Fallback: use nearby path parts if the anchor is missing
-    if len(parts) >= 5:
-        out["Project"] = parts[-5]
-        out["Date"] = parts[-4]
-        out["Chip_ID"] = parts[-3]
-        out["RunID"] = parts[-2]
-        out["Well"] = parts[-1]
-    return out
-
-
-def safe_get(d: Dict[str, Any], *keys: str) -> Any:
-    cur: Any = d
-    for key in keys:
-        if not isinstance(cur, dict):
-            return None
-        cur = cur.get(key)
-        if cur is None:
-            return None
-    return cur
-
-
-def serialize_list(value: Any) -> Any:
-    if isinstance(value, (list, tuple, np.ndarray)):
-        return json.dumps(list(value))
-    return value
-
-
-def extract_block_metrics(block: Optional[Dict[str, Any]], prefix: str) -> Dict[str, Any]:
-    metrics: Dict[str, Any] = {
-        f"{prefix}_count": np.nan,
-        f"{prefix}_rate_hz": np.nan,
-        f"{prefix}_duration_mean_s": np.nan,
-        f"{prefix}_ibi_mean_s": np.nan,
-        f"{prefix}_spikes_per_burst_mean": np.nan,
-        f"{prefix}_participation_mean": np.nan,
-        f"{prefix}_burst_peak_mean": np.nan,
-        f"{prefix}_peak_synchrony_mean": np.nan,
-        f"{prefix}_fragment_count_mean": np.nan,
-        f"{prefix}_durations_list": json.dumps([]),
-        f"{prefix}_peak_list": json.dumps([]),
-        f"{prefix}_intensity_list": json.dumps([]),
-        f"{prefix}_synchrony_energy_list": json.dumps([]),
-        f"{prefix}_fragment_count_list": json.dumps([]),
-    }
-
-    if not block:
+def _normalise_metrics(metrics: dict, prefix: str, v1: bool) -> dict:
+    """Apply v1→v2 key renames if needed; return metrics dict."""
+    if not v1:
         return metrics
+    renames = _V1_METRIC_RENAMES.get(prefix, {})
+    return {renames.get(k, k): v for k, v in metrics.items()}
 
-    m = block.get("metrics", {}) if isinstance(block, dict) else {}
-    events = block.get("events", []) if isinstance(block, dict) else []
 
-    metrics[f"{prefix}_count"] = m.get("count", np.nan)
-    if "rate" in m:
-        metrics[f"{prefix}_rate_hz"] = m.get("rate", np.nan)
-    metrics[f"{prefix}_duration_mean_s"] = safe_get(m, "duration", "mean")
-    metrics[f"{prefix}_ibi_mean_s"] = safe_get(m, "inter_event_interval", "mean")
-    metrics[f"{prefix}_spikes_per_burst_mean"] = safe_get(m, "spikes_per_burst", "mean")
-    metrics[f"{prefix}_participation_mean"] = safe_get(m, "participation", "mean")
-    metrics[f"{prefix}_burst_peak_mean"] = safe_get(m, "burst_peak", "mean")
-    metrics[f"{prefix}_peak_synchrony_mean"] = safe_get(m, "peak_synchrony", "mean")
-
-    durations: List[Any] = []
-    peaks: List[Any] = []
-    intensity: List[Any] = []
-    synchrony_energy: List[Any] = []
-    fragment_counts: List[Any] = []
-
+def _normalise_events(events: list[dict], v1: bool) -> list[dict]:
+    if not v1:
+        return events
+    normalised = []
     for ev in events:
-        if not isinstance(ev, dict):
+        normalised.append({_V1_EVENT_RENAMES.get(k, k): v for k, v in ev.items()})
+    return normalised
+
+
+def _normalise_diag(diag: dict, v1: bool) -> dict:
+    if not v1:
+        return diag
+    return {_V1_DIAG_RENAMES.get(k, k): v for k, v in diag.items()}
+
+
+def _flatten_section_metrics(metrics: dict, prefix: str) -> dict:
+    """Extract all metrics from a section's metrics dict.
+
+    Scalar values → single column; dict values (mean/std/cv) → three columns.
+    """
+    row: dict = {}
+    for key, val in metrics.items():
+        col = f"{prefix}_{key}"
+        if isinstance(val, dict):
+            row[f"{col}_mean"] = val.get("mean")
+            row[f"{col}_std"]  = val.get("std")
+            row[f"{col}_cv"]   = val.get("cv")
+        else:
+            row[col] = val
+    return row
+
+
+def _flatten_events_distributions(events: list[dict], prefix: str) -> dict:
+    """Compute percentile distributions from per-event data.
+
+    For each numeric field in _EVT_DISTRIBUTION_FIELDS, outputs:
+    {prefix}_{field}_n, _min, _p25, _p50, _p75, _p95, _max
+    """
+    if not events:
+        return {}
+    row: dict = {}
+    all_fields = {k for ev in events for k, v in ev.items()
+                  if isinstance(v, (int, float)) and k in _EVT_DISTRIBUTION_FIELDS}
+    for field in sorted(all_fields):
+        vals = [ev[field] for ev in events if isinstance(ev.get(field), (int, float))]
+        if not vals:
             continue
-        if "duration_s" in ev:
-            durations.append(ev["duration_s"])
-        if "peak_synchrony" in ev:
-            peaks.append(ev["peak_synchrony"])
-        if "synchrony_energy" in ev:
-            synchrony_energy.append(ev["synchrony_energy"])
-        if "total_spikes" in ev:
-            intensity.append(ev["total_spikes"])
-        if prefix == "nb" and "fragment_count" in ev:
-            fragment_counts.append(ev["fragment_count"])
-
-    metrics[f"{prefix}_durations_list"] = json.dumps(durations)
-    metrics[f"{prefix}_peak_list"] = json.dumps(peaks)
-    metrics[f"{prefix}_intensity_list"] = json.dumps(intensity)
-    metrics[f"{prefix}_synchrony_energy_list"] = json.dumps(synchrony_energy)
-    metrics[f"{prefix}_fragment_count_list"] = json.dumps(fragment_counts)
-    if prefix == "nb" and fragment_counts:
-        metrics[f"{prefix}_fragment_count_mean"] = float(np.mean(fragment_counts))
-
-    return metrics
+        arr = np.asarray(vals, dtype=float)
+        col = f"{prefix}_{field}"
+        row[f"{col}_n"]   = len(arr)
+        row[f"{col}_min"] = float(np.min(arr))
+        row[f"{col}_p25"] = float(np.percentile(arr, 25))
+        row[f"{col}_p50"] = float(np.percentile(arr, 50))
+        row[f"{col}_p75"] = float(np.percentile(arr, 75))
+        row[f"{col}_p95"] = float(np.percentile(arr, 95))
+        row[f"{col}_max"] = float(np.max(arr))
+    return row
 
 
-def extract_metrics_from_json(path: str, root: Optional[str] = None, anchor: Optional[str] = ANCHOR) -> Dict[str, Any]:
-    row: Dict[str, Any] = {"full_path": path}
-    row.update(parse_path_metadata(path, root=root, anchor=anchor))
+# ── Path metadata ─────────────────────────────────────────────────────────────
+
+def _parse_path_metadata(well_dir: Path) -> dict:
+    """Infer project/date/chip/run/well from output directory path.
+
+    Expected structure:
+      <output_root>/<project>/<date>/<chip>/Network/<run>/well000/
+    """
+    parts = well_dir.parts
+    meta = {"project": None, "date": None, "chip": None, "run": None, "well": None}
+    meta["well"]    = parts[-1]
+    meta["run"]     = parts[-2]
+    # parts[-3] == "Network"
+    meta["chip"]    = parts[-4] if len(parts) >= 4 else None
+    meta["date"]    = parts[-5] if len(parts) >= 5 else None
+    meta["project"] = parts[-6] if len(parts) >= 6 else None
+    return meta
+
+
+# ── Core extraction ───────────────────────────────────────────────────────────
+
+def extract_row(json_path: Path) -> dict:
+    """Extract all metrics from a single network_results.json into a flat dict."""
+    well_dir = json_path.parent
+    row: dict = {"output_dir": str(well_dir), "schema_version": "v2"}
+    row.update(_parse_path_metadata(well_dir))
 
     try:
-        with open(path, "r") as f:
-            data = json.load(f)
+        raw = json.loads(json_path.read_text())
+    except Exception as exc:
+        row["error"] = str(exc)
+        return row
 
-        row["num_units"] = data.get("n_units", np.nan)
-        row.update(extract_block_metrics(data.get("network_bursts"), "nb"))
-        row.update(extract_block_metrics(data.get("superbursts"), "sb"))
-        row.update(extract_block_metrics(data.get("burstlets"), "bl"))
+    v1 = _is_v1(raw)
+    if v1:
+        row["schema_version"] = "v1"
 
-    except Exception as e:
-        row["error"] = str(e)
-        row["num_units"] = np.nan
+    row["n_units"] = raw.get("n_units")
+
+    for prefix in ("bf", "nb", "sb"):
+        sec = _get_section(raw, prefix)
+        metrics = _normalise_metrics(sec.get("metrics") or {}, prefix, v1)
+        events  = _normalise_events(sec.get("events") or [], v1)
+
+        row.update(_flatten_section_metrics(metrics, prefix))
+        row.update(_flatten_events_distributions(events, prefix))
+
+    diag = _normalise_diag(raw.get("diagnostics") or {}, v1)
+    for k in _DIAG_KEYS:
+        if k not in ("n_units",) and k in diag:
+            row[f"diag_{k}"] = diag[k]
 
     return row
 
 
-def main() -> int:
-    args = parse_args()
+# ── Collection ────────────────────────────────────────────────────────────────
 
-    files = find_json_files(args.root, args.pattern)
-    if not files:
-        print(f"No files found under: {args.root}")
+def collect(root: Path) -> list[dict]:
+    return [extract_row(f) for f in sorted(root.rglob("network_results.json"))]
+
+
+def collect_from_checkpoints(checkpoint_dir: Path) -> list[dict]:
+    """Use output_dir from checkpoint JSONs to locate network_results.json files."""
+    rows = []
+    for cp_file in sorted(checkpoint_dir.rglob("*.json")):
+        try:
+            cp = json.loads(cp_file.read_text())
+        except Exception:
+            continue
+        out_dir = cp.get("output_dir") or cp.get("analyzer_folder")
+        if not out_dir:
+            continue
+        nf = Path(out_dir) / "network_results.json"
+        if nf.exists():
+            row = extract_row(nf)
+            for key in ("project", "date", "chip", "run", "well"):
+                cp_val = (cp.get(key) or cp.get(f"{key}_id")
+                          or (cp.get("chip_id") if key == "chip" else None))
+                if cp_val:
+                    row[key] = cp_val
+            if cp.get("data_dir"):
+                row["data_dir"] = cp["data_dir"]
+            rows.append(row)
+    return rows
+
+
+# ── DataFrame helpers ─────────────────────────────────────────────────────────
+
+def to_dataframes(rows: list[dict]) -> dict[str, pd.DataFrame]:
+    """Return {project_name: DataFrame}, plus an "ALL" key for the combined table."""
+    if not rows:
+        return {}
+    df = pd.DataFrame(rows)
+
+    # Column order: identity first, then schema version, then metrics
+    id_cols = ["project", "date", "chip", "run", "well", "n_units", "schema_version"]
+    if "data_dir" in df.columns:
+        id_cols.append("data_dir")
+    id_cols.append("output_dir")
+    metric_cols = [c for c in df.columns if c not in id_cols and c != "error"]
+
+    # Sort metric cols: bf_* → nb_* → sb_* → diag_*
+    def _col_sort_key(c: str) -> tuple:
+        if c.startswith("bf_"):   return (0, c)
+        if c.startswith("nb_"):   return (1, c)
+        if c.startswith("sb_"):   return (2, c)
+        if c.startswith("diag_"): return (3, c)
+        return (4, c)
+
+    metric_cols = sorted(metric_cols, key=_col_sort_key)
+    ordered = [c for c in id_cols if c in df.columns] + metric_cols
+    if "error" in df.columns:
+        ordered.append("error")
+    df = df[ordered]
+
+    result: dict[str, pd.DataFrame] = {"ALL": df}
+    for proj, grp in df.groupby("project", dropna=False):
+        result[str(proj or "unknown")] = grp.reset_index(drop=True)
+    return result
+
+
+def write_csvs(dfs: dict[str, pd.DataFrame], out_dir: Path,
+               combined: bool = False) -> list[Path]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    if combined:
+        p = out_dir / "network_metrics_all.csv"
+        dfs["ALL"].to_csv(p, index=False)
+        written.append(p)
+    else:
+        for name, df in dfs.items():
+            if name == "ALL":
+                continue
+            safe = name.replace("/", "_").replace(" ", "_")
+            p = out_dir / f"network_metrics_{safe}.csv"
+            df.to_csv(p, index=False)
+            written.append(p)
+    return written
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument("--root", help="Output root to walk for network_results.json")
+    src.add_argument("--checkpoint-dir",
+                     help="Checkpoint directory (uses output_dir from each JSON)")
+    parser.add_argument("--out-dir", default="./metrics",
+                        help="Directory to write CSVs (default: ./metrics)")
+    parser.add_argument("--combined", action="store_true",
+                        help="Write a single combined CSV instead of one per project")
+    args = parser.parse_args()
+
+    if args.root:
+        rows = collect(Path(args.root))
+    else:
+        rows = collect_from_checkpoints(Path(args.checkpoint_dir))
+
+    if not rows:
+        print("No network_results.json files found.")
         return 1
 
-    print(f"Found {len(files)} JSON files.")
-    anchor = args.anchor or None
-    records = [extract_metrics_from_json(path, root=args.root, anchor=anchor) for path in files]
-    df = pd.DataFrame(records)
+    dfs = to_dataframes(rows)
+    written = write_csvs(dfs, Path(args.out_dir), combined=args.combined)
 
-    # Keep important metadata columns first.
-    preferred_order = [
-        "Project",
-        "Date",
-        "Chip_ID",
-        "RunID",
-        "Well",
-        "num_units",
-        "full_path",
-        "error",
-    ]
-    ordered_cols = [c for c in preferred_order if c in df.columns] + [c for c in df.columns if c not in preferred_order]
-    df = df[ordered_cols]
-
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(output_path, index=False)
-
-    print(f"Saved CSV to: {output_path}")
-    print(df.head())
+    total = len(dfs.get("ALL", pd.DataFrame()))
+    v1_count = sum(1 for r in rows if r.get("schema_version") == "v1")
+    v2_count = total - v1_count
+    print(f"Collected {total} wells across {len(dfs) - 1} project(s)  "
+          f"(v1={v1_count}, v2={v2_count}).")
+    for p in written:
+        df = pd.read_csv(p)
+        print(f"  {p}  ({len(df)} rows × {len(df.columns)} cols)")
     return 0
 
 

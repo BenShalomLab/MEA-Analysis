@@ -246,6 +246,37 @@ def bulk_reset_checkpoints(
     return ok, fail
 
 
+def _parse_network_raw(raw: dict) -> dict:
+    """Extract dashboard summary fields from a network_results.json dict.
+
+    Handles both v1 (burstlets/count/rate/duration) and
+    v2 (burst_fragments/burst_count/burst_rate_hz/burst_duration_s) schemas.
+    """
+    bl_sec = (raw.get("burst_fragments") or raw.get("burstlets") or {})
+    bl   = bl_sec.get("metrics", {})
+    nb   = (raw.get("network_bursts", {}) or {}).get("metrics", {})
+    sb   = (raw.get("superbursts", {}) or {}).get("metrics", {})
+    diag = raw.get("diagnostics", {}) or {}
+
+    def _count(m):  return m.get("burst_count") or m.get("count") or 0
+    def _rate(m):   return float(m.get("burst_rate_hz") or m.get("rate") or 0)
+    def _dur(m):    return float(
+        ((m.get("burst_duration_s") or m.get("duration") or {}).get("mean")) or 0
+    )
+
+    return {
+        "n_units":              raw.get("n_units") or diag.get("n_units"),
+        "n_bursty_units":       diag.get("n_bursty_units"),
+        "burstlets_count":      _count(bl),
+        "network_bursts_count": _count(nb),
+        "superbursts_count":    _count(sb),
+        "burst_rate_hz":        round(_rate(nb), 4),
+        "mean_burst_dur_s":     round(_dur(nb), 3),
+        "adaptive_bin_ms":      diag.get("bin_size_ms") or diag.get("adaptive_bin_ms"),
+        "_raw":                 raw,
+    }
+
+
 def load_network_results_from_checkpoints(df: pd.DataFrame) -> list[dict]:
     """Load network_results.json using output paths already stored in checkpoints."""
     rows = []
@@ -261,27 +292,15 @@ def load_network_results_from_checkpoints(df: pd.DataFrame) -> list[dict]:
         except Exception:
             continue
 
-        nb   = raw.get("network_bursts", {}).get("metrics", {})
-        bl   = raw.get("burst_fragments", {}).get("metrics", {})
-        sb   = raw.get("superbursts",    {}).get("metrics", {})
-        diag = raw.get("diagnostics",    {})
-
+        parsed = _parse_network_raw(raw)
         rows.append({
-            "path":                 str(folder),
-            "project":              r.project,
-            "date":                 r.date,
-            "chip":                 r.chip,
-            "run":                  r.run,
-            "well":                 r.well,
-            "n_units":              raw.get("n_units", diag.get("n_units")),
-            "n_bursty_units":       diag.get("n_bursty_units"),
-            "burstlets_count":      bl.get("burst_count", 0),
-            "network_bursts_count": nb.get("burst_count", 0),
-            "superbursts_count":    sb.get("burst_count", 0),
-            "burst_rate_hz":        round(float(nb.get("burst_rate_hz", 0) or 0), 4),
-            "mean_burst_dur_s":     round(float((nb.get("burst_duration_s") or {}).get("mean") or 0), 3),
-            "adaptive_bin_ms":      diag.get("bin_size_ms"),
-            "_raw":                 raw,
+            "path":    str(folder),
+            "project": r.project,
+            "date":    r.date,
+            "chip":    r.chip,
+            "run":     r.run,
+            "well":    r.well,
+            **parsed,
         })
     return rows
 
@@ -304,27 +323,15 @@ def load_network_results(output_root: str | Path) -> list[dict]:
         date    = parts[-4] if len(parts) >= 4 else "?"
         project = parts[-5] if len(parts) >= 5 else "?"
 
-        nb  = raw.get("network_bursts", {}).get("metrics", {})
-        bl  = raw.get("burst_fragments", {}).get("metrics", {})
-        sb  = raw.get("superbursts",    {}).get("metrics", {})
-        diag = raw.get("diagnostics",   {})
-
+        parsed = _parse_network_raw(raw)
         rows.append({
-            "path":               str(f.parent),
-            "project":            project,
-            "date":               date,
-            "chip":               chip,
-            "run":                run,
-            "well":               well,
-            "n_units":            raw.get("n_units", diag.get("n_units")),
-            "n_bursty_units":     diag.get("n_bursty_units"),
-            "burstlets_count":    bl.get("burst_count", 0),
-            "network_bursts_count": nb.get("burst_count", 0),
-            "superbursts_count":  sb.get("burst_count", 0),
-            "burst_rate_hz":      round(float(nb.get("burst_rate_hz", 0) or 0), 4),
-            "mean_burst_dur_s":   round(float((nb.get("burst_duration_s") or {}).get("mean") or 0), 3),
-            "adaptive_bin_ms":    diag.get("bin_size_ms"),
-            "_raw":               raw,
+            "path":    str(f.parent),
+            "project": project,
+            "date":    date,
+            "chip":    chip,
+            "run":     run,
+            "well":    well,
+            **parsed,
         })
     return rows
 
