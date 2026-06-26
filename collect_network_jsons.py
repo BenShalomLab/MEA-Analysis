@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Collect network_results.json files and export per-project CSVs.
 
-Handles both v1 (burstlets) and v2 (burst_fragments) schema formats.
-Extracts per-section summary stats (mean/std/cv) AND per-event distribution
-metrics (min/p25/p50/p75/p95/max) from the events arrays.
+Uses the canonical schema produced by parameter_free_burst_detector.py:
+  - burst_fragments / network_bursts / superbursts
+  - metrics keys: burst_count, burst_rate_hz, burst_duration_s,
+                  ifbi_s / ibi_s / isbi_s, burst_area,
+                  participation_fraction, spike_count_per_burst,
+                  peak_population_firing_rate_hz, peak_participation_fraction
+  - diagnostics keys: bin_size_ms, reference_isi_s, participation_baseline,
+                      detection_threshold, fragment_merge_gap_s, nb_merge_gap_s,
+                      participation_bc, threshold_source, min_units_for_burst, …
+  - n_units at top level
 
 Usage
 -----
@@ -27,94 +34,30 @@ import numpy as np
 import pandas as pd
 
 
-# ── Section keys ─────────────────────────────────────────────────────────────
-
-# Map prefix → (v2 key, v1 fallback key)
+# ── Section layout ────────────────────────────────────────────────────────────
+# prefix → (section key in JSON, IBI metric key in that section)
 _SECTIONS = {
-    "bf": ("burst_fragments", "burstlets"),
-    "nb": ("network_bursts", None),
-    "sb": ("superbursts", None),
+    "bf": ("burst_fragments", "ifbi_s"),
+    "nb": ("network_bursts",  "ibi_s"),
+    "sb": ("superbursts",     "isbi_s"),
 }
 
-# Inter-burst interval key per section (v2 names)
-_IBI_KEY = {
-    "bf": "ifbi_s",
-    "nb": "ibi_s",
-    "sb": "isbi_s",
-}
-
-# ── Old-format (v1) metric key normalisation ──────────────────────────────────
-
-_V1_METRIC_RENAMES: dict[str, dict[str, str]] = {
-    "bf": {
-        "count": "burst_count",
-        "rate": "burst_rate_hz",
-        "duration": "burst_duration_s",
-        "inter_event_interval": "ifbi_s",
-        "participation": "participation_fraction",
-        "spikes_per_burst": "spike_count_per_burst",
-    },
-    "nb": {
-        "count": "burst_count",
-        "rate": "burst_rate_hz",
-        "duration": "burst_duration_s",
-        "inter_event_interval": "ibi_s",
-        "participation": "participation_fraction",
-        "spikes_per_burst": "spike_count_per_burst",
-    },
-    "sb": {
-        "count": "burst_count",
-        "rate": "burst_rate_hz",
-        "duration": "burst_duration_s",
-        "inter_event_interval": "isbi_s",
-        "participation": "participation_fraction",
-        "spikes_per_burst": "spike_count_per_burst",
-    },
-}
-
-# Old-format (v1) event field normalisation
-_V1_EVENT_RENAMES = {
-    "start": "start_time_s",
-    "end": "end_time_s",
-    "duration_s": "burst_duration_s",
-    "peak_time": "peak_time_s",
-    "participation": "participation_fraction",
-    "total_spikes": "spike_count",
-    "peak_synchrony": "peak_population_firing_rate_hz",
-    # fragment_count → component_count (nb only)
-    "fragment_count": "component_count",
-    # synchrony_energy, burst_peak kept as-is (no v2 equivalent)
-}
-
-# Old-format diagnostics key normalisation → v2 names
-_V1_DIAG_RENAMES = {
-    "adaptive_bin_ms": "bin_size_ms",
-    "biological_isi_s": "reference_isi_s",
-    "baseline_value": "participation_baseline",
-    "spread_mad": "participation_mad",
-    "burstlet_merge_gap_s": "fragment_merge_gap_s",
-    "network_merge_gap_s": "nb_merge_gap_s",
-    "participation_quorum_floor": "detection_threshold",
-    "threshold_merge_1.05x": "merge_threshold",
-    "threshold_detect_1.2x": "detect_threshold",
-    "merge_floor": "merge_floor",
-}
-
-# Diagnostics columns to extract (v2 names after normalisation)
+# Diagnostics to extract (flat scalars / strings)
 _DIAG_KEYS = [
     "n_units", "n_bursty_units",
     "bin_size_ms",
-    "participation_baseline", "participation_mad", "detection_threshold",
     "reference_isi_s", "reference_isi_source",
+    "participation_baseline", "participation_mad", "participation_bc",
+    "burst_detection_valid",
+    "detection_threshold", "threshold_source",
+    "min_peak_synchrony_adaptive", "min_units_for_burst",
     "fragment_merge_gap_s", "fragment_merge_gap_source",
     "nb_merge_gap_s", "nb_merge_gap_source",
     "superburst_min_dur_s", "superburst_merge_gap_s",
     "sigma_participation_bins", "sigma_firing_rate_bins",
-    # v1-only diagnostics kept under their normalised names
-    "merge_threshold", "detect_threshold", "merge_floor",
 ]
 
-# Event fields that are useful for distribution stats (subset to avoid bloat)
+# Event fields for which to compute percentile distributions
 _EVT_DISTRIBUTION_FIELDS = {
     "burst_duration_s",
     "participation_fraction",
@@ -122,53 +65,16 @@ _EVT_DISTRIBUTION_FIELDS = {
     "peak_population_firing_rate_hz",
     "peak_participation_fraction",
     "burst_area",
-    # v1-specific
-    "synchrony_energy",
-    "burst_peak",
 }
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _is_v1(raw: dict) -> bool:
-    return "burstlets" in raw and "burst_fragments" not in raw
-
-
-def _get_section(raw: dict, prefix: str) -> dict:
-    v2_key, v1_key = _SECTIONS[prefix]
-    sec = raw.get(v2_key) or {}
-    if not sec and v1_key:
-        sec = raw.get(v1_key) or {}
-    return sec
-
-
-def _normalise_metrics(metrics: dict, prefix: str, v1: bool) -> dict:
-    """Apply v1→v2 key renames if needed; return metrics dict."""
-    if not v1:
-        return metrics
-    renames = _V1_METRIC_RENAMES.get(prefix, {})
-    return {renames.get(k, k): v for k, v in metrics.items()}
-
-
-def _normalise_events(events: list[dict], v1: bool) -> list[dict]:
-    if not v1:
-        return events
-    normalised = []
-    for ev in events:
-        normalised.append({_V1_EVENT_RENAMES.get(k, k): v for k, v in ev.items()})
-    return normalised
-
-
-def _normalise_diag(diag: dict, v1: bool) -> dict:
-    if not v1:
-        return diag
-    return {_V1_DIAG_RENAMES.get(k, k): v for k, v in diag.items()}
-
+# ── Section helpers ───────────────────────────────────────────────────────────
 
 def _flatten_section_metrics(metrics: dict, prefix: str) -> dict:
-    """Extract all metrics from a section's metrics dict.
+    """Flatten a section's metrics dict into prefixed columns.
 
-    Scalar values → single column; dict values (mean/std/cv) → three columns.
+    Scalar values → single column.
+    Stats-dict values (mean/std/cv) → three columns.
     """
     row: dict = {}
     for key, val in metrics.items():
@@ -183,17 +89,17 @@ def _flatten_section_metrics(metrics: dict, prefix: str) -> dict:
 
 
 def _flatten_events_distributions(events: list[dict], prefix: str) -> dict:
-    """Compute percentile distributions from per-event data.
+    """Compute per-event percentile distributions for key fields.
 
-    For each numeric field in _EVT_DISTRIBUTION_FIELDS, outputs:
-    {prefix}_{field}_n, _min, _p25, _p50, _p75, _p95, _max
+    For each field in _EVT_DISTRIBUTION_FIELDS, outputs:
+      {prefix}_{field}_n, _min, _p25, _p50, _p75, _p95, _max
     """
     if not events:
         return {}
     row: dict = {}
-    all_fields = {k for ev in events for k, v in ev.items()
-                  if isinstance(v, (int, float)) and k in _EVT_DISTRIBUTION_FIELDS}
-    for field in sorted(all_fields):
+    present = {k for ev in events for k, v in ev.items()
+               if isinstance(v, (int, float)) and k in _EVT_DISTRIBUTION_FIELDS}
+    for field in sorted(present):
         vals = [ev[field] for ev in events if isinstance(ev.get(field), (int, float))]
         if not vals:
             continue
@@ -218,22 +124,21 @@ def _parse_path_metadata(well_dir: Path) -> dict:
       <output_root>/<project>/<date>/<chip>/Network/<run>/well000/
     """
     parts = well_dir.parts
-    meta = {"project": None, "date": None, "chip": None, "run": None, "well": None}
-    meta["well"]    = parts[-1]
-    meta["run"]     = parts[-2]
-    # parts[-3] == "Network"
-    meta["chip"]    = parts[-4] if len(parts) >= 4 else None
-    meta["date"]    = parts[-5] if len(parts) >= 5 else None
-    meta["project"] = parts[-6] if len(parts) >= 6 else None
-    return meta
+    return {
+        "project": parts[-6] if len(parts) >= 6 else None,
+        "date":    parts[-5] if len(parts) >= 5 else None,
+        "chip":    parts[-4] if len(parts) >= 4 else None,
+        "run":     parts[-2],
+        "well":    parts[-1],
+    }
 
 
 # ── Core extraction ───────────────────────────────────────────────────────────
 
 def extract_row(json_path: Path) -> dict:
-    """Extract all metrics from a single network_results.json into a flat dict."""
+    """Flatten a single network_results.json into a row dict."""
     well_dir = json_path.parent
-    row: dict = {"output_dir": str(well_dir), "schema_version": "v2"}
+    row: dict = {"output_dir": str(well_dir)}
     row.update(_parse_path_metadata(well_dir))
 
     try:
@@ -242,23 +147,18 @@ def extract_row(json_path: Path) -> dict:
         row["error"] = str(exc)
         return row
 
-    v1 = _is_v1(raw)
-    if v1:
-        row["schema_version"] = "v1"
-
     row["n_units"] = raw.get("n_units")
 
-    for prefix in ("bf", "nb", "sb"):
-        sec = _get_section(raw, prefix)
-        metrics = _normalise_metrics(sec.get("metrics") or {}, prefix, v1)
-        events  = _normalise_events(sec.get("events") or [], v1)
-
+    for prefix, (section_key, _ibi_key) in _SECTIONS.items():
+        sec     = raw.get(section_key) or {}
+        metrics = sec.get("metrics") or {}
+        events  = sec.get("events") or []
         row.update(_flatten_section_metrics(metrics, prefix))
         row.update(_flatten_events_distributions(events, prefix))
 
-    diag = _normalise_diag(raw.get("diagnostics") or {}, v1)
+    diag = raw.get("diagnostics") or {}
     for k in _DIAG_KEYS:
-        if k not in ("n_units",) and k in diag:
+        if k != "n_units" and k in diag:
             row[f"diag_{k}"] = diag[k]
 
     return row
@@ -303,14 +203,12 @@ def to_dataframes(rows: list[dict]) -> dict[str, pd.DataFrame]:
         return {}
     df = pd.DataFrame(rows)
 
-    # Column order: identity first, then schema version, then metrics
-    id_cols = ["project", "date", "chip", "run", "well", "n_units", "schema_version"]
+    id_cols = ["project", "date", "chip", "run", "well", "n_units"]
     if "data_dir" in df.columns:
         id_cols.append("data_dir")
     id_cols.append("output_dir")
     metric_cols = [c for c in df.columns if c not in id_cols and c != "error"]
 
-    # Sort metric cols: bf_* → nb_* → sb_* → diag_*
     def _col_sort_key(c: str) -> tuple:
         if c.startswith("bf_"):   return (0, c)
         if c.startswith("nb_"):   return (1, c)
@@ -379,10 +277,7 @@ def main() -> int:
     written = write_csvs(dfs, Path(args.out_dir), combined=args.combined)
 
     total = len(dfs.get("ALL", pd.DataFrame()))
-    v1_count = sum(1 for r in rows if r.get("schema_version") == "v1")
-    v2_count = total - v1_count
-    print(f"Collected {total} wells across {len(dfs) - 1} project(s)  "
-          f"(v1={v1_count}, v2={v2_count}).")
+    print(f"Collected {total} wells across {len(dfs) - 1} project(s).")
     for p in written:
         df = pd.read_csv(p)
         print(f"  {p}  ({len(df)} rows × {len(df.columns)} cols)")

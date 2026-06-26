@@ -140,16 +140,21 @@ layout = html.Div(
             className="card",
         ),
         # ── Preview ──────────────────────────────────────────────────────────
-        html.Div(
-            [
-                html.Div(
-                    [html.Span("pending wells", className="h-title"),
-                     html.Div(id="run-preview-count", className="h-actions")],
-                    className="card-head",
-                ),
-                html.Div(id="run-preview-body", className="card-body flush"),
-            ],
-            className="card",
+        dcc.Loading(
+            html.Div(
+                [
+                    html.Div(
+                        [html.Span("pending wells", className="h-title"),
+                         html.Div(id="run-preview-count", className="h-actions")],
+                        className="card-head",
+                    ),
+                    html.Div(id="run-preview-body", className="card-body flush"),
+                ],
+                className="card",
+            ),
+            type="circle",
+            color="var(--accent)",
+            style={"minHeight": "80px"},
         ),
         # Copy-to-clipboard client callback
         dcc.Clipboard(id="run-clipboard", style={"display": "none"}),

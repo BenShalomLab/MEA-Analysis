@@ -15,7 +15,7 @@ from dash import Input, Output, callback, dcc, html
 from flask import current_app
 
 from dashboards.components import no_config_banner
-from dashboards.data import load_checkpoints, load_network_results_from_checkpoints
+from dashboards.data import load_network_rows
 
 dash.register_page(__name__, path="/rasters", name="Raster Gallery", order=7)
 
@@ -84,8 +84,15 @@ layout = html.Div(
             className="view-head",
         ),
         html.Div(id="rg-no-config"),
-        html.Div(id="rg-count-bar"),
-        html.Div(id="rg-gallery"),
+        dcc.Loading(
+            [
+                html.Div(id="rg-count-bar"),
+                html.Div(id="rg-gallery"),
+            ],
+            type="circle",
+            color="var(--accent)",
+            style={"minHeight": "120px"},
+        ),
     ],
     className="page",
 )
@@ -114,8 +121,7 @@ def _render_gallery(_refresh, project_filter, window, _path):
     if not checkpoint_dir:
         return html.Div("checkpoint_dir not set.", className="banner warn"), [], None, []
 
-    df = load_checkpoints(checkpoint_dir)
-    rows = load_network_results_from_checkpoints(df)
+    rows = load_network_rows(checkpoint_dir, from_checkpoints=True)
 
     if not rows:
         return None, [], None, _empty("No completed wells found.")
@@ -244,12 +250,13 @@ def _render_gallery(_refresh, project_filter, window, _path):
 
 
 def _find_raster(output_dir: Path, stem: str) -> Path | None:
-    """Return first existing file: PNG preferred over SVG, plain over fixed_y."""
-    for prefix in ("", "fixed_y_"):
-        for ext in (".png", ".svg"):
-            f = output_dir / f"{prefix}{stem}{ext}"
-            if f.exists():
-                return f
+    """Return first existing file matching *{stem}.{ext}: PNG preferred, plain over fixed_y."""
+    for ext in (".png", ".svg"):
+        candidates = sorted(output_dir.glob(f"*{stem}{ext}"))
+        plain = [f for f in candidates if not f.name.startswith("fixed_y_")]
+        result = plain[0] if plain else (candidates[0] if candidates else None)
+        if result:
+            return result
     return None
 
 

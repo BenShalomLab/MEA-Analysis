@@ -365,6 +365,7 @@ class ReportsMixin:
             zoom30_png = self.output_dir / "raster_burst_plot_30s.png"
 
             plt.savefig(full_svg)
+            plt.savefig(full_png, dpi=300)
 
             ax_raster.set_xlim(0, 60)
             ax_network.set_xlim(0, 60)
@@ -380,8 +381,6 @@ class ReportsMixin:
             ax_network.set_xlabel("Time (s)")
             plt.savefig(zoom30_svg)
             plt.savefig(zoom30_png, dpi=150)
-
-            plt.savefig(full_png, dpi=300)
 
             # Write this well's network y-max to a project-level summary so
             # --fixed-y can compute a global max across all wells in a later run.

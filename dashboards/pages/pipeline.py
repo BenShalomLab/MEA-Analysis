@@ -29,7 +29,7 @@ _RESET_TO_OPTIONS = [
 
 layout = html.Div(
     [
-        dcc.Interval(id="pipe-interval", interval=30_000, n_intervals=0),
+        dcc.Interval(id="pipe-interval", interval=60_000, n_intervals=0),
         dcc.Store(id="pipe-selected-idx", data=None),
 
         # ── view-head ────────────────────────────────────────────────────
@@ -70,23 +70,28 @@ layout = html.Div(
         html.Div(id="pipe-no-config"),
 
         # ── matrix + inspector ───────────────────────────────────────────
-        html.Div(
-            [
-                html.Div(
-                    [
-                        html.Div(
-                            [html.Span("wells", className="h-title"),
-                             html.Div(id="pipe-count", className="h-actions")],
-                            className="card-head",
-                        ),
-                        html.Div(id="pipe-matrix-body", className="card-body flush"),
-                    ],
-                    className="card grow",
-                ),
-                html.Div(id="pipe-inspector", className="inspector"),
-            ],
-            className="row",
-            style={"alignItems": "flex-start"},
+        dcc.Loading(
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Div(
+                                [html.Span("wells", className="h-title"),
+                                 html.Div(id="pipe-count", className="h-actions")],
+                                className="card-head",
+                            ),
+                            html.Div(id="pipe-matrix-body", className="card-body flush"),
+                        ],
+                        className="card grow",
+                    ),
+                    html.Div(id="pipe-inspector", className="inspector"),
+                ],
+                className="row",
+                style={"alignItems": "flex-start"},
+            ),
+            type="circle",
+            color="var(--accent)",
+            style={"minHeight": "120px"},
         ),
 
         # ── bulk reset ───────────────────────────────────────────────────

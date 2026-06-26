@@ -14,6 +14,7 @@ def compute_network_bursts(
     min_absolute_rate_Hz=0.0,
     min_superburst_dur_s=2.5,
     min_superburst_components=1,
+    min_peak_synchrony=0.05,
 ):
 
     # ---------------------------------------------------------
@@ -100,15 +101,15 @@ def compute_network_bursts(
         hist_smooth = gaussian_filter1d(hist.astype(float), sigma=3)
         peaks, _    = find_peaks(hist_smooth, prominence=5)
         if len(peaks) > 0:
-            reference_isi_s = float(10 ** centers[peaks[0]])   # short-mode peak
+            reference_isi_s = float(10 ** centers[peaks[0]])
         else:
             reference_isi_s = float(10 ** np.percentile(bursty_log_isis, 15))
     elif all_log_isis:
-        # Fallback: no bursty units detected (young / sparse culture)
         reference_isi_s = float(10 ** np.percentile(all_log_isis, 15))
     else:
         reference_isi_s = 0.05
 
+    # Bin size: 20ms floor, 100ms ceiling (Chiappalone et al. 2005)
     bin_size_ms = np.clip(reference_isi_s * 1000, 20, 100)
     bin_size    = bin_size_ms / 1000.0
 
@@ -150,61 +151,112 @@ def compute_network_bursts(
     population_firing_rate_signal = gaussian_filter1d(rate_signal_raw, sigma_firing_rate_bins)
 
     # ---------------------------------------------------------
-    # 3b. Adaptive merge gaps — derived from ISI/IFI distributions
+    # 3b. Adaptive merge gaps
     #
-    # fragment_merge_gap_s: anti-mode of the log-ISI distribution separates
-    #   intra-burst ISIs from inter-burst ISIs (Wagenaar 2006, Selinger 2007).
-    #   Restricted to the short-ISI half of the distribution to avoid picking
-    #   up the inter-burst valley. Falls back to 3 * reference_isi_s.
+    # fragment_merge_gap_s: 95th percentile of intra-burst ISIs from bursty
+    #   units — empirical ceiling of within-burst pauses (Bakkum et al. 2013).
+    #   Population log-ISI antimode NOT used — at high firing rates the
+    #   distribution is unimodal and antimode finds sub-ms refractory
+    #   artifacts rather than the intra/inter-burst boundary.
     #
-    # nb_merge_gap_s: anti-mode of the inter-fragment interval distribution
-    #   separates within-superburst gaps from true IBIs. The 0.3s floor is the
-    #   low end of the cortical STD vesicle recovery range (Tsodyks & Markram
-    #   1997: 300-1500ms). The 10x multiplier is removed — it had no empirical
-    #   basis and was effectively overridden by network_merge_gap_min anyway.
+    # nb_merge_gap_s: anti-mode of inter-fragment interval distribution,
+    #   computed after fragment extraction (section 6b). Falls back to STD
+    #   recovery floor of 0.3s (Tsodyks & Markram 1997: 300-1500ms).
     # ---------------------------------------------------------
 
-    # fragment_merge_gap_s
-    if len(all_log_isis) > 20:
-        _hist, _edges = np.histogram(
-            all_log_isis,
-            bins=min(100, len(all_log_isis) // 5)
-        )
-        _centers    = (_edges[:-1] + _edges[1:]) / 2
-        _smooth     = gaussian_filter1d(_hist.astype(float), sigma=2)
-        _valleys, _ = find_peaks(-_smooth, prominence=2)
-        # restrict to left (short-ISI) half so we find the intra-burst ceiling
-        _short_mask    = _centers < np.percentile(all_log_isis, 50)
-        _valleys_short = _valleys[_short_mask[_valleys]] if len(_valleys) > 0 else np.array([], dtype=int)
-        if len(_valleys_short) > 0:
-            fragment_merge_gap_s      = float(10 ** _centers[_valleys_short[0]])
-            fragment_merge_gap_source = "log_isi_antimode"
-        else:
-            fragment_merge_gap_s      = 3 * reference_isi_s
-            fragment_merge_gap_source = "fallback_3x_isi"
+    intra_burst_isis = []
+    for u in units:
+        if not unit_stats[u].get("is_bursty"):
+            continue
+        t = np.unique(np.sort(SpikeTimes[u]))
+        isi = np.diff(t)
+        isi = isi[isi > 0]
+        if len(isi) < 10:
+            continue
+        log_isi = np.log10(isi)
+        h, e = np.histogram(log_isi, bins=50)
+        c    = (e[:-1] + e[1:]) / 2
+        hs   = gaussian_filter1d(h.astype(float), sigma=2)
+        v, _ = find_peaks(-hs, prominence=1)
+        if len(v) > 0:
+            antimode_s = float(10 ** c[v[0]])
+            intra_burst_isis.extend(isi[isi < antimode_s].tolist())
+
+    if len(intra_burst_isis) > 20:
+        fragment_merge_gap_s      = float(np.percentile(intra_burst_isis, 95))
+        fragment_merge_gap_source = "intra_burst_isi_p95"
     else:
         fragment_merge_gap_s      = 3 * reference_isi_s
         fragment_merge_gap_source = "fallback_3x_isi"
 
-    # nb_merge_gap_s — computed after burst_fragments is populated below,
-    # so we defer it to section 6b.
-
     # ---------------------------------------------------------
     # 4. Detection thresholds
     # ---------------------------------------------------------
-    participation_floor_count = max(5, 0.15 * n_units) if n_units < 50 else max(10, 0.05 * n_units)
-    participation_floor       = participation_floor_count / max(1, n_units)
-
     participation_baseline = np.median(participation_fraction_signal)
     participation_mad      = np.median(np.abs(participation_fraction_signal - participation_baseline))
 
-    detection_threshold = max(participation_floor, participation_baseline + threshold_mad_scale * participation_mad)
+    # Bimodality coefficient on participation signal (Sarle 1990).
+    # BC selects threshold method — NOT used as a hard gate.
+    # Sparse-burst recordings produce low BC even with genuine burst
+    # structure because the burst population is too small relative to
+    # the baseline to create a visible second mode. Hard gating on BC
+    # causes false negatives in exactly these cases.
+    _pf = participation_fraction_signal
+    _n  = len(_pf)
+    if _n >= 4:
+        _g1 = skew(_pf)
+        _g2 = sp_kurtosis(_pf, fisher=True)
+        participation_bc = float(
+            (_g1**2 + 1) / (_g2 + 3 * ((_n - 1)**2 / ((_n - 2) * (_n - 3))))
+        )
+    else:
+        participation_bc = 0.0
+
+    if participation_bc > 0.555:
+        # Signal is genuinely bimodal — MAD robustly captures the
+        # burst/baseline separation.
+        detection_threshold = max(
+            0.03,
+            participation_baseline + threshold_mad_scale * participation_mad
+        )
+        threshold_source = "baseline_mad"
+    else:
+        # Sparse bursting in elevated or noisy baseline: MAD is small
+        # because baseline dominates the distribution. Use a high percentile
+        # of the participation signal to find the burst tail.
+        #
+        # Percentile scales with n_units: fewer units = noisier signal
+        # (single-unit events create 1/n_units jumps) = need stricter
+        # percentile to avoid trivially clearing threshold with noise.
+        #   n_units=15  → pct ≈ 98.7  (very strict)
+        #   n_units=100 → pct ≈ 97.3
+        #   n_units=500 → pct ≈ 95.0  (standard)
+        pct = float(np.clip(95.0 + 5.0 * np.exp(-n_units / 50.0), 95.0, 99.5))
+        detection_threshold = max(
+            0.03,
+            float(np.percentile(participation_fraction_signal, pct))
+        )
+        threshold_source = f"p{pct:.1f}"
+
+    # Prominence: peaks must rise sharply above local surroundings.
+    # 2*MAD filters broad low-amplitude elevations with no synchrony structure.
+    min_prominence = max(2.0 * participation_mad, 0.02)
+
+    # Adaptive peak synchrony floor:
+    # min_peak_synchrony as passed is interpreted as a fraction, but for
+    # small cultures a single unit firing creates a 1/n_units jump that
+    # trivially clears any fixed fraction floor.
+    # Require at least max(3, 10% of n_units) units co-active in a single
+    # bin — scales the absolute unit count floor with culture size.
+    min_units_for_burst      = max(3, int(0.10 * n_units))
+    min_peak_synchrony_adaptive = max(
+        min_peak_synchrony,
+        min_units_for_burst / max(1, n_units)
+    )
 
     # ---------------------------------------------------------
     # 5. Peak detection
     # ---------------------------------------------------------
-    min_prominence = max(0.5 * participation_mad, 0.02)
-
     peaks, _ = find_peaks(
         participation_fraction_signal,
         height=detection_threshold,
@@ -241,6 +293,16 @@ def compute_network_bursts(
         if burst_duration_s <= 0:
             continue
 
+        # Peak synchrony validation: require min_peak_synchrony_adaptive
+        # fraction of units co-active in a single bin within the fragment.
+        # Adaptive floor prevents single-unit noise events from passing in
+        # small cultures (n_units < 50) where 1/n_units jumps are large.
+        peak_bin_synchrony = float(
+            np.max(active_unit_counts[start_idx:end_idx + 1]) / max(1, n_units)
+        )
+        if peak_bin_synchrony < min_peak_synchrony_adaptive:
+            continue
+
         participating = sum(
             1 for u in units
             if np.any((SpikeTimes[u] >= start_time_s) & (SpikeTimes[u] < end_time_s))
@@ -273,6 +335,7 @@ def compute_network_bursts(
             "burst_area":                     float(np.sum(population_firing_rate_signal[start_idx:end_idx + 1]) * bin_size),
             "participation_fraction":         float(participation_fraction),
             "spike_count":                    spike_count,
+            "peak_bin_synchrony":             peak_bin_synchrony,
             "peak_population_firing_rate_hz": float(np.max(population_firing_rate_hz[start_idx:end_idx + 1]))
         })
 
@@ -391,22 +454,20 @@ def compute_network_bursts(
 
         Superbursts are prolonged episodes of elevated network activity
         containing one or more network bursts (Wagenaar et al. 2006:
-        duration > 2.5s). Detection is gap-only — no valley floor is
-        applied because superbursts can contain full silences between
-        component NBs (valley floor would pathologically split them).
+        duration > 2.5s). Detection is gap-only — no valley floor applied
+        because superbursts can contain full silences between component NBs.
 
         Parameters
         ----------
         gap : float
-            Maximum inter-NB gap (s) to merge into a superburst.
-            Derived from inter-fragment interval antimode (section 6b).
+            Maximum inter-NB gap (s) to merge. Derived from inter-fragment
+            interval antimode (section 6b).
         min_dur : float
             Minimum superburst duration in seconds. Default 2.5s per
             Wagenaar et al. 2006 operational definition.
         min_components : int
-            Minimum number of component NBs. Default 1 to include long
-            single NBs that represent sustained reverberant recruitment.
-            Set to 2 to require explicit multi-NB clustering.
+            Minimum number of component NBs. Default 1 includes long single
+            NBs representing sustained reverberant recruitment.
         """
         if not events:
             return []
@@ -508,22 +569,27 @@ def compute_network_bursts(
         },
 
         "diagnostics": {
-            "bin_size_ms":               bin_size_ms,
-            "reference_isi_s":           reference_isi_s,
-            "reference_isi_source":      "bursty_peak" if len(bursty_log_isis) > 50 else ("all_percentile15" if all_log_isis else "default"),
-            "participation_baseline":    participation_baseline,
-            "participation_mad":         participation_mad,
-            "detection_threshold":       detection_threshold,
-            "fragment_merge_gap_s":      fragment_merge_gap_s,
-            "fragment_merge_gap_source": fragment_merge_gap_source,
-            "nb_merge_gap_s":            nb_merge_gap_s,
-            "nb_merge_gap_source":       nb_merge_gap_source,
-            "superburst_min_dur_s":      min_superburst_dur_s,
-            "superburst_merge_gap_s":    nb_merge_gap_s,
-            "n_units":                   n_units,
-            "n_bursty_units":            sum(1 for s in unit_stats.values() if s.get("is_bursty")),
-            "sigma_participation_bins":  sigma_participation_bins,
-            "sigma_firing_rate_bins":    sigma_firing_rate_bins,
+            "bin_size_ms":                  bin_size_ms,
+            "reference_isi_s":              reference_isi_s,
+            "reference_isi_source":         "bursty_peak" if len(bursty_log_isis) > 50 else ("all_percentile15" if all_log_isis else "default"),
+            "participation_baseline":       participation_baseline,
+            "participation_mad":            participation_mad,
+            "participation_bc":             participation_bc,
+            "burst_detection_valid":        True,
+            "threshold_source":             threshold_source,
+            "detection_threshold":          detection_threshold,
+            "min_peak_synchrony_adaptive":  min_peak_synchrony_adaptive,
+            "min_units_for_burst":          min_units_for_burst,
+            "fragment_merge_gap_s":         fragment_merge_gap_s,
+            "fragment_merge_gap_source":    fragment_merge_gap_source,
+            "nb_merge_gap_s":               nb_merge_gap_s,
+            "nb_merge_gap_source":          nb_merge_gap_source,
+            "superburst_min_dur_s":         min_superburst_dur_s,
+            "superburst_merge_gap_s":       nb_merge_gap_s,
+            "n_units":                      n_units,
+            "n_bursty_units":               sum(1 for s in unit_stats.values() if s.get("is_bursty")),
+            "sigma_participation_bins":     sigma_participation_bins,
+            "sigma_firing_rate_bins":       sigma_firing_rate_bins,
         },
 
         "unit_stats": unit_stats,

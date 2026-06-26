@@ -297,7 +297,7 @@ def plot_clean_network(
     part_line, = ax.plot(
         time_s,
         participation_fraction_signal,
-        color="#0984e3",
+        color="#B22222",
         lw=1.5,
         zorder=3,
         label="Participation"
@@ -313,7 +313,7 @@ def plot_clean_network(
     if participation_baseline is not None:
         ax.axhline(
             participation_baseline,
-            color="#74b9ff",
+            color="#FF6600",
             ls="--",
             lw=1.0,
             alpha=0.9,
@@ -344,7 +344,7 @@ def plot_clean_network(
         rate_line, = ax_rate.plot(
             time_s,
             population_firing_rate_hz,
-            color="#00b894",
+            color="tab:orange",
             lw=1.0,
             alpha=0.9,
             zorder=4,
@@ -366,8 +366,8 @@ def plot_clean_network(
             else:
                 ax_rate.set_ylim(smin - 1.0, smax + 1.0)
 
-        ax_rate.set_ylabel("Mean rate / unit (Hz)", color="#00b894")
-        ax_rate.tick_params(axis="y", colors="#00b894", direction="out")
+        ax_rate.set_ylabel("Mean rate / unit (Hz)", color="tab:orange")
+        ax_rate.tick_params(axis="y", colors="tab:orange", direction="out")
         ax_rate.spines["top"].set_visible(False)
         ax_rate.spines["left"].set_visible(False)
 
@@ -562,18 +562,16 @@ def mark_burst_hierarchy(
     if ax_network is None:
         return
 
-    ymin, ymax = ax_network.get_ylim()
-    yr = ymax - ymin
+    # Use a blended transform: x = data coords, y = axes fraction (0–1).
+    # This pins markers to fixed vertical positions regardless of the signal
+    # amplitude, so they never overlap with the participation/rate traces.
+    from matplotlib.transforms import blended_transform_factory
+    btf = blended_transform_factory(ax_network.transData, ax_network.transAxes)
 
-    # clearly separated rows above orange trace
-    sb_y0 = ymax - 0.03 * yr
-    sb_y1 = ymax - 0.01 * yr
-
-    nb_y0 = ymax - 0.10 * yr
-    nb_y1 = ymax - 0.075 * yr
-
-    bl_y0 = ymax - 0.17 * yr
-    bl_y1 = ymax - 0.145 * yr
+    # Band layout (axes fractions, top of axes = 1.0)
+    # superbursts : 0.93 – 0.98
+    # network bursts : 0.82 – 0.90
+    # burstlets  : 0.72 – 0.79
 
     # ------------------------------------------
     # Superbursts as top bars/brackets
@@ -584,56 +582,53 @@ def mark_burst_hierarchy(
             dur = e - s
             if dur < min_superburst_duration_s:
                 continue
-            # end caps
             ax_network.vlines(
-                [s, e],
-                sb_y0, sb_y1,
+                [s, e], 0.93, 0.98,
+                transform=btf,
                 color="#6c5ce7",
                 linewidth=2.2,
                 alpha=0.95,
-                zorder=8
+                clip_on=False,
+                zorder=8,
             )
-            # connecting top bar
             ax_network.hlines(
-                sb_y1,
-                s, e,
+                0.98, s, e,
+                transform=btf,
                 color="#6c5ce7",
                 linewidth=2.0,
                 alpha=0.95,
-                zorder=8
+                clip_on=False,
+                zorder=8,
             )
 
-
     # ------------------------------------------
-    # Network bursts as ONE blue center tick each
+    # Network bursts as center ticks
     # ------------------------------------------
     if show_network_ticks and len(network_bursts) > 0:
         nb_centers = [ev["peak_time_s"] for ev in network_bursts if "peak_time_s" in ev]
-
-        ax_network.eventplot(
-            [nb_centers],
-            orientation="horizontal",
-            lineoffsets=[0.5 * (nb_y0 + nb_y1)],
-            linelengths=[nb_y1 - nb_y0],
-            linewidths=2.0,
-            colors="#0984e3",
-            alpha=0.95,
-            zorder=7
-        )
+        if nb_centers:
+            ax_network.vlines(
+                nb_centers, 0.82, 0.90,
+                transform=btf,
+                color="#0984e3",
+                linewidth=2.0,
+                alpha=0.95,
+                clip_on=False,
+                zorder=7,
+            )
 
     # ------------------------------------------
-    # Burstlets as gray ticks
+    # Burstlets as thin ticks
     # ------------------------------------------
     if show_burstlet_ticks and len(burstlets) > 0:
-        burstlet_centers = [ev["peak_time_s"] for ev in burstlets if "peak_time_s" in ev]
-
-        ax_network.eventplot(
-            [burstlet_centers],
-            orientation="horizontal",
-            lineoffsets=[0.5 * (bl_y0 + bl_y1)],
-            linelengths=[bl_y1 - bl_y0],
-            linewidths=0.8,
-            colors="#636e72",
-            alpha=0.85,
-            zorder=6
-        )
+        bl_centers = [ev["peak_time_s"] for ev in burstlets if "peak_time_s" in ev]
+        if bl_centers:
+            ax_network.vlines(
+                bl_centers, 0.72, 0.79,
+                transform=btf,
+                color="#636e72",
+                linewidth=0.8,
+                alpha=0.85,
+                clip_on=False,
+                zorder=6,
+            )

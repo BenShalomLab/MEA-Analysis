@@ -38,12 +38,17 @@ layout = html.Div(
             className="view-head",
         ),
         html.Div(id="rec-no-config"),
-        html.Div(
-            [
-                html.Div(id="rec-list", className="rec-list"),
-                html.Div(id="rec-detail", className="grow"),
-            ],
-            className="split-h",
+        dcc.Loading(
+            html.Div(
+                [
+                    html.Div(id="rec-list", className="rec-list"),
+                    html.Div(id="rec-detail", className="grow"),
+                ],
+                className="split-h",
+            ),
+            type="circle",
+            color="var(--accent)",
+            style={"minHeight": "120px"},
         ),
     ],
     className="page",

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time as _time
 from pathlib import Path
 
 import pandas as pd
@@ -65,12 +66,19 @@ def _safe(d: dict, *keys, default=None):
     return default
 
 
-def load_checkpoints(checkpoint_dir: str | Path) -> pd.DataFrame:
+def load_checkpoints(checkpoint_dir: str | Path, *, force: bool = False) -> pd.DataFrame:
     """Scan checkpoint_dir for JSON files; return tidy DataFrame.
 
     Falls back to recursive search if no files found at top level.
     Never raises — returns empty DataFrame on missing/empty dir.
+    Results cached for _CP_CACHE_TTL seconds; pass force=True to bypass.
     """
+    _cp_key = str(checkpoint_dir)
+    if not force:
+        _cp_entry = _CP_CACHE.get(_cp_key)
+        if _cp_entry and (_time.monotonic() - _cp_entry[0]) < _CP_CACHE_TTL:
+            return _cp_entry[1]
+
     root = Path(checkpoint_dir)
     if not root.exists():
         return pd.DataFrame(columns=_EMPTY_COLS)
@@ -136,8 +144,11 @@ def load_checkpoints(checkpoint_dir: str | Path) -> pd.DataFrame:
         })
 
     if not rows:
-        return pd.DataFrame(columns=_EMPTY_COLS)
-    return pd.DataFrame(rows)
+        _cp_df = pd.DataFrame(columns=_EMPTY_COLS)
+    else:
+        _cp_df = pd.DataFrame(rows)
+    _CP_CACHE[_cp_key] = (_time.monotonic(), _cp_df)
+    return _cp_df
 
 
 def checkpoint_kpis(df: pd.DataFrame) -> dict[str, int]:
@@ -249,30 +260,22 @@ def bulk_reset_checkpoints(
 def _parse_network_raw(raw: dict) -> dict:
     """Extract dashboard summary fields from a network_results.json dict.
 
-    Handles both v1 (burstlets/count/rate/duration) and
-    v2 (burst_fragments/burst_count/burst_rate_hz/burst_duration_s) schemas.
+    Uses the canonical schema produced by parameter_free_burst_detector.py.
     """
-    bl_sec = (raw.get("burst_fragments") or raw.get("burstlets") or {})
-    bl   = bl_sec.get("metrics", {})
-    nb   = (raw.get("network_bursts", {}) or {}).get("metrics", {})
-    sb   = (raw.get("superbursts", {}) or {}).get("metrics", {})
-    diag = raw.get("diagnostics", {}) or {}
-
-    def _count(m):  return m.get("burst_count") or m.get("count") or 0
-    def _rate(m):   return float(m.get("burst_rate_hz") or m.get("rate") or 0)
-    def _dur(m):    return float(
-        ((m.get("burst_duration_s") or m.get("duration") or {}).get("mean")) or 0
-    )
+    bl   = (raw.get("burst_fragments") or {}).get("metrics") or {}
+    nb   = (raw.get("network_bursts")  or {}).get("metrics") or {}
+    sb   = (raw.get("superbursts")     or {}).get("metrics") or {}
+    diag = raw.get("diagnostics") or {}
 
     return {
         "n_units":              raw.get("n_units") or diag.get("n_units"),
         "n_bursty_units":       diag.get("n_bursty_units"),
-        "burstlets_count":      _count(bl),
-        "network_bursts_count": _count(nb),
-        "superbursts_count":    _count(sb),
-        "burst_rate_hz":        round(_rate(nb), 4),
-        "mean_burst_dur_s":     round(_dur(nb), 3),
-        "adaptive_bin_ms":      diag.get("bin_size_ms") or diag.get("adaptive_bin_ms"),
+        "burstlets_count":      bl.get("burst_count", 0),
+        "network_bursts_count": nb.get("burst_count", 0),
+        "superbursts_count":    sb.get("burst_count", 0),
+        "burst_rate_hz":        round(float(nb.get("burst_rate_hz") or 0), 4),
+        "mean_burst_dur_s":     round(float((nb.get("burst_duration_s") or {}).get("mean") or 0), 3),
+        "adaptive_bin_ms":      diag.get("bin_size_ms"),
         "_raw":                 raw,
     }
 
@@ -333,6 +336,52 @@ def load_network_results(output_root: str | Path) -> list[dict]:
             "well":    well,
             **parsed,
         })
+    return rows
+
+
+# ── Network-results cache ─────────────────────────────────────────────────────
+# Avoids re-reading hundreds of JSONs on every interval tick.
+# TTL matches the dashboard auto-refresh interval (60 s).
+# Manual Refresh buttons call invalidate_network_cache() to force a reload.
+
+_NET_CACHE: dict[str, tuple[float, list]] = {}
+_NET_CACHE_TTL = 55.0  # seconds
+
+_CP_CACHE: dict[str, tuple[float, "pd.DataFrame"]] = {}
+_CP_CACHE_TTL = 55.0  # seconds
+
+
+def invalidate_network_cache() -> None:
+    _NET_CACHE.clear()
+
+
+def invalidate_checkpoint_cache() -> None:
+    _CP_CACHE.clear()
+
+
+def load_network_rows(
+    checkpoint_dir_or_root: str | Path,
+    *,
+    from_checkpoints: bool = True,
+    force: bool = False,
+) -> list[dict]:
+    """Cached call to load_network_results_from_checkpoints or load_network_results.
+
+    Returns cached rows when called within _NET_CACHE_TTL seconds of the last
+    read.  Pass force=True to bypass the TTL (e.g. on a manual Refresh click).
+    """
+    key = str(checkpoint_dir_or_root)
+    if not force:
+        entry = _NET_CACHE.get(key)
+        if entry and (_time.monotonic() - entry[0]) < _NET_CACHE_TTL:
+            return entry[1]
+
+    if from_checkpoints:
+        rows = load_network_results_from_checkpoints(load_checkpoints(key))
+    else:
+        rows = load_network_results(key)
+
+    _NET_CACHE[key] = (_time.monotonic(), rows)
     return rows
 
 
