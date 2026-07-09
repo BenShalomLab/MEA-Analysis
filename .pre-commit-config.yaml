@@ -7,3 +7,11 @@ repos:
         language: system
         files: \.ipynb$
         pass_filenames: true
+
+      - id: pytest-burst-pipeline
+        name: Pytest – burst pipeline contract tests
+        entry: /global/homes/m/mpatil1/.conda/envs/spikeinterface/bin/python -m pytest
+        args: [tests/, -x, -q, --tb=short]
+        language: system
+        files: ^(parameter_free_burst_detector\.py|helper_functions\.py|mea_reports\.py|tests/)
+        pass_filenames: false

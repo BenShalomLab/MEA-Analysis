@@ -152,6 +152,7 @@ class InfraMixin:
             'project': self.project_name,
             'date': self.date,
             'output_dir': str(self.output_dir),
+            'data_dir': str(self.file_path),
             'error': None,
         }
 
