@@ -267,6 +267,15 @@ class ReportsMixin:
             network_data_clean = helper.recursive_clean(network_data)
             network_data_clean["n_units"] = len(spike_times)
 
+            fs = self.recording.get_sampling_frequency()
+            network_data_clean["fs"] = fs
+            network_data_clean["duration_s"] = self.recording.get_num_frames() / fs
+            network_data_clean["project"] = self.project_name
+            network_data_clean["date"] = str(self.date)
+            network_data_clean["chip_id"] = self.chip_id
+            network_data_clean["run_id"] = self.run_id
+            network_data_clean["well"] = self.well
+
             temp_file = self.output_dir / "network_results.tmp.json"
             final_file = self.output_dir / "network_results.json"
 
