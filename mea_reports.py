@@ -267,9 +267,20 @@ class ReportsMixin:
             network_data_clean = helper.recursive_clean(network_data)
             network_data_clean["n_units"] = len(spike_times)
 
-            fs = self.recording.get_sampling_frequency()
-            network_data_clean["fs"] = fs
-            network_data_clean["duration_s"] = self.recording.get_num_frames() / fs
+            rec_for_meta = self.recording
+            if rec_for_meta is None:
+                # --reanalyze-bursts + --skip-spikesorting never loads self.recording;
+                # fetch metadata only, no preprocessing/binary cache.
+                try:
+                    rec_for_meta = self._load_recording_file()
+                except Exception:
+                    self.logger.warning("Could not load recording for fs/duration metadata.", exc_info=True)
+                    rec_for_meta = None
+
+            if rec_for_meta is not None:
+                fs = rec_for_meta.get_sampling_frequency()
+                network_data_clean["fs"] = fs
+                network_data_clean["duration_s"] = rec_for_meta.get_num_frames() / fs
             network_data_clean["project"] = self.project_name
             network_data_clean["date"] = str(self.date)
             network_data_clean["chip_id"] = self.chip_id
