@@ -32,6 +32,15 @@ kilosort4_output/
 Connections/pyuoi/*
 Connections/pyuoi/
 logs/
+# --- Orchestration / deployment ---
+# Per-machine paths and UIDs. Never commit; .env.example is the template.
+.env
+.env.local
+# Watcher state, job config, and per-run logs (machine-specific runtime data).
+.mea-watcher/
+**/watcher_state.json
+**/job.json
+
 # --- Python packaging / install artifacts ---
 build/
 dist/
