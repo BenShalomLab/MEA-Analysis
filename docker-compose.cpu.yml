@@ -1,0 +1,18 @@
+# CPU-only override — for verifying the UI, watcher, and mounts on a machine
+# where the NVIDIA Container Toolkit is not yet installed.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+#
+# Compose replaces sequences on merge, so the empty device list clears the GPU
+# reservation from docker-compose.yml.
+#
+# NOTE: spike sorting (Kilosort4) REQUIRES a GPU and will fail in this mode.
+# Use this only to confirm the container starts, the UI serves, paths are
+# mounted correctly, and completion detection works (with Dry run enabled).
+
+services:
+  mea-orchestration:
+    deploy:
+      resources:
+        reservations:
+          devices: []

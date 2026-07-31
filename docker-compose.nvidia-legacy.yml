@@ -1,0 +1,26 @@
+# GPU via the legacy NVIDIA runtime.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.nvidia-legacy.yml up -d
+#
+# Use this when the base file fails with:
+#     could not select device driver "nvidia" with capabilities: [[gpu]]
+#
+# That error means Docker's CDI device-driver API (used by
+# deploy.resources.reservations.devices) is not wired up, even though the
+# NVIDIA Container Toolkit is installed. Check with:
+#     docker info | grep -i runtime
+# If "nvidia" appears there, this override is the right approach: it clears the
+# device reservation and requests the nvidia runtime directly. Combined with
+# NVIDIA_VISIBLE_DEVICES=all (set in docker-compose.yml), the container gets
+# full GPU access.
+#
+# If "Default Runtime: nvidia" is already shown, GPUs are granted to every
+# container anyway and this override simply makes that explicit and portable.
+
+services:
+  mea-orchestration:
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices: []
