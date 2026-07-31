@@ -125,6 +125,17 @@ class WellActivity:
     sampling_hz: float = 0.0
     spike_threshold: float = 0.0
 
+    # Per-block derived results, aggregated at the end. Kept per block because
+    # electrodes in different blocks were never recorded simultaneously, so
+    # anything relational (correlation, synchrony) is only valid within a block.
+    temporal_blocks: list[dict] = field(default_factory=list)
+    network_blocks: list[dict] = field(default_factory=list)
+    functional_blocks: list[dict] = field(default_factory=list)
+    # Population trace of the longest block, for plotting.
+    pop_trace: Optional[tuple[np.ndarray, np.ndarray, float]] = None
+    pop_bursts: list[tuple[float, float]] = field(default_factory=list)
+    raster_sample: Optional[tuple[np.ndarray, np.ndarray]] = None
+
     @property
     def rate(self) -> np.ndarray:
         """Per-electrode firing rate (Hz).
@@ -142,6 +153,202 @@ class WellActivity:
         with np.errstate(divide="ignore", invalid="ignore"):
             a = np.where(self.spikes > 0, self.amp_sum / np.maximum(self.spikes, 1), 0.0)
         return np.nan_to_num(a)
+
+
+# --------------------------------------------------------------------------- #
+# Temporal / network / functional analysis
+#
+# All of this comes from the spike timestamps (``frameno`` at the sampling rate)
+# that the counting pass already reads, so it costs no extra I/O.
+# --------------------------------------------------------------------------- #
+def isi_metrics(times: np.ndarray, burst_isi_s: float = 0.1) -> tuple[float, float]:
+    """Return ``(isi_cv, burst_fraction)`` for one electrode's spike times.
+
+    ``isi_cv`` — coefficient of variation of inter-spike intervals. Near 0 is
+    metronomic, ~1 is Poisson, well above 1 means bursty (long silences broken
+    by rapid volleys).
+
+    ``burst_fraction`` — share of intervals shorter than ``burst_isi_s``, i.e.
+    how much of the firing happens inside high-frequency runs.
+    """
+    if times.size < 5:
+        return 0.0, 0.0
+    isi = np.diff(np.sort(times))
+    isi = isi[isi > 0]
+    if isi.size < 4:
+        return 0.0, 0.0
+    mean = float(isi.mean())
+    cv = float(isi.std() / mean) if mean > 0 else 0.0
+    return cv, float((isi < burst_isi_s).mean())
+
+
+def rate_stability(times: np.ndarray, duration_s: float, window_s: float = 10.0) -> float:
+    """CV of firing rate across time windows — detects drift or dying cultures.
+
+    0 means perfectly steady; large values mean the rate changed a lot over the
+    recording, which usually indicates a problem rather than biology.
+    """
+    if times.size < 10 or duration_s < 2 * window_s:
+        return 0.0
+    edges = np.arange(0, duration_s + window_s, window_s)
+    counts, _ = np.histogram(times, bins=edges)
+    if counts.mean() <= 0:
+        return 0.0
+    return float(counts.std() / counts.mean())
+
+
+def detect_network_bursts(pop: np.ndarray, bin_s: float,
+                          n_sigma: float = 4.0, min_gap_s: float = 0.2
+                          ) -> tuple[list[tuple[float, float]], dict]:
+    """Detect network bursts in a binned population spike count.
+
+    Threshold is median + ``n_sigma`` x a robust spread (MAD-based), so a few
+    huge bursts do not raise the threshold above the rest. Bins above threshold
+    that are within ``min_gap_s`` of each other are merged into one burst.
+
+    This is intentionally simple and assumption-light — it is an early preview
+    from unsorted threshold crossings, not a replacement for the pipeline's
+    parameter-free burst detector, which works on sorted units.
+    """
+    if pop.size < 10 or pop.sum() == 0:
+        return [], {}
+
+    med = float(np.median(pop))
+    mad = float(np.median(np.abs(pop - med))) * 1.4826
+    spread = mad if mad > 0 else float(pop.std())
+    if spread <= 0:
+        return [], {}
+    threshold = med + n_sigma * spread
+
+    above = pop > threshold
+    if not above.any():
+        return [], {"threshold": round(threshold, 2)}
+
+    edges = np.diff(above.astype(np.int8))
+    starts = list(np.flatnonzero(edges == 1) + 1)
+    stops = list(np.flatnonzero(edges == -1) + 1)
+    if above[0]:
+        starts.insert(0, 0)
+    if above[-1]:
+        stops.append(above.size)
+
+    merged: list[tuple[int, int]] = []
+    for s, e in zip(starts, stops):
+        if merged and (s - merged[-1][1]) * bin_s <= min_gap_s:
+            merged[-1] = (merged[-1][0], e)
+        else:
+            merged.append((s, e))
+
+    bursts = [(s * bin_s, e * bin_s) for s, e in merged if (e - s) * bin_s > 0]
+    if not bursts:
+        return [], {"threshold": round(threshold, 2)}
+
+    durations = np.array([e - s for s, e in bursts])
+    spikes_in = np.array([pop[int(s / bin_s):int(e / bin_s)].sum() for s, e in bursts])
+    total_s = pop.size * bin_s
+    ibis = np.diff([s for s, _ in bursts]) if len(bursts) > 1 else np.array([])
+
+    stats = {
+        "threshold": round(threshold, 2),
+        "network_burst_count": len(bursts),
+        "network_burst_rate_hz": round(len(bursts) / total_s, 4) if total_s else 0.0,
+        "burst_duration_mean_s": round(float(durations.mean()), 3),
+        "burst_duration_median_s": round(float(np.median(durations)), 3),
+        "spikes_per_burst_mean": round(float(spikes_in.mean()), 1),
+        "pct_spikes_in_bursts": round(100 * float(spikes_in.sum()) / float(pop.sum()), 1),
+        "interburst_interval_mean_s": round(float(ibis.mean()), 3) if ibis.size else None,
+    }
+    return bursts, stats
+
+
+def population_metrics(times: np.ndarray, duration_s: float,
+                       bin_s: float = 0.02) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Binned population activity plus synchrony measures.
+
+    ``fano`` (variance/mean of the binned count) is the headline synchrony
+    number: ~1 means independent firing, large values mean the population rises
+    and falls together.
+    """
+    if times.size == 0 or duration_s <= 0:
+        return np.empty(0), np.empty(0), {}
+    edges = np.arange(0, duration_s + bin_s, bin_s)
+    pop, _ = np.histogram(times, bins=edges)
+    centres = edges[:-1] + bin_s / 2
+    mean = float(pop.mean())
+    stats = {
+        "population_rate_hz": round(float(times.size / duration_s), 2),
+        "pop_bin_mean": round(mean, 2),
+        "pop_bin_max": int(pop.max()),
+        "synchrony_fano": round(float(pop.var() / mean), 2) if mean > 0 else 0.0,
+        "pop_bin_s": bin_s,
+    }
+    return centres, pop, stats
+
+
+def functional_metrics(times: np.ndarray, channels: np.ndarray,
+                       chan_to_elec: dict[int, int], duration_s: float,
+                       max_electrodes: int = 400, bin_s: float = 0.01
+                       ) -> tuple[dict, Optional[np.ndarray], Optional[np.ndarray]]:
+    """Pairwise co-activation among simultaneously recorded electrodes.
+
+    Only electrodes within the *same* block are comparable: a scan records
+    different configurations at different times, so electrodes from different
+    blocks never overlap in time and cannot be correlated.
+
+    Returns ``(stats, corr_matrix, electrode_ids)``; the matrix is capped at
+    ``max_electrodes`` busiest electrodes to keep this affordable.
+    """
+    if times.size == 0 or duration_s <= 0:
+        return {}, None, None
+
+    counts = np.bincount(channels)
+    busiest = np.argsort(counts)[::-1]
+    busiest = [c for c in busiest if counts[c] > 10][:max_electrodes]
+    if len(busiest) < 10:
+        return {}, None, None
+
+    n_bins = max(int(duration_s / bin_s), 2)
+    mat = np.zeros((len(busiest), n_bins), dtype=np.float32)
+    for row, ch in enumerate(busiest):
+        t = times[channels == ch]
+        idx = np.clip((t / bin_s).astype(np.int64), 0, n_bins - 1)
+        np.add.at(mat[row], idx, 1.0)
+
+    keep = mat.std(axis=1) > 0
+    mat, busiest = mat[keep], [c for c, k in zip(busiest, keep) if k]
+    if mat.shape[0] < 10:
+        return {}, None, None
+
+    corr = np.corrcoef(mat)
+    np.fill_diagonal(corr, np.nan)
+    off = corr[~np.isnan(corr)]
+    if off.size == 0:
+        return {}, None, None
+
+    # "Connected" pairs: correlation clearly above the bulk of the distribution.
+    strong = float(np.percentile(off, 95))
+    degree = np.nansum(corr > strong, axis=1)
+
+    stats = {
+        "functional_electrodes": int(mat.shape[0]),
+        "correlation_mean": round(float(off.mean()), 4),
+        "correlation_median": round(float(np.median(off)), 4),
+        "correlation_p95": round(strong, 4),
+        "correlation_max": round(float(off.max()), 4),
+        "mean_degree": round(float(degree.mean()), 1),
+        "corr_bin_s": bin_s,
+    }
+    elec_ids = np.array([chan_to_elec.get(int(c), -1) for c in busiest], dtype=np.int64)
+    return stats, corr, elec_ids
+
+
+def _weighted_mean(blocks: list[dict], key: str, weight: str = "duration") -> Optional[float]:
+    vals = [(b[key], b.get(weight, 1.0)) for b in blocks
+            if b.get(key) is not None and not isinstance(b.get(key), str)]
+    if not vals:
+        return None
+    total_w = sum(w for _, w in vals) or 1.0
+    return float(sum(v * w for v, w in vals) / total_w)
 
 
 # --------------------------------------------------------------------------- #
@@ -221,7 +428,9 @@ def read_selection(path: Path) -> dict[int, set[int]]:
     return out
 
 
-def extract_file(path: Path, max_spikes_per_block: int = 0) -> dict[int, WellActivity]:
+def extract_file(path: Path, max_spikes_per_block: int = 0, *,
+                 analyze: bool = True, functional: bool = True,
+                 max_corr_electrodes: int = 400) -> dict[int, WellActivity]:
     """Aggregate per-electrode activity for every well in one HDF5 file.
 
     Spike counts and routed time accumulate across all blocks, so a scan that
@@ -278,12 +487,13 @@ def extract_file(path: Path, max_spikes_per_block: int = 0) -> dict[int, WellAct
                 data = sp[take]
                 sch = data["channel"].astype(np.int64)
                 amp = np.abs(data["amplitude"].astype(np.float64))
+                frame = data["frameno"].astype(np.int64)
 
                 valid = (sch >= 0) & (sch < n_chan)
-                sch, amp = sch[valid], amp[valid]
+                sch, amp, frame = sch[valid], amp[valid], frame[valid]
                 idx = chan_to_idx[sch]
                 ok = idx >= 0
-                idx, amp = idx[ok], amp[ok]
+                idx, amp, frame, sch = idx[ok], amp[ok], frame[ok], sch[ok]
 
                 counts = np.bincount(idx, minlength=elec.size)
                 amps = np.bincount(idx, weights=amp, minlength=elec.size)
@@ -292,6 +502,63 @@ def extract_file(path: Path, max_spikes_per_block: int = 0) -> dict[int, WellAct
                     rec = store[int(elec[i])]
                     rec[0] += float(counts[i])
                     rec[2] += float(amps[i])
+
+                # --- timing-based analysis (free: the data is already loaded) ---
+                if analyze and frame.size:
+                    fs = wa.sampling_hz or 10000.0
+                    t = (frame - frame.min()) / fs
+                    span = float(t.max()) if t.size else 0.0
+                    dur = duration if duration > 0 else span
+                    order = np.argsort(t)
+                    t, sch_o, idx_o = t[order], sch[order], idx[order]
+
+                    # Per-electrode temporal character.
+                    cvs, bfs, stabs = [], [], []
+                    for i in hit:
+                        if counts[i] < 5:
+                            continue
+                        te = t[idx_o == i]
+                        cv, bf = isi_metrics(te)
+                        if cv:
+                            cvs.append(cv)
+                            bfs.append(bf)
+                            stabs.append(rate_stability(te, dur))
+                    wa.temporal_blocks.append({
+                        "duration": dur,
+                        "isi_cv_median": float(np.median(cvs)) if cvs else None,
+                        "burst_fraction_mean": float(np.mean(bfs)) if bfs else None,
+                        "rate_stability_cv": float(np.median(stabs)) if stabs else None,
+                        "electrodes": len(cvs),
+                    })
+
+                    # Population activity and network bursts for this block.
+                    centres, pop, pstats = population_metrics(t, dur)
+                    if pstats:
+                        bursts, bstats = detect_network_bursts(pop, pstats["pop_bin_s"])
+                        pstats.update(bstats)
+                        pstats["duration"] = dur
+                        wa.network_blocks.append(pstats)
+                        # Keep the longest block's trace for the figure.
+                        if wa.pop_trace is None or dur > wa.pop_trace[2]:
+                            wa.pop_trace = (centres, pop, dur)
+                            wa.pop_bursts = bursts
+                            step = max(1, t.size // 60000)   # cap raster points
+                            wa.raster_sample = (t[::step], idx_o[::step].astype(np.float64))
+
+                    # Co-activation among electrodes recorded together here.
+                    if functional:
+                        c2e = {int(chan[i]): int(elec[i]) for i in range(elec.size)}
+                        fstats, corr, eids = functional_metrics(
+                            t, sch_o, c2e, dur,
+                            max_electrodes=max_corr_electrodes)
+                        if fstats:
+                            fstats["duration"] = dur
+                            wa.functional_blocks.append(fstats)
+                            if corr is not None and (
+                                    not hasattr(wa, "_corr") or wa._corr is None
+                                    or corr.shape[0] > wa._corr.shape[0]):
+                                wa._corr = corr           # type: ignore[attr-defined]
+                                wa._corr_elec = eids      # type: ignore[attr-defined]
 
         # Freeze the accumulators into arrays, ordered by electrode id.
         for wid, wa in wells.items():
@@ -385,7 +652,37 @@ def well_metrics(wa: WellActivity, active_hz: float = 0.05,
             "amplitude_mean_uv", "amplitude_median_uv", "amplitude_p90_uv",
         )})
 
-    # How the electrodes actually recorded compare with the whole array.
+    # --- temporal character ------------------------------------------------
+    if wa.temporal_blocks:
+        for key, out in (("isi_cv_median", "isi_cv_median"),
+                         ("burst_fraction_mean", "burst_fraction_mean"),
+                         ("rate_stability_cv", "rate_stability_cv")):
+            v = _weighted_mean(wa.temporal_blocks, key)
+            if v is not None:
+                m[out] = round(v, 4)
+
+    # --- population / network bursts ---------------------------------------
+    if wa.network_blocks:
+        for key in ("population_rate_hz", "synchrony_fano", "network_burst_rate_hz",
+                    "burst_duration_mean_s", "spikes_per_burst_mean",
+                    "pct_spikes_in_bursts", "interburst_interval_mean_s"):
+            v = _weighted_mean(wa.network_blocks, key)
+            if v is not None:
+                m[key] = round(v, 4)
+        m["network_burst_count"] = int(sum(b.get("network_burst_count", 0)
+                                           for b in wa.network_blocks))
+
+    # --- functional connectivity -------------------------------------------
+    if wa.functional_blocks:
+        for key in ("correlation_mean", "correlation_median", "correlation_p95",
+                    "correlation_max", "mean_degree"):
+            v = _weighted_mean(wa.functional_blocks, key)
+            if v is not None:
+                m[key] = round(v, 4)
+        m["functional_electrodes"] = int(max(
+            b.get("functional_electrodes", 0) for b in wa.functional_blocks))
+
+    # --- how well the recorded electrodes captured the available activity ---
     if selection:
         sel_mask = np.isin(wa.electrode, list(selection))
         n_sel = int(sel_mask.sum())
@@ -399,6 +696,27 @@ def well_metrics(wa: WellActivity, active_hz: float = 0.05,
                 # which is the point — but it also biases downstream rates.
                 m["selection_enrichment"] = round(
                     float(sel_rate.mean() / max(rate.mean(), 1e-9)), 2)
+
+            total_spikes = float(wa.spikes.sum())
+            if total_spikes > 0:
+                m["captured_activity_fraction"] = round(
+                    float(wa.spikes[sel_mask].sum() / total_spikes), 4)
+
+            # Recall against an ideal "take the n busiest electrodes" selection:
+            # 1.0 means the selection found everything it could have.
+            order = np.argsort(rate)[::-1][:n_sel]
+            ideal = set(wa.electrode[order].tolist())
+            chosen = set(wa.electrode[sel_mask].tolist())
+            m["selection_recall"] = round(len(ideal & chosen) / max(len(ideal), 1), 3)
+
+            ideal_rate = float(rate[order].mean()) if order.size else 0.0
+            m["selection_efficiency"] = round(
+                float(sel_rate.mean() / ideal_rate), 3) if ideal_rate > 0 else None
+
+            if m.get("selection_recall") is not None:
+                eff = m.get("selection_efficiency") or 0
+                m["selection_quality"] = (
+                    "good" if eff >= 0.8 else "fair" if eff >= 0.5 else "poor")
     return m
 
 
@@ -554,6 +872,98 @@ def plot_plate(wells: dict[int, WellActivity], metrics: dict[int, dict],
     return out
 
 
+def plot_network(wa: WellActivity, metrics: dict, out: Path) -> Optional[Path]:
+    """Raster and population rate for the longest block, with bursts marked."""
+    if wa.pop_trace is None:
+        return None
+    plt = _setup_mpl()
+    centres, pop, dur = wa.pop_trace
+
+    fig, axes = plt.subplots(2, 1, figsize=(11, 5.4), sharex=True,
+                             gridspec_kw={"height_ratios": [2.1, 1]})
+
+    ax = axes[0]
+    if wa.raster_sample is not None:
+        t, rows = wa.raster_sample
+        ax.scatter(t, rows, s=0.09, c="#1d2939", linewidths=0, alpha=0.55)
+    for s, e in wa.pop_bursts:
+        ax.axvspan(s, e, color="#eb6834", alpha=0.16, linewidth=0)
+    ax.set_ylabel("electrode (block index)")
+    ax.set_title(f"Well {wa.meta.label or wa.well_id}"
+                 + (f" · {wa.meta.group}" if wa.meta.group else "")
+                 + "  —  spike raster with detected network bursts")
+
+    ax = axes[1]
+    ax.fill_between(centres, pop, color="#4f46e5", alpha=0.75, linewidth=0)
+    for s, e in wa.pop_bursts:
+        ax.axvspan(s, e, color="#eb6834", alpha=0.16, linewidth=0)
+    ax.set_xlabel("time (s)")
+    bin_ms = round(1000 * float(centres[1] - centres[0])) if centres.size > 1 else 20
+    ax.set_ylabel(f"spikes / {bin_ms} ms")
+    ax.set_xlim(0, dur)
+
+    bits = [f"{metrics.get('network_burst_count', 0)} bursts"]
+    if metrics.get("network_burst_rate_hz") is not None:
+        bits.append(f"{metrics['network_burst_rate_hz']:.3f} Hz")
+    if metrics.get("pct_spikes_in_bursts") is not None:
+        bits.append(f"{metrics['pct_spikes_in_bursts']:.0f}% of spikes in bursts")
+    if metrics.get("synchrony_fano") is not None:
+        bits.append(f"Fano {metrics['synchrony_fano']:.1f}")
+    fig.suptitle("   ·   ".join(bits), fontsize=9, y=0.98)
+
+    fig.tight_layout()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def plot_functional(wa: WellActivity, metrics: dict, out: Path) -> Optional[Path]:
+    """Co-activation matrix and the spatial layout of highly connected sites."""
+    corr = getattr(wa, "_corr", None)
+    eids = getattr(wa, "_corr_elec", None)
+    if corr is None or eids is None:
+        return None
+    plt = _setup_mpl()
+
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.4))
+
+    ax = axes[0]
+    finite = corr[~np.isnan(corr)]
+    lim = float(np.percentile(np.abs(finite), 99)) if finite.size else 1.0
+    im = ax.imshow(np.nan_to_num(corr), cmap="RdBu_r", vmin=-lim, vmax=lim,
+                   interpolation="nearest")
+    fig.colorbar(im, ax=ax, label="correlation", fraction=0.046, pad=0.02)
+    ax.set_title(f"Co-activation ({corr.shape[0]} busiest electrodes)")
+    ax.set_xlabel("electrode"); ax.set_ylabel("electrode")
+
+    ax = axes[1]
+    strong = metrics.get("correlation_p95", 0) or 0
+    degree = np.nansum(corr > strong, axis=1)
+    pos = {int(e): i for i, e in enumerate(wa.electrode.tolist())}
+    xs, ys, dd = [], [], []
+    for e, d in zip(eids.tolist(), degree.tolist()):
+        i = pos.get(int(e))
+        if i is not None:
+            xs.append(wa.x[i]); ys.append(wa.y[i]); dd.append(d)
+    if xs:
+        sc = ax.scatter(xs, ys, c=dd, s=12, cmap="viridis", linewidths=0)
+        fig.colorbar(sc, ax=ax, label="co-active partners", fraction=0.046, pad=0.02)
+    ax.set_aspect("equal"); ax.invert_yaxis()
+    ax.set_title("Connectivity hubs")
+    ax.set_xlabel("x (µm)"); ax.set_ylabel("y (µm)")
+
+    fig.suptitle(
+        f"mean r {metrics.get('correlation_mean', 0):.3f}   ·   "
+        f"mean degree {metrics.get('mean_degree', 0)}   ·   "
+        "within simultaneously-recorded electrodes only", fontsize=9, y=1.02)
+    fig.tight_layout()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
 def plot_groups(metrics: dict[int, dict], out: Path) -> Optional[Path]:
     """Compare experimental groups (genotype/condition) on key scan metrics.
 
@@ -624,10 +1034,13 @@ def write_per_electrode_csv(wells: dict[int, WellActivity], out: Path) -> Path:
 
 def process_file(h5_path: Path, out_dir: Path, *, figures: bool = True,
                  active_hz: float = 0.05, selection_from: Optional[Path] = None,
-                 max_spikes_per_block: int = 0) -> dict[str, Any]:
+                 max_spikes_per_block: int = 0, analyze: bool = True,
+                 functional: bool = True, max_corr_electrodes: int = 400) -> dict[str, Any]:
     """Extract, measure, plot, and write everything for a single recording."""
     LOG.info("Reading %s", h5_path)
-    wells = extract_file(h5_path, max_spikes_per_block=max_spikes_per_block)
+    wells = extract_file(h5_path, max_spikes_per_block=max_spikes_per_block,
+                         analyze=analyze, functional=functional,
+                         max_corr_electrodes=max_corr_electrodes)
     if not wells:
         LOG.warning("No readable recording blocks in %s", h5_path)
         return {}
@@ -656,10 +1069,17 @@ def process_file(h5_path: Path, out_dir: Path, *, figures: bool = True,
         m["qc"] = verdict
         m["qc_reasons"] = reasons
         metrics[wid] = m
-        LOG.info("  well %s (%s): %s active / %s scanned (%.1f%%), mean %.3f Hz — %s",
+        extra = ""
+        if m.get("network_burst_count") is not None:
+            extra += f", {m['network_burst_count']} net bursts"
+        if m.get("synchrony_fano") is not None:
+            extra += f", Fano {m['synchrony_fano']:.1f}"
+        if m.get("correlation_mean") is not None:
+            extra += f", r {m['correlation_mean']:.3f}"
+        LOG.info("  well %s (%s): %s active / %s scanned (%.1f%%), mean %.3f Hz%s — %s",
                  wa.meta.label or wid, wa.meta.group or "?",
                  f"{m['electrodes_active']:,}", f"{m['electrodes_scanned']:,}",
-                 100 * m["active_fraction"], m.get("rate_mean_hz", 0), verdict)
+                 100 * m["active_fraction"], m.get("rate_mean_hz", 0), extra, verdict)
 
     summary = {
         "source": str(h5_path),
@@ -680,6 +1100,8 @@ def process_file(h5_path: Path, out_dir: Path, *, figures: bool = True,
         for wid, wa in sorted(wells.items()):
             plot_well(wa, metrics[wid], dest / f"well{wid:03d}_activity.png",
                       selection=selection.get(wid), active_hz=active_hz)
+            plot_network(wa, metrics[wid], dest / f"well{wid:03d}_network.png")
+            plot_functional(wa, metrics[wid], dest / f"well{wid:03d}_functional.png")
         plot_plate(wells, metrics, dest / "plate_overview.png", active_hz=active_hz)
         plot_groups(metrics, dest / "group_comparison.png")
 
@@ -720,6 +1142,12 @@ def main(argv=None) -> None:
                    help="Network data.raw.h5 whose electrode selection to overlay")
     p.add_argument("--max-spikes-per-block", type=int, default=0,
                    help="Cap spikes read per block (0 = all); useful for a quick look")
+    p.add_argument("--no-temporal", action="store_true",
+                   help="Skip timing analysis (ISI, network bursts, synchrony)")
+    p.add_argument("--no-functional", action="store_true",
+                   help="Skip pairwise co-activation analysis (the slowest part)")
+    p.add_argument("--max-corr-electrodes", type=int, default=400,
+                   help="Cap electrodes in the co-activation matrix (default 400)")
     p.add_argument("--no-figures", action="store_true", help="Metrics only, no plots")
     p.add_argument("-v", "--verbose", action="store_true")
     a = p.parse_args(argv)
@@ -738,7 +1166,10 @@ def main(argv=None) -> None:
         try:
             s = process_file(t, a.output_dir, figures=not a.no_figures,
                              active_hz=a.active_hz, selection_from=a.selection_from,
-                             max_spikes_per_block=a.max_spikes_per_block)
+                             max_spikes_per_block=a.max_spikes_per_block,
+                             analyze=not a.no_temporal,
+                             functional=not (a.no_functional or a.no_temporal),
+                             max_corr_electrodes=a.max_corr_electrodes)
             if s:
                 summaries.append(s)
         except Exception as exc:  # noqa: BLE001 - one bad file must not stop the batch

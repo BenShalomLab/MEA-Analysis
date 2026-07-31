@@ -59,6 +59,59 @@ Per run, under `<output>/<chip>/<run_id>/`:
 
 Plus `activity_scan_index.json` at the top level, aggregating every run.
 
+## What the timing analysis adds
+
+The counting pass already loads `frameno` timestamps at the sampling rate, so
+temporal analysis costs no extra I/O. On a 6 GB, 6-well recording the whole
+thing takes about 8 seconds.
+
+**Per electrode** — ISI CV (≈0 metronomic, ~1 Poisson, >1 bursty), burst
+fraction (share of intervals under 100 ms), and rate stability (CV of rate
+across 10 s windows, which catches cultures drifting or dying mid-recording).
+
+**Per well** — population firing rate, network burst detection (count, rate,
+duration, spikes per burst, % of spikes in bursts, interburst interval) and a
+synchrony Fano factor. On real data this works well: one well showed 163 bursts
+at 0.54 Hz with 56% of spikes inside bursts and Fano 82.8 — clear network
+bursting, from unsorted threshold crossings.
+
+**Functional connectivity** — pairwise correlation of binned spike trains among
+the busiest electrodes, giving mean/median/p95 correlation and mean degree, plus
+a spatial map of connectivity hubs.
+
+> **Important constraint.** Electrodes in different scan blocks were never
+> recorded at the same time, so anything relational — correlation, synchrony,
+> network bursts — is computed **within a block only** and then aggregated.
+> Cross-block correlations would be meaningless and are not attempted.
+
+These are an early, sorting-free preview. The Network pipeline's burst detector
+works on sorted units and remains the authority; this is for triage and for
+covering the whole array.
+
+## Longitudinal trends
+
+`activity_trends.py` aggregates `summary.json` files across sessions:
+
+```bash
+python orchestration/activity_trends.py /data/scan_out
+python orchestration/activity_trends.py /data/scan_out --metrics rate_mean_hz synchrony_fano
+```
+
+Writes `trends.csv`, `trends_by_group.png` (group means ± SD with wells shown
+individually), `trends_by_well.png` (per-well trajectories), and
+`group_stats.json` (Mann-Whitney U per timepoint).
+
+DIV comes from plating date and session date when both are present, else from a
+`DIV<n>` path component, else session ordering.
+
+This is where scans beat Network recordings for longitudinal work: Network runs
+use a different electrode selection each session, so their rates compare
+different samples of the array. Scans measure on the same terms every time.
+
+With few wells per group the statistics are reported as
+`"too few wells per group to test"` rather than as a p-value — with n=2 there is
+nothing meaningful to say, and a number would be misleading.
+
 ## Metrics
 
 Per well: electrodes scanned and active, active fraction, array coverage,
