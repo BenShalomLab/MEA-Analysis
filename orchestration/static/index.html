@@ -302,6 +302,19 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
   background-size:400% 100%;animation:shimmer 1.4s ease infinite;border-radius:var(--r-sm);}
 @keyframes shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
 
+/* ─── Live log ──────────────────────────────────────────────────────────── */
+.livelog{background:var(--gray-950);border-radius:var(--r);border:1px solid var(--border);
+  font-family:var(--mono);font-size:12px;line-height:1.6;max-height:300px;overflow:auto;
+  padding:var(--sp-3);}
+[data-theme="dark"] .livelog{background:#0a0e14;}
+.logline{display:flex;gap:10px;white-space:pre-wrap;word-break:break-word;}
+.logtime{color:#667085;flex:none;}
+.loglvl{flex:none;width:44px;font-weight:600;}
+.lvl-INFO{color:#53b1fd;} .lvl-WARNING{color:#fdb022;}
+.lvl-ERROR{color:#f97066;} .lvl-DEBUG{color:#667085;} .lvl-CRITICAL{color:#f97066;}
+.logmsg{color:#e4e7ec;flex:1;min-width:0;}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--success);display:inline-block;}
+
 .mono{font-family:var(--mono);font-size:12.5px;}
 .tnum{font-variant-numeric:tabular-nums;}
 .divider{height:1px;background:var(--border);margin:var(--sp-4) 0;}
@@ -552,6 +565,37 @@ function Browser({initial,onPick,onClose}){
   );
 }
 
+/* ─── Live activity log ───────────────────────────────────────────────── */
+function LiveLog({lines,follow,onToggleFollow}){
+  const ref=useRef(null);
+  useEffect(()=>{ if(follow&&ref.current) ref.current.scrollTop=ref.current.scrollHeight; },[lines,follow]);
+  return (
+    <>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+        <span className="badge badge-neutral"><span className="live-dot"/>Live</span>
+        <span className="hint">{lines.length} line{lines.length===1?"":"s"}</span>
+        <div style={{flex:1}}/>
+        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,cursor:"pointer",color:"var(--text-2)"}}>
+          <input type="checkbox" checked={follow} onChange={e=>onToggleFollow(e.target.checked)}
+                 style={{accentColor:"var(--accent)"}}/>
+          Auto-scroll
+        </label>
+      </div>
+      <div className="livelog" ref={ref}>
+        {lines.length===0
+          ? <div style={{color:"#667085"}}>Waiting for activity…</div>
+          : lines.map(l=>(
+              <div className="logline" key={l.seq}>
+                <span className="logtime">{l.time}</span>
+                <span className={"loglvl lvl-"+l.level}>{l.level}</span>
+                <span className="logmsg">{l.message}</span>
+              </div>
+            ))}
+      </div>
+    </>
+  );
+}
+
 /* ─── Run row ─────────────────────────────────────────────────────────── */
 function RunRow({run,onLog,onReset}){
   const meta = STATUS[run.status] || STATUS.waiting;
@@ -628,7 +672,10 @@ function App(){
   const [theme,setTheme]=useState(()=>localStorage.getItem("mea-theme")||"auto");
   const [toasts,setToasts]=useState([]);
   const [busy,setBusy]=useState(false);
+  const [activity,setActivity]=useState([]);
+  const [follow,setFollow]=useState(true);
   const tid=useRef(0);
+  const lastSeq=useRef(0);
 
   const toast=useCallback((title,msg,kind="info")=>{
     const id=++tid.current;
@@ -651,8 +698,29 @@ function App(){
 
   const refresh=useCallback(async()=>{
     try{ setStatus(await api("/api/status")); }catch(e){}
+    try{
+      const d=await api(`/api/logs?since=${lastSeq.current}`);
+      if(d.lines?.length){
+        lastSeq.current=d.last_seq;
+        setActivity(a=>[...a,...d.lines].slice(-400));
+      }
+    }catch(e){}
   },[]);
-  useEffect(()=>{ refresh(); const t=setInterval(refresh,3000); return ()=>clearInterval(t); },[refresh]);
+  useEffect(()=>{ refresh(); const t=setInterval(refresh,2000); return ()=>clearInterval(t); },[refresh]);
+
+  // Keep an open run log fresh while that run is still executing.
+  useEffect(()=>{
+    if(!log?.path) return;
+    const active=(status?.runs||[]).some(r=>r.log===log.path&&(r.status==="running"||r.status==="dispatched"));
+    if(!active) return;
+    const t=setInterval(async()=>{
+      try{
+        const d=await api(`/api/runs/log?path=${encodeURIComponent(log.path)}`);
+        setLog(l=>l&&l.path===log.path?{...l,lines:d.lines}:l);
+      }catch(e){}
+    },3000);
+    return ()=>clearInterval(t);
+  },[log?.path,status]);
 
   const payload=useCallback(()=>({
     watch_dir:cfg.watch_dir, driver_options:cfg.driver_options, h5_glob:cfg.h5_glob,
@@ -716,7 +784,7 @@ function App(){
   const onReset = r=>act(async()=>{await api("/api/runs/reset",{method:"POST",body:JSON.stringify({path:r.path})});},
                           "Run reset",`${r.run} will be reprocessed.`);
   const onLog   = r=>act(async()=>{const d=await api(`/api/runs/log?path=${encodeURIComponent(r.log)}`);
-                          setLog({run:r.run,lines:d.lines});});
+                          setLog({run:r.run,lines:d.lines,path:r.log});});
 
   const q=query.trim().toLowerCase();
   const groups = schema.groups.map(g=>({
@@ -816,11 +884,32 @@ function App(){
           </div>
         </div>
 
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <div className="card-title"><IconTerminal size={15}/> Activity</div>
+              <div className="card-desc">
+                Live watcher output — detection, settle windows, and dispatches
+              </div>
+            </div>
+            {activity.length>0 && (
+              <button className="btn btn-sm btn-ghost" onClick={()=>setActivity([])}>Clear</button>
+            )}
+          </div>
+          <div className="card-body">
+            <LiveLog lines={activity} follow={follow} onToggleFollow={setFollow}/>
+          </div>
+        </div>
+
         {log && (
           <div className="card">
             <div className="card-head">
-              <div><div className="card-title"><IconTerminal size={15}/> Log · {log.run}</div>
-                   <div className="card-desc">Last {log.lines.length} lines from the pipeline</div></div>
+              <div><div className="card-title"><IconTerminal size={15}/> Pipeline log · {log.run}</div>
+                   <div className="card-desc">
+                     Last {log.lines.length} lines
+                     {(status?.runs||[]).some(r=>r.log===log.path&&(r.status==="running"||r.status==="dispatched"))
+                       && " · following live"}
+                   </div></div>
               <button className="btn btn-sm btn-ghost btn-icon" onClick={()=>setLog(null)} aria-label="Close log">
                 <IconX size={14}/></button>
             </div>

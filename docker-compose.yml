@@ -66,14 +66,22 @@ services:
     # PyTorch dataloaders need more than Docker's default 64 MB of /dev/shm.
     shm_size: "8gb"
 
-    # GPU access (Docker Compose v2 + NVIDIA Container Toolkit).
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # GPU access.
+    #
+    # No `deploy.resources.devices` block here on purpose. That syntax needs
+    # Docker's CDI device-driver API, which many hosts with a working NVIDIA
+    # Container Toolkit do not expose — they fail with:
+    #     could not select device driver "nvidia" with capabilities: [[gpu]]
+    #
+    # Instead we rely on the NVIDIA runtime plus NVIDIA_VISIBLE_DEVICES=all
+    # (set above), which works wherever the toolkit is installed. Verify with:
+    #     docker info | grep -i runtime
+    #
+    # If "Default Runtime" is NOT nvidia, uncomment the line below:
+    # runtime: nvidia
+    #
+    # On hosts that do support CDI, you can instead layer on:
+    #     docker compose -f docker-compose.yml -f docker-compose.gpu-cdi.yml up -d
 
     # Default is the UI. For a headless watcher with no browser, use:
     #   docker compose run --rm mea-orchestration watch

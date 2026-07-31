@@ -26,6 +26,8 @@ import argparse
 import logging
 import os
 import sys
+from collections import deque
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -40,6 +42,38 @@ from watcher import JobConfig, Watcher, DEFAULT_WORK_DIR, find_recording, has_fi
 LOG = logging.getLogger("mea.api")
 HERE = Path(__file__).resolve().parent
 FRONTEND = HERE / "static" / "index.html"
+
+
+class RingLogHandler(logging.Handler):
+    """Keeps recent log records in memory so the UI can stream watcher activity.
+
+    Each record gets a monotonic sequence number; the client polls with the last
+    sequence it saw and receives only what is new.
+    """
+
+    def __init__(self, maxlen: int = 2000):
+        super().__init__()
+        self.records: deque = deque(maxlen=maxlen)
+        self.seq = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.seq += 1
+            self.records.append({
+                "seq": self.seq,
+                "time": datetime.fromtimestamp(record.created).strftime("%H:%M:%S"),
+                "level": record.levelname,
+                "logger": record.name,
+                "message": record.getMessage(),
+            })
+        except Exception:  # noqa: BLE001 - logging must never raise
+            pass
+
+    def since(self, seq: int, limit: int = 500) -> list[dict]:
+        return [r for r in self.records if r["seq"] > seq][-limit:]
+
+
+LOG_RING = RingLogHandler()
 
 app = FastAPI(title="MEA Pipeline Control", version="1.0")
 
@@ -270,7 +304,13 @@ def api_log(path: str, tail: int = 400):
     if not p.exists():
         raise HTTPException(404, "Log not found")
     lines = p.read_text(errors="ignore").splitlines()
-    return {"path": str(p), "lines": lines[-tail:]}
+    return {"path": str(p), "lines": lines[-tail:], "size": p.stat().st_size}
+
+
+@app.get("/api/logs")
+def api_logs(since: int = 0, limit: int = 500):
+    """Live watcher activity — polled by the UI with the last seq it received."""
+    return {"lines": LOG_RING.since(since, limit), "last_seq": LOG_RING.seq}
 
 
 # --------------------------------------------------------------------------- #
@@ -298,6 +338,11 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
+
+    # Capture watcher + API activity for the UI's live log panel.
+    LOG_RING.setLevel(logging.INFO)
+    for name in ("mea.watcher", "mea.api"):
+        logging.getLogger(name).addHandler(LOG_RING)
 
     if not FRONTEND.exists():
         raise SystemExit(f"Frontend missing: {FRONTEND}\n"
