@@ -63,6 +63,12 @@ LOG = logging.getLogger("mea.watcher")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DRIVER = REPO_ROOT / "run_pipeline_driver.py"
+ACTIVITY_SCRIPT = Path(__file__).resolve().parent / "activity_scan.py"
+
+# The two independent analyses.
+JOB_NETWORK = "network"
+JOB_ACTIVITY = "activity"
+JOB_LABELS = {JOB_NETWORK: "Network", JOB_ACTIVITY: "Activity scan"}
 # State/logs live outside the watched (read-only) data server and outside the repo.
 DEFAULT_WORK_DIR = Path(os.environ.get("MEA_WATCHER_HOME", Path.home() / ".mea-watcher"))
 
@@ -77,11 +83,27 @@ class JobConfig:
     watch_dir: str = ""                     # input path on the data server (read-only)
     driver_options: dict = field(default_factory=default_options)  # all driver flags
 
+    # --- Analyses -----------------------------------------------------------
+    # The two analyses are independent jobs: they are enabled separately, run as
+    # separate processes, write to separate outputs, and are tracked separately.
+    #
+    # 1. Network  — run_pipeline_driver.py (spike sorting; needs a GPU)
+    # 2. Activity — activity_scan.py (whole-array maps; CPU only, seconds)
+    run_network: bool = True
+    run_activity: bool = False
+
     # Detection tuning
     h5_glob: str = "data.raw.h5"
     # Only recordings under this path component are processed, matching the
     # driver's own filter. "Network" excludes ActivityScan. Blank = no filter.
     assay_subfolder: str = "Network"
+    # Assay folder holding the activity scans.
+    activity_subfolder: str = "ActivityScan"
+    # Where activity-scan results go. Blank -> <output_dir>/ActivityScan.
+    activity_output_dir: str = ""
+    activity_active_hz: float = 0.05
+    activity_figures: bool = True
+
     settle_seconds: int = 600
     poll_seconds: int = 30
     require_finished_marker: bool = True
@@ -95,6 +117,25 @@ class JobConfig:
     @property
     def output_dir(self) -> Optional[str]:
         return self.driver_options.get("output_dir")
+
+    @property
+    def activity_out(self) -> Optional[str]:
+        """Resolved output directory for activity-scan results."""
+        if self.activity_output_dir:
+            return self.activity_output_dir
+        base = self.output_dir
+        return str(Path(base) / "ActivityScan") if base else None
+
+    def enabled_jobs(self) -> list[str]:
+        jobs = []
+        if self.run_network:
+            jobs.append(JOB_NETWORK)
+        if self.run_activity:
+            jobs.append(JOB_ACTIVITY)
+        return jobs
+
+    def subfolder_for(self, job: str) -> str:
+        return self.assay_subfolder if job == JOB_NETWORK else self.activity_subfolder
 
     @classmethod
     def load(cls, path: Path) -> "JobConfig":
@@ -118,14 +159,24 @@ class JobConfig:
             errs.append("Input path is required.")
         elif not Path(self.watch_dir).is_dir():
             errs.append(f"Input path does not exist or is not a directory: {self.watch_dir}")
-        if not Path(self.driver).exists():
+        if not self.enabled_jobs():
+            errs.append("Enable at least one analysis (Network or Activity scan).")
+        if self.run_network and not Path(self.driver).exists():
             errs.append(f"run_pipeline_driver.py not found at: {self.driver}")
+        if self.run_activity and not ACTIVITY_SCRIPT.exists():
+            errs.append(f"activity_scan.py not found at: {ACTIVITY_SCRIPT}")
         out = self.output_dir
         if out:
             try:
                 Path(out).mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 errs.append(f"Output path is not writable: {out} ({exc})")
+        act = self.activity_out if self.run_activity else None
+        if act:
+            try:
+                Path(act).mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                errs.append(f"Activity scan output path is not writable: {act} ({exc})")
         if self.settle_seconds < 1:
             errs.append("settle_seconds must be >= 1")
         if self.poll_seconds < 1:
@@ -329,31 +380,55 @@ class Watcher:
             self._stop.wait(self.cfg.poll_seconds)
 
     # -- scanning ----------------------------------------------------------- #
+    def jobs_for(self, run_dir: Path) -> list[str]:
+        """Which enabled analyses actually have data in this folder."""
+        jobs = []
+        for job in self.cfg.enabled_jobs():
+            if find_recordings(run_dir, self.cfg.h5_glob, self.cfg.subfolder_for(job)):
+                jobs.append(job)
+        return jobs
+
     def candidate_runs(self) -> list[Path]:
         root = Path(self.cfg.watch_dir)
         if not root.is_dir():
             return []
         out = []
         for child in sorted(root.iterdir()):
-            if child.is_dir() and find_recording(child, self.cfg.h5_glob, self.cfg.assay_subfolder):
+            if child.is_dir() and self.jobs_for(child):
                 out.append(child)
         return out
 
+    @staticmethod
+    def state_key(run_dir: Path, job: str) -> str:
+        """Each analysis is tracked independently for the same folder."""
+        return f"{run_dir}::{job}"
+
     def scan_once(self) -> None:
         for run_dir in self.candidate_runs():
-            key = str(run_dir.resolve())
-            if self.state.is_claimed(key):
+            resolved = run_dir.resolve()
+            pending = [j for j in self.jobs_for(run_dir)
+                       if not self.state.is_claimed(self.state_key(resolved, j))]
+            if not pending:
                 continue
-            ready, detail = self._check_ready(run_dir, key)
-            if ready:
-                self.dispatch(run_dir, detail=detail)
-            else:
-                self.state.update(key, status="waiting", detail=detail, last_seen=_now())
+
+            # Completion is a property of the folder, so it is checked once and
+            # shared by both analyses.
+            ready, detail = self._check_ready(run_dir, str(resolved))
+            for job in pending:
+                key = self.state_key(resolved, job)
+                if ready:
+                    self.dispatch(run_dir, job, detail=detail)
+                else:
+                    self.state.update(key, status="waiting", detail=detail,
+                                      job=job, run=run_dir.name, last_seen=_now())
 
     def _check_ready(self, run_dir: Path, key: str) -> tuple[bool, str]:
         """Stateless-across-polls completion check (never blocks)."""
-        if self.cfg.require_finished_marker and not has_finished_marker(
-                run_dir, self.cfg.h5_glob, self.cfg.assay_subfolder):
+        # Check markers across every assay folder we are going to analyze, so a
+        # still-recording activity scan holds back its own job too.
+        subfolders = [self.cfg.subfolder_for(j) for j in self.jobs_for(run_dir)]
+        if self.cfg.require_finished_marker and not all(
+                has_finished_marker(run_dir, self.cfg.h5_glob, sf) for sf in subfolders or [None]):
             self._prints.pop(key, None)
             return False, "waiting for MaxWell 'finished' marker"
 
@@ -385,8 +460,14 @@ class Watcher:
         return True, f"complete ({current[0]} files, {gb:.1f} GB, stable {int(elapsed)}s)"
 
     # -- dispatch ----------------------------------------------------------- #
-    def build_command(self, run_dir: Path) -> list[str]:
-        """Build the driver invocation for a completed run folder.
+    def build_command(self, run_dir: Path, job: str = JOB_NETWORK) -> list[str]:
+        """Build the command for one analysis of a completed run folder."""
+        if job == JOB_ACTIVITY:
+            return self._build_activity_command(run_dir)
+        return self._build_network_command(run_dir)
+
+    def _build_network_command(self, run_dir: Path) -> list[str]:
+        """Spike-sorting pipeline (``run_pipeline_driver.py``).
 
         Prefer **directory mode**: the driver then discovers every qualifying
         recording (and every recording x well inside each file) itself, and
@@ -402,34 +483,63 @@ class Watcher:
         else:
             recording = find_recording(run_dir, self.cfg.h5_glob, self.cfg.assay_subfolder)
             target = str(recording) if recording else str(run_dir)
-        return [self.cfg.python, str(self.cfg.driver), target, *build_driver_args(self.cfg.driver_options)]
+        return [self.cfg.python, str(self.cfg.driver), target,
+                *build_driver_args(self.cfg.driver_options)]
 
-    def dispatch(self, run_dir: Path, detail: str = "") -> None:
-        key = str(run_dir.resolve())
-        cmd = self.build_command(run_dir)
+    def _build_activity_command(self, run_dir: Path) -> list[str]:
+        """Whole-array activity extraction (``activity_scan.py``).
+
+        Deliberately independent of the spike-sorting pipeline: its own script,
+        its own output directory, no GPU, and no shared state.
+        """
+        cmd = [self.cfg.python, str(ACTIVITY_SCRIPT), str(run_dir),
+               "--assay-subfolder", self.cfg.activity_subfolder,
+               "--active-hz", str(self.cfg.activity_active_hz)]
+        out = self.cfg.activity_out
+        if out:
+            cmd += ["--output-dir", out]
+        if not self.cfg.activity_figures:
+            cmd.append("--no-figures")
+
+        # If a Network recording exists alongside, overlay which electrodes it
+        # kept — that is the selection-bias view, and it is free to compute.
+        net = find_recordings(run_dir, self.cfg.h5_glob, self.cfg.assay_subfolder)
+        if net:
+            cmd += ["--selection-from", str(net[0])]
+        return cmd
+
+    def dispatch(self, run_dir: Path, job: str = JOB_NETWORK, detail: str = "") -> None:
+        key = self.state_key(run_dir.resolve(), job)
+        label = JOB_LABELS.get(job, job)
+        cmd = self.build_command(run_dir, job)
         printable = " ".join(shlex.quote(c) for c in cmd)
-        LOG.info("Dispatching %s:\n    %s", run_dir.name, printable)
+        LOG.info("Dispatching %s [%s]:\n    %s", run_dir.name, label, printable)
+
+        common = {"job": job, "job_label": label, "run": run_dir.name,
+                  "command": printable, "detail": detail}
 
         if self.cfg.dry_run:
-            self.state.update(key, status="detected", detected_at=_now(),
-                              command=printable, detail=f"dry run — {detail}" if detail else "dry run")
-            self.on_event("detected", {"run": run_dir.name, "command": printable})
+            self.state.update(key, status="detected", detected_at=_now(), **{
+                **common, "detail": f"dry run — {detail}" if detail else "dry run"})
+            self.on_event("detected", {"run": run_dir.name, "job": job, "command": printable})
             return
 
-        log_path = self.log_dir / f"{run_dir.name}_{datetime.now():%Y%m%d_%H%M%S}.log"
+        log_path = self.log_dir / f"{run_dir.name}_{job}_{datetime.now():%Y%m%d_%H%M%S}.log"
         self.state.update(key, status="dispatched", dispatched_at=_now(),
-                          command=printable, log=str(log_path), detail=detail)
-        self.on_event("dispatched", {"run": run_dir.name, "log": str(log_path)})
+                          log=str(log_path), **common)
+        self.on_event("dispatched", {"run": run_dir.name, "job": job, "log": str(log_path)})
 
         threading.Thread(
-            target=self._run_pipeline, args=(run_dir, key, cmd, log_path),
-            name=f"mea-run-{run_dir.name}", daemon=True,
+            target=self._run_job, args=(run_dir, job, key, cmd, log_path),
+            name=f"mea-{job}-{run_dir.name}", daemon=True,
         ).start()
 
-    def _run_pipeline(self, run_dir: Path, key: str, cmd: list[str], log_path: Path) -> None:
+    def _run_job(self, run_dir: Path, job: str, key: str,
+                 cmd: list[str], log_path: Path) -> None:
+        label = JOB_LABELS.get(job, job)
         started = time.time()
         self.state.update(key, status="running", started_at=_now())
-        self.on_event("running", {"run": run_dir.name})
+        self.on_event("running", {"run": run_dir.name, "job": job})
         try:
             with open(log_path, "w") as fh:
                 proc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, check=False)
@@ -442,28 +552,44 @@ class Watcher:
                 duration_s=round(time.time() - started, 1),
             )
             (LOG.info if ok else LOG.error)(
-                "%s finished with code %s (log: %s)", run_dir.name, proc.returncode, log_path)
+                "%s [%s] finished with code %s (log: %s)",
+                run_dir.name, label, proc.returncode, log_path)
             self.on_event("done" if ok else "failed",
-                          {"run": run_dir.name, "returncode": proc.returncode})
+                          {"run": run_dir.name, "job": job, "returncode": proc.returncode})
         except Exception as exc:  # noqa: BLE001
             self.state.update(key, status="failed", completed_at=_now(), error=str(exc))
-            LOG.exception("%s: dispatch raised", run_dir.name)
-            self.on_event("failed", {"run": run_dir.name, "error": str(exc)})
+            LOG.exception("%s [%s]: dispatch raised", run_dir.name, label)
+            self.on_event("failed", {"run": run_dir.name, "job": job, "error": str(exc)})
 
     # -- status for the UI --------------------------------------------------- #
     def snapshot(self) -> dict[str, Any]:
         runs = []
         for key, entry in self.state.all().items():
-            runs.append({"path": key, "run": entry.get("run", Path(key).name), **entry})
-        runs.sort(key=lambda r: r.get("run", ""))
+            folder = key.split("::")[0]
+            job = entry.get("job", JOB_NETWORK)
+            runs.append({
+                "path": key,
+                "folder": folder,
+                "run": entry.get("run", Path(folder).name),
+                "job": job,
+                "job_label": entry.get("job_label", JOB_LABELS.get(job, job)),
+                **entry,
+            })
+        runs.sort(key=lambda r: (r.get("run", ""), r.get("job", "")))
         counts: dict[str, int] = {}
+        by_job: dict[str, dict[str, int]] = {}
         for r in runs:
-            counts[r.get("status", "unknown")] = counts.get(r.get("status", "unknown"), 0) + 1
+            st = r.get("status", "unknown")
+            counts[st] = counts.get(st, 0) + 1
+            by_job.setdefault(r["job"], {})[st] = by_job.setdefault(r["job"], {}).get(st, 0) + 1
         return {
             "running": self.is_running,
             "watch_dir": self.cfg.watch_dir,
             "output_dir": self.cfg.output_dir,
+            "activity_output_dir": self.cfg.activity_out,
+            "enabled_jobs": self.cfg.enabled_jobs(),
             "counts": counts,
+            "counts_by_job": by_job,
             "runs": runs,
         }
 

@@ -608,7 +608,14 @@ function RunRow({run,onLog,onReset}){
 
   return (
     <div className="run">
-      <div className="run-id">{run.run}</div>
+      <div style={{minWidth:150,flex:"none"}}>
+        <div className="run-id" style={{minWidth:0}}>{run.run}</div>
+        <div style={{fontSize:11,color:"var(--text-3)",display:"flex",alignItems:"center",gap:4,marginTop:1}}>
+          <span style={{width:5,height:5,borderRadius:"50%",flex:"none",
+            background: run.job==="activity" ? "#1baf7a" : "#4f46e5"}}/>
+          {run.job_label || (run.job==="activity" ? "Activity scan" : "Network")}
+        </div>
+      </div>
 
       <div className="run-mid">
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
@@ -726,6 +733,12 @@ function App(){
 
   const payload=useCallback(()=>({
     watch_dir:cfg.watch_dir, driver_options:cfg.driver_options, h5_glob:cfg.h5_glob,
+    assay_subfolder:cfg.assay_subfolder,
+    run_network:!!cfg.run_network, run_activity:!!cfg.run_activity,
+    activity_subfolder:cfg.activity_subfolder,
+    activity_output_dir:cfg.activity_output_dir||"",
+    activity_active_hz:Number(cfg.activity_active_hz),
+    activity_figures:!!cfg.activity_figures,
     settle_seconds:Number(cfg.settle_seconds), poll_seconds:Number(cfg.poll_seconds),
     require_finished_marker:!!cfg.require_finished_marker, dry_run:!!cfg.dry_run,
   }),[cfg]);
@@ -955,6 +968,64 @@ function App(){
                   {browsing==="out" && <Browser initial={cfg.driver_options.output_dir||""} onClose={()=>setBrowsing(null)}
                                                 onPick={p=>setOpt("output_dir",p)}/>}
                 </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-head"><div>
+                <div className="card-title">Analyses</div>
+                <div className="card-desc">Run independently, tracked separately, separate outputs</div>
+              </div></div>
+              <div className="card-body">
+                <Switch id="net" checked={cfg.run_network} disabled={running}
+                        onChange={v=>setTop("run_network",v)}
+                        label="Network — spike sorting"
+                        hint="run_pipeline_driver.py: Kilosort4, curation, burst analysis. Needs a GPU; hours per chip."/>
+                <Switch id="act" checked={cfg.run_activity} disabled={running}
+                        onChange={v=>setTop("run_activity",v)}
+                        label="Activity scan — whole-array maps"
+                        hint="activity_scan.py: electrode activity maps, QC metrics, figures. CPU only; seconds per chip."/>
+
+                {cfg.run_activity && (
+                  <>
+                    <div className="divider"/>
+                    <div className="field">
+                      <label className="label" htmlFor="actout">Activity scan output</label>
+                      <input id="actout" className="input input-mono" disabled={running}
+                             placeholder="(defaults to <output folder>/ActivityScan)"
+                             value={cfg.activity_output_dir??""}
+                             onChange={e=>setTop("activity_output_dir",e.target.value)}/>
+                      <span className="hint">Kept separate from the spike-sorting output.</span>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"var(--sp-4)",marginTop:"var(--sp-3)"}}>
+                      <div className="field">
+                        <label className="label" htmlFor="acthz">Active threshold (Hz)</label>
+                        <input id="acthz" className="input tnum" type="number" step="0.01" min="0"
+                               disabled={running} value={cfg.activity_active_hz}
+                               onChange={e=>setTop("activity_active_hz",e.target.value)}/>
+                        <span className="hint">Rate above which an electrode counts as active.</span>
+                      </div>
+                      <div className="field">
+                        <label className="label" htmlFor="actsub">Assay folder</label>
+                        <input id="actsub" className="input input-mono" disabled={running}
+                               value={cfg.activity_subfolder??""}
+                               onChange={e=>setTop("activity_subfolder",e.target.value)}/>
+                        <span className="hint">Folder holding the scans.</span>
+                      </div>
+                    </div>
+                    <Switch id="actfig" checked={cfg.activity_figures} disabled={running}
+                            onChange={v=>setTop("activity_figures",v)}
+                            label="Generate figures"
+                            hint="Activity and amplitude maps, plate overview, group comparison."/>
+                  </>
+                )}
+
+                {!cfg.run_network && !cfg.run_activity && (
+                  <div className="callout callout-danger" style={{marginTop:"var(--sp-3)"}}>
+                    <span className="callout-icon"><IconAlert size={15}/></span>
+                    <div>Enable at least one analysis, or nothing will run.</div>
+                  </div>
+                )}
               </div>
             </div>
 

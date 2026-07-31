@@ -23,8 +23,30 @@ A control UI + watcher that automates step 1 of the MEA pipeline:
 |---|---|
 | `driver_schema.py` | Single source of truth for all 39 `run_pipeline_driver.py` options. Drives both the UI form and command construction, so they cannot drift. |
 | `watcher.py` | Completion detection + dispatch. Usable standalone from the CLI. |
+| `activity_scan.py` | Whole-array ActivityScan extraction — see [ACTIVITY_SCAN.md](ACTIVITY_SCAN.md). |
 | `api.py` | FastAPI backend serving the UI and exposing the watcher as REST. |
 | `static/index.html` | Single-file React frontend (CDN, no build step). |
+
+## The two analyses
+
+A completed folder can trigger either or both, chosen in the UI. They are kept
+deliberately separate: different scripts, different outputs, independent status,
+and one can fail without affecting the other.
+
+| | Network | Activity scan |
+|---|---|---|
+| Script | `run_pipeline_driver.py` | `orchestration/activity_scan.py` |
+| Reads | `<chip>/Network/<run>/data.raw.h5` | `<chip>/ActivityScan/<run>/data.raw.h5` |
+| Does | Kilosort4 sorting, curation, bursts | Whole-array activity maps + QC |
+| Needs | GPU; hours per chip | CPU only; seconds per chip |
+| Output | `--output-dir` | `<output>/ActivityScan` (or its own path) |
+
+Each folder therefore appears as **one row per enabled analysis** in the Runs
+table, labelled Network or Activity scan, with its own status, log, and reset.
+
+When both are enabled, the activity job automatically passes
+`--selection-from` pointing at the Network recording, so its maps show which
+electrodes were actually kept.
 
 ## Quick start
 

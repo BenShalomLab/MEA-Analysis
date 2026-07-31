@@ -117,6 +117,12 @@ class ConfigPayload(BaseModel):
     driver_options: dict[str, Any] = {}
     h5_glob: str = "data.raw.h5"
     assay_subfolder: str = "Network"
+    run_network: bool = True
+    run_activity: bool = False
+    activity_subfolder: str = "ActivityScan"
+    activity_output_dir: str = ""
+    activity_active_hz: float = 0.05
+    activity_figures: bool = True
     settle_seconds: int = 600
     poll_seconds: int = 30
     require_finished_marker: bool = True
@@ -173,6 +179,12 @@ def api_get_config():
         "driver_options": cfg.driver_options,
         "h5_glob": cfg.h5_glob,
         "assay_subfolder": cfg.assay_subfolder,
+        "run_network": cfg.run_network,
+        "run_activity": cfg.run_activity,
+        "activity_subfolder": cfg.activity_subfolder,
+        "activity_output_dir": cfg.activity_output_dir,
+        "activity_active_hz": cfg.activity_active_hz,
+        "activity_figures": cfg.activity_figures,
         "settle_seconds": cfg.settle_seconds,
         "poll_seconds": cfg.poll_seconds,
         "require_finished_marker": cfg.require_finished_marker,
@@ -199,6 +211,12 @@ def api_set_config(payload: ConfigPayload):
         driver_options=opts,
         h5_glob=payload.h5_glob,
         assay_subfolder=payload.assay_subfolder,
+        run_network=payload.run_network,
+        run_activity=payload.run_activity,
+        activity_subfolder=payload.activity_subfolder,
+        activity_output_dir=payload.activity_output_dir,
+        activity_active_hz=payload.activity_active_hz,
+        activity_figures=payload.activity_figures,
         settle_seconds=payload.settle_seconds,
         poll_seconds=payload.poll_seconds,
         require_finished_marker=payload.require_finished_marker,
