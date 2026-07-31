@@ -212,7 +212,21 @@ def api_set_config(payload: ConfigPayload):
     cfg.save(CONFIG_PATH)
     global _watcher
     _watcher = Watcher(cfg, on_event=_record_event)
-    return {"ok": True, "saved_to": str(CONFIG_PATH)}
+
+    # "detected" is only ever produced by a dry run, and it counts as claimed —
+    # so a run marked that way would never be analyzed for real. Clear those
+    # entries when leaving dry-run mode, otherwise turning the switch off
+    # appears to do nothing.
+    cleared = 0
+    if not cfg.dry_run:
+        for key, entry in list(_watcher.state.all().items()):
+            if entry.get("status") == "detected":
+                _watcher.state.reset(key)
+                cleared += 1
+        if cleared:
+            LOG.info("Dry run disabled — cleared %d detected run(s) for real analysis", cleared)
+
+    return {"ok": True, "saved_to": str(CONFIG_PATH), "cleared_detected": cleared}
 
 
 # --------------------------------------------------------------------------- #

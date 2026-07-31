@@ -403,14 +403,16 @@ function fmtDur(s){
 }
 
 /* ─── Primitives ──────────────────────────────────────────────────────── */
-function Switch({checked,onChange,label,hint,id}){
+function Switch({checked,onChange,label,hint,id,disabled}){
   return (
-    <div className="switch-row">
-      <button type="button" role="switch" aria-checked={!!checked} id={id}
-              className="switch" data-on={!!checked} onClick={()=>onChange(!checked)}>
+    <div className="switch-row" style={disabled?{opacity:.55}:undefined}>
+      <button type="button" role="switch" aria-checked={!!checked} id={id} disabled={disabled}
+              className="switch" data-on={!!checked}
+              style={disabled?{cursor:"not-allowed"}:undefined}
+              onClick={()=>!disabled&&onChange(!checked)}>
         <span className="switch-knob"/>
       </button>
-      <label htmlFor={id} style={{cursor:"pointer"}}>
+      <label htmlFor={id} style={{cursor:disabled?"not-allowed":"pointer"}}>
         <div className="switch-label">{label}</div>
         {hint && <div className="switch-hint">{hint}</div>}
       </label>
@@ -982,13 +984,21 @@ function App(){
                          onChange={e=>setTop("h5_glob",e.target.value)}/>
                 </div>
                 <div className="divider"/>
-                <Switch id="marker" checked={cfg.require_finished_marker}
+                <Switch id="marker" checked={cfg.require_finished_marker} disabled={running}
                         onChange={v=>setTop("require_finished_marker",v)}
                         label="Require MaxWell completion marker"
                         hint="Also wait for finished= in mxassay.metadata before analyzing."/>
-                <Switch id="dry" checked={cfg.dry_run} onChange={v=>setTop("dry_run",v)}
+                <Switch id="dry" checked={cfg.dry_run} onChange={v=>setTop("dry_run",v)} disabled={running}
                         label="Dry run"
                         hint="Detect completed runs and record the command, but never launch the pipeline."/>
+                {cfg.dry_run && (
+                  <div className="callout callout-warn" style={{marginTop:"var(--sp-3)"}}>
+                    <span className="callout-icon"><IconInfo size={15}/></span>
+                    <div>Dry run is on — runs will stop at <b>Detected</b> and nothing will be
+                    analyzed. Turn it off and save to run for real; already-detected runs are
+                    cleared automatically.</div>
+                  </div>
+                )}
               </div>
               <div className="card-foot">
                 <button className="btn" onClick={save} disabled={running||busy}>Save configuration</button>
