@@ -208,11 +208,8 @@ def folder_fingerprint(folder: Path) -> tuple[int, int, float]:
     return (count, total, newest)
 
 
-def has_finished_marker(run_dir: Path) -> bool:
-    """MaxWell writes ``finished=<timestamp>`` under ``[runtime]`` only on completion."""
-    meta = run_dir / "mxassay.metadata"
-    if not meta.exists():
-        return False
+def _metadata_says_finished(meta: Path) -> bool:
+    """True if this mxassay.metadata records ``finished=`` under ``[runtime]``."""
     try:
         text = meta.read_text(errors="ignore")
     except OSError:
@@ -224,6 +221,33 @@ def has_finished_marker(run_dir: Path) -> bool:
             in_runtime = line.lower() == "[runtime]"
         elif in_runtime and line.startswith("finished=") and len(line) > len("finished="):
             return True
+    return False
+
+
+def has_finished_marker(run_dir: Path, h5_glob: str = "data.raw.h5",
+                        assay_subfolder: str = "Network") -> bool:
+    """Whether every recording in this folder has been marked complete by MaxWell.
+
+    MaxWell writes ``mxassay.metadata`` **next to each recording**, so in a
+    nested layout (``<chip>/Network/<run_id>/data.raw.h5``) the marker lives in
+    the run folder, not at the top of the dispatched folder. Check the sibling
+    metadata of every qualifying recording, and require all of them.
+
+    Falls back to a metadata file at the folder root for flat layouts.
+    """
+    recordings = find_recordings(run_dir, h5_glob, assay_subfolder)
+    if not recordings:
+        recordings = [p for p in run_dir.rglob(h5_glob)]
+
+    metas = [r.parent / "mxassay.metadata" for r in recordings]
+    metas = [m for m in metas if m.exists()]
+
+    if metas:
+        return all(_metadata_says_finished(m) for m in metas)
+
+    root_meta = run_dir / "mxassay.metadata"
+    if root_meta.exists():
+        return _metadata_says_finished(root_meta)
     return False
 
 
@@ -328,7 +352,8 @@ class Watcher:
 
     def _check_ready(self, run_dir: Path, key: str) -> tuple[bool, str]:
         """Stateless-across-polls completion check (never blocks)."""
-        if self.cfg.require_finished_marker and not has_finished_marker(run_dir):
+        if self.cfg.require_finished_marker and not has_finished_marker(
+                run_dir, self.cfg.h5_glob, self.cfg.assay_subfolder):
             self._prints.pop(key, None)
             return False, "waiting for MaxWell 'finished' marker"
 

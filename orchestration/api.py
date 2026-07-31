@@ -259,7 +259,8 @@ def api_browse(payload: BrowsePayload):
             "path": str(c),
             "is_run": rec is not None,
             "recordings": len(recs) or (1 if rec else 0),
-            "finished": has_finished_marker(c) if rec is not None else None,
+            "finished": (has_finished_marker(c, cfg.h5_glob, cfg.assay_subfolder)
+                         if rec is not None else None),
         })
     return {"path": str(p), "parent": str(p.parent) if p.parent != p else None, "entries": items}
 
