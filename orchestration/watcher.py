@@ -79,6 +79,9 @@ class JobConfig:
 
     # Detection tuning
     h5_glob: str = "data.raw.h5"
+    # Only recordings under this path component are processed, matching the
+    # driver's own filter. "Network" excludes ActivityScan. Blank = no filter.
+    assay_subfolder: str = "Network"
     settle_seconds: int = 600
     poll_seconds: int = 30
     require_finished_marker: bool = True
@@ -224,12 +227,32 @@ def has_finished_marker(run_dir: Path) -> bool:
     return False
 
 
-def find_recording(run_dir: Path, h5_glob: str) -> Optional[Path]:
+def find_recordings(run_dir: Path, h5_glob: str, assay_subfolder: str = "Network") -> list[Path]:
+    """Recordings that the driver would actually process.
+
+    Mirrors ``helper_functions.find_files_with_subfolder``: in directory mode the
+    driver only accepts ``data.raw.h5`` files that have ``assay_subfolder`` as a
+    path component, which is how ActivityScan recordings get excluded.
+    """
+    if not assay_subfolder:
+        return sorted(run_dir.rglob(h5_glob))
+    return sorted(p for p in run_dir.rglob(h5_glob) if assay_subfolder in p.parts)
+
+
+def find_recording(run_dir: Path, h5_glob: str, assay_subfolder: str = "Network") -> Optional[Path]:
+    """First qualifying recording, falling back to any recording.
+
+    The fallback covers flattened layouts (``<run>/data.raw.h5`` with no assay
+    subfolder), which the driver can still handle in single-file mode.
+    """
+    hits = find_recordings(run_dir, h5_glob, assay_subfolder)
+    if hits:
+        return hits[0]
     direct = run_dir / h5_glob
     if direct.exists():
         return direct
-    matches = sorted(run_dir.rglob(h5_glob))
-    return matches[0] if matches else None
+    any_hit = sorted(run_dir.rglob(h5_glob))
+    return any_hit[0] if any_hit else None
 
 
 # --------------------------------------------------------------------------- #
@@ -288,7 +311,7 @@ class Watcher:
             return []
         out = []
         for child in sorted(root.iterdir()):
-            if child.is_dir() and find_recording(child, self.cfg.h5_glob):
+            if child.is_dir() and find_recording(child, self.cfg.h5_glob, self.cfg.assay_subfolder):
                 out.append(child)
         return out
 
@@ -338,8 +361,22 @@ class Watcher:
 
     # -- dispatch ----------------------------------------------------------- #
     def build_command(self, run_dir: Path) -> list[str]:
-        recording = find_recording(run_dir, self.cfg.h5_glob)
-        target = str(recording) if recording else str(run_dir)
+        """Build the driver invocation for a completed run folder.
+
+        Prefer **directory mode**: the driver then discovers every qualifying
+        recording (and every recording x well inside each file) itself, and
+        applies its own ``Network`` filter. Passing a single file would analyze
+        just that one recording.
+
+        Fall back to single-file mode for flattened layouts, where no recording
+        sits under the assay subfolder and directory mode would find nothing.
+        """
+        qualifying = find_recordings(run_dir, self.cfg.h5_glob, self.cfg.assay_subfolder)
+        if qualifying:
+            target = str(run_dir)
+        else:
+            recording = find_recording(run_dir, self.cfg.h5_glob, self.cfg.assay_subfolder)
+            target = str(recording) if recording else str(run_dir)
         return [self.cfg.python, str(self.cfg.driver), target, *build_driver_args(self.cfg.driver_options)]
 
     def dispatch(self, run_dir: Path, detail: str = "") -> None:

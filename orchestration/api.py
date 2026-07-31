@@ -37,7 +37,9 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from driver_schema import schema_for_ui, validate_options, default_options  # noqa: E402
-from watcher import JobConfig, Watcher, DEFAULT_WORK_DIR, find_recording, has_finished_marker  # noqa: E402
+from watcher import (  # noqa: E402
+    JobConfig, Watcher, DEFAULT_WORK_DIR, find_recording, find_recordings, has_finished_marker,
+)
 
 LOG = logging.getLogger("mea.api")
 HERE = Path(__file__).resolve().parent
@@ -114,6 +116,7 @@ class ConfigPayload(BaseModel):
     watch_dir: str = ""
     driver_options: dict[str, Any] = {}
     h5_glob: str = "data.raw.h5"
+    assay_subfolder: str = "Network"
     settle_seconds: int = 600
     poll_seconds: int = 30
     require_finished_marker: bool = True
@@ -169,6 +172,7 @@ def api_get_config():
         "watch_dir": cfg.watch_dir,
         "driver_options": cfg.driver_options,
         "h5_glob": cfg.h5_glob,
+        "assay_subfolder": cfg.assay_subfolder,
         "settle_seconds": cfg.settle_seconds,
         "poll_seconds": cfg.poll_seconds,
         "require_finished_marker": cfg.require_finished_marker,
@@ -194,6 +198,7 @@ def api_set_config(payload: ConfigPayload):
         watch_dir=payload.watch_dir,
         driver_options=opts,
         h5_glob=payload.h5_glob,
+        assay_subfolder=payload.assay_subfolder,
         settle_seconds=payload.settle_seconds,
         poll_seconds=payload.poll_seconds,
         require_finished_marker=payload.require_finished_marker,
@@ -233,11 +238,13 @@ def api_browse(payload: BrowsePayload):
     cfg = get_watcher().cfg
     items = []
     for c in entries:
-        rec = find_recording(c, cfg.h5_glob)
+        recs = find_recordings(c, cfg.h5_glob, cfg.assay_subfolder)
+        rec = recs[0] if recs else find_recording(c, cfg.h5_glob, cfg.assay_subfolder)
         items.append({
             "name": c.name,
             "path": str(c),
             "is_run": rec is not None,
+            "recordings": len(recs) or (1 if rec else 0),
             "finished": has_finished_marker(c) if rec is not None else None,
         })
     return {"path": str(p), "parent": str(p.parent) if p.parent != p else None, "entries": items}
@@ -249,7 +256,8 @@ def api_preview(payload: ConfigPayload):
     opts = default_options()
     opts.update(payload.driver_options)
     cfg = JobConfig(watch_dir=payload.watch_dir, driver_options=opts,
-                    h5_glob=payload.h5_glob, work_dir=str(WORK_DIR))
+                    h5_glob=payload.h5_glob, assay_subfolder=payload.assay_subfolder,
+                    work_dir=str(WORK_DIR))
     probe = Watcher(cfg, on_event=lambda *_: None)
     runs = probe.candidate_runs()
     sample = runs[0] if runs else Path(payload.watch_dir or "/path/to") / "000000"
