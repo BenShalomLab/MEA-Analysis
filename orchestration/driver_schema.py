@@ -8,6 +8,16 @@ This schema drives **both**:
 Keeping one definition means the UI and the launcher can never drift apart.
 Mirrors the argparse definitions in ``run_pipeline_driver.py`` exactly.
 
+Defaults
+--------
+**Every default here must match ``run_pipeline_driver.py``'s argparse default,
+not the effective value.** The driver resolves ``CLI flag -> mea_config.json ->
+hardcoded default``, so emitting a flag suppresses the config file. Options the
+driver defaults to ``None`` are therefore ``None`` here too, and their effective
+value is documented in ``help`` instead. Setting, say, ``sorter`` to
+``"kilosort4"`` here would silently override ``sorting.sorter`` in the user's
+config file on every run.
+
 Field types
 -----------
 ``flag``    -> ``--name`` emitted only when value is true
@@ -49,14 +59,14 @@ SCHEMA: dict[str, list[dict[str, Any]]] = {
     "Filtering": [
         {"key": "reference", "flag": "--reference", "type": "path", "default": None,
          "help": "Excel file to filter runs by assay type (needs 'Run #' and 'Assay' columns)"},
-        {"key": "type", "flag": "--type", "type": "list", "default": ["network today", "network today/best"],
-         "help": "Assay types to include"},
+        {"key": "type", "flag": "--type", "type": "list", "default": None,
+         "help": "Assay types to include (default: 'network today', 'network today/best')"},
     ],
 
     "Sorting": [
-        {"key": "sorter", "flag": "--sorter", "type": "choice", "default": "kilosort4",
+        {"key": "sorter", "flag": "--sorter", "type": "choice", "default": None,
          "choices": ["kilosort4", "mountainsort5", "tridesclous"],
-         "help": "Spike sorter to use"},
+         "help": "Spike sorter to use (default: kilosort4)"},
         {"key": "docker", "flag": "--docker", "type": "str", "default": None,
          "help": "Docker image name for containerized sorting"},
         {"key": "skip_spikesorting", "flag": "--skip-spikesorting", "type": "flag", "default": False,
@@ -66,12 +76,12 @@ SCHEMA: dict[str, list[dict[str, Any]]] = {
     ],
 
     "Plotting": [
-        {"key": "plot_mode", "flag": "--plot-mode", "type": "choice", "default": "separate",
+        {"key": "plot_mode", "flag": "--plot-mode", "type": "choice", "default": None,
          "choices": ["separate", "merged"],
-         "help": "Raster and network on separate axes or merged twin-axis"},
-        {"key": "raster_sort", "flag": "--raster-sort", "type": "choice", "default": "none",
+         "help": "Raster and network on separate axes or merged twin-axis (default: separate)"},
+        {"key": "raster_sort", "flag": "--raster-sort", "type": "choice", "default": None,
          "choices": ["none", "firing_rate", "location_y", "unit_id"],
-         "help": "How to sort units on the raster y-axis"},
+         "help": "How to sort units on the raster y-axis (default: none)"},
         {"key": "plot_debug", "flag": "--plot-debug", "type": "flag", "default": False,
          "help": "Overlay burst and superburst intervals on raster plot"},
         {"key": "fixed_y", "flag": "--fixed-y", "type": "flag", "default": False,

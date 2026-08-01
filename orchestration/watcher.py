@@ -206,11 +206,17 @@ class StateStore:
             except (json.JSONDecodeError, OSError) as exc:
                 LOG.warning("Unreadable state file %s (%s); starting fresh", self.path, exc)
 
+    # Every accessor takes the lock: the scan loop and each job thread write
+    # while the API reads for /api/status, so unsynchronised reads could observe
+    # a half-updated entry or race the dict against a concurrent write.
     def get(self, key: str) -> dict:
-        return self._data.get(key, {})
+        with self._lock:
+            return dict(self._data.get(key, {}))
 
     def status(self, key: str) -> Optional[str]:
-        return self.get(key).get("status")
+        with self._lock:
+            entry = self._data.get(key)
+            return entry.get("status") if entry else None
 
     def is_claimed(self, key: str) -> bool:
         return self.status(key) in self.CLAIMED
@@ -222,7 +228,9 @@ class StateStore:
             self._flush()
 
     def all(self) -> dict[str, dict]:
-        return dict(self._data)
+        """Deep-enough copy for a consistent snapshot while jobs are running."""
+        with self._lock:
+            return {k: dict(v) for k, v in self._data.items()}
 
     def reset(self, key: str) -> None:
         with self._lock:
@@ -388,15 +396,27 @@ class Watcher:
                 jobs.append(job)
         return jobs
 
-    def candidate_runs(self) -> list[Path]:
+    def scan_candidates(self) -> list[tuple[Path, list[str]]]:
+        """Run folders with the analyses that apply to each.
+
+        Returns the job list alongside the folder so callers do not have to call
+        ``jobs_for`` again — each call walks the tree with ``rglob``, which is
+        expensive on multi-GB folders and was previously done twice per poll.
+        """
         root = Path(self.cfg.watch_dir)
         if not root.is_dir():
             return []
-        out = []
+        out: list[tuple[Path, list[str]]] = []
         for child in sorted(root.iterdir()):
-            if child.is_dir() and self.jobs_for(child):
-                out.append(child)
+            if not child.is_dir():
+                continue
+            jobs = self.jobs_for(child)
+            if jobs:
+                out.append((child, jobs))
         return out
+
+    def candidate_runs(self) -> list[Path]:
+        return [d for d, _ in self.scan_candidates()]
 
     @staticmethod
     def state_key(run_dir: Path, job: str) -> str:
@@ -404,16 +424,16 @@ class Watcher:
         return f"{run_dir}::{job}"
 
     def scan_once(self) -> None:
-        for run_dir in self.candidate_runs():
+        for run_dir, jobs in self.scan_candidates():
             resolved = run_dir.resolve()
-            pending = [j for j in self.jobs_for(run_dir)
+            pending = [j for j in jobs
                        if not self.state.is_claimed(self.state_key(resolved, j))]
             if not pending:
                 continue
 
             # Completion is a property of the folder, so it is checked once and
             # shared by both analyses.
-            ready, detail = self._check_ready(run_dir, str(resolved))
+            ready, detail = self._check_ready(run_dir, str(resolved), jobs)
             for job in pending:
                 key = self.state_key(resolved, job)
                 if ready:
@@ -422,11 +442,17 @@ class Watcher:
                     self.state.update(key, status="waiting", detail=detail,
                                       job=job, run=run_dir.name, last_seen=_now())
 
-    def _check_ready(self, run_dir: Path, key: str) -> tuple[bool, str]:
-        """Stateless-across-polls completion check (never blocks)."""
+    def _check_ready(self, run_dir: Path, key: str,
+                     jobs: Optional[list[str]] = None) -> tuple[bool, str]:
+        """Stateless-across-polls completion check (never blocks).
+
+        ``jobs`` is passed in by the scan loop so the tree is not walked again.
+        """
+        if jobs is None:
+            jobs = self.jobs_for(run_dir)
         # Check markers across every assay folder we are going to analyze, so a
         # still-recording activity scan holds back its own job too.
-        subfolders = [self.cfg.subfolder_for(j) for j in self.jobs_for(run_dir)]
+        subfolders = [self.cfg.subfolder_for(j) for j in jobs]
         if self.cfg.require_finished_marker and not all(
                 has_finished_marker(run_dir, self.cfg.h5_glob, sf) for sf in subfolders or [None]):
             self._prints.pop(key, None)

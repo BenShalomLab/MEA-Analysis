@@ -38,7 +38,8 @@ from pydantic import BaseModel
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from driver_schema import schema_for_ui, validate_options, default_options  # noqa: E402
 from watcher import (  # noqa: E402
-    JobConfig, Watcher, DEFAULT_WORK_DIR, find_recording, find_recordings, has_finished_marker,
+    JobConfig, Watcher, DEFAULT_WORK_DIR, JOB_LABELS,
+    find_recording, find_recordings, has_finished_marker,
 )
 
 LOG = logging.getLogger("mea.api")
@@ -285,20 +286,49 @@ def api_browse(payload: BrowsePayload):
 
 @app.post("/api/preview")
 def api_preview(payload: ConfigPayload):
-    """Show the exact command the watcher will execute for a detected run."""
+    """Show the exact command(s) the watcher will execute for a detected run.
+
+    Mirrors the full payload — including which analyses are enabled — so the
+    preview matches what actually runs. Returns one command per enabled
+    analysis, since the two are dispatched independently.
+    """
+    import shlex
+
     opts = default_options()
     opts.update(payload.driver_options)
-    cfg = JobConfig(watch_dir=payload.watch_dir, driver_options=opts,
-                    h5_glob=payload.h5_glob, assay_subfolder=payload.assay_subfolder,
-                    work_dir=str(WORK_DIR))
+    cfg = JobConfig(
+        watch_dir=payload.watch_dir,
+        driver_options=opts,
+        h5_glob=payload.h5_glob,
+        assay_subfolder=payload.assay_subfolder,
+        run_network=payload.run_network,
+        run_activity=payload.run_activity,
+        activity_subfolder=payload.activity_subfolder,
+        activity_output_dir=payload.activity_output_dir,
+        activity_active_hz=payload.activity_active_hz,
+        activity_figures=payload.activity_figures,
+        work_dir=str(WORK_DIR),
+    )
     probe = Watcher(cfg, on_event=lambda *_: None)
-    runs = probe.candidate_runs()
-    sample = runs[0] if runs else Path(payload.watch_dir or "/path/to") / "000000"
-    import shlex
+
+    candidates = probe.scan_candidates()
+    sample, jobs = (candidates[0] if candidates
+                    else (Path(payload.watch_dir or "/path/to") / "000000",
+                          cfg.enabled_jobs()))
+
+    commands = [
+        {"job": job,
+         "job_label": JOB_LABELS.get(job, job),
+         "command": " ".join(shlex.quote(c) for c in probe.build_command(sample, job))}
+        for job in jobs
+    ]
     return {
-        "detected_runs": [r.name for r in runs],
-        "command": " ".join(shlex.quote(c) for c in probe.build_command(sample)),
+        "detected_runs": [d.name for d, _ in candidates],
         "example_run": sample.name,
+        "enabled_jobs": cfg.enabled_jobs(),
+        "commands": commands,
+        # Kept for older clients; first enabled analysis.
+        "command": commands[0]["command"] if commands else "",
     }
 
 
@@ -333,17 +363,41 @@ def api_status():
 
 @app.post("/api/runs/reset")
 def api_reset(payload: RunKeyPayload):
+    """Forget a run so it can be processed again.
+
+    State is keyed ``<folder>::<job>`` but the settle-window fingerprint cache is
+    keyed by folder alone. Clearing only the state entry would leave a stale
+    fingerprint whose timestamp already satisfies the settle window, so the run
+    would be declared stable immediately instead of being re-observed.
+    """
     watcher = get_watcher()
     watcher.state.reset(payload.path)
-    watcher._prints.pop(payload.path, None)
-    return {"ok": True}
+    folder = payload.path.split("::")[0]
+    watcher._prints.pop(folder, None)
+    watcher._prints.pop(payload.path, None)   # tolerate a bare folder path
+    return {"ok": True, "cleared_fingerprint_for": folder}
 
 
 @app.get("/api/runs/log")
 def api_log(path: str, tail: int = 400):
-    p = Path(path)
-    if not p.exists():
+    """Read a pipeline log.
+
+    Restricted to the watcher's log directory. The UI is unauthenticated by
+    design, so an unrestricted path parameter here would be an arbitrary
+    file-read primitive for anyone who can reach the port.
+    """
+    log_root = Path(get_watcher().log_dir).resolve()
+    try:
+        p = Path(path).resolve(strict=True)
+    except (OSError, RuntimeError):
         raise HTTPException(404, "Log not found")
+
+    if p != log_root and log_root not in p.parents:
+        LOG.warning("Rejected log read outside %s: %s", log_root, p)
+        raise HTTPException(403, "Log path is outside the watcher log directory")
+    if not p.is_file():
+        raise HTTPException(404, "Log not found")
+
     lines = p.read_text(errors="ignore").splitlines()
     return {"path": str(p), "lines": lines[-tail:], "size": p.stat().st_size}
 
