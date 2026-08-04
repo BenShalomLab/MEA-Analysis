@@ -8,316 +8,330 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
 <style>
-/* ─── Design tokens ─────────────────────────────────────────────────────── */
+/* ══ Tokens ═══════════════════════════════════════════════════════════════ */
 :root{
-  --gray-0:#ffffff; --gray-25:#fcfcfd; --gray-50:#f9fafb; --gray-100:#f2f4f7;
-  --gray-200:#e4e7ec; --gray-300:#d0d5dd; --gray-400:#98a2b3; --gray-500:#667085;
-  --gray-600:#475467; --gray-700:#344054; --gray-800:#1d2939; --gray-900:#101828;
-  --gray-950:#0c111d;
+  --g0:#ffffff; --g1:#fbfbfd; --g2:#f5f5f7; --g3:#eeeef1; --g4:#e3e3e8;
+  --g5:#c9c9d0; --g6:#8e8e97; --g7:#6e6e78; --g8:#3a3a41; --g9:#1d1d20; --g10:#0a0a0c;
 
-  --bg:var(--gray-50); --surface:var(--gray-0); --surface-2:var(--gray-50);
-  --surface-3:var(--gray-100);
-  --border:var(--gray-200); --border-strong:var(--gray-300);
-  --text:var(--gray-900); --text-2:var(--gray-600); --text-3:var(--gray-400);
+  --bg:var(--g1); --raise:var(--g0); --sunken:var(--g2); --hover:var(--g2);
+  --line:rgba(0,0,0,.07); --line-2:rgba(0,0,0,.12);
+  --ink:var(--g10); --ink-2:var(--g7); --ink-3:var(--g6);
 
-  --accent:#4f46e5; --accent-hover:#4338ca; --accent-soft:#eef2ff;
-  --accent-border:#c7d2fe; --accent-text:#3730a3;
-  --success:#079455; --success-soft:#ecfdf3; --success-border:#abefc6; --success-text:#067647;
-  --warn:#b54708;   --warn-soft:#fffaeb;   --warn-border:#fedf89;   --warn-text:#b54708;
-  --danger:#d92d20; --danger-soft:#fef3f2; --danger-border:#fecdca; --danger-text:#b42318;
-  --info:#175cd3;   --info-soft:#eff8ff;   --info-border:#b2ddff;   --info-text:#175cd3;
+  --accent:#0071e3; --accent-ink:#0058b0; --accent-bg:#eef5ff; --accent-line:#cfe3ff;
+  --ok:#1d8a4e; --ok-bg:#eaf7ef; --ok-line:#bfe6cf;
+  --warn:#9a5b00; --warn-bg:#fff6e6; --warn-line:#ffdfa8;
+  --bad:#c8352b; --bad-bg:#fdefee; --bad-line:#f8ccc8;
 
-  --shadow-xs:0 1px 2px rgba(16,24,40,.05);
-  --shadow-sm:0 1px 3px rgba(16,24,40,.1),0 1px 2px rgba(16,24,40,.06);
-  --shadow-md:0 4px 8px -2px rgba(16,24,40,.1),0 2px 4px -2px rgba(16,24,40,.06);
-  --shadow-lg:0 12px 16px -4px rgba(16,24,40,.08),0 4px 6px -2px rgba(16,24,40,.03);
+  --sh-1:0 1px 2px rgba(0,0,0,.04);
+  --sh-2:0 1px 3px rgba(0,0,0,.06), 0 4px 12px -4px rgba(0,0,0,.06);
+  --sh-3:0 2px 6px rgba(0,0,0,.06), 0 12px 32px -8px rgba(0,0,0,.12);
 
-  --r-sm:6px; --r:8px; --r-md:10px; --r-lg:12px; --r-xl:16px; --r-full:999px;
-  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px;
-  --sp-8:32px; --sp-10:40px; --sp-12:48px;
+  --r1:8px; --r2:12px; --r3:16px; --r4:20px; --rp:999px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px;
+  --s7:32px; --s8:40px; --s9:56px; --s10:72px;
 
-  --font:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --mono:"SF Mono",SFMono-Regular,ui-monospace,"JetBrains Mono","Menlo",Consolas,monospace;
-  --ease:cubic-bezier(.4,0,.2,1);
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Inter","Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,"JetBrains Mono",Menlo,monospace;
+  --ease:cubic-bezier(.32,.72,0,1); --fast:.18s; --med:.28s;
 }
 [data-theme="dark"]{
-  --bg:var(--gray-950); --surface:#141a23; --surface-2:#1a212c; --surface-3:#222b38;
-  --border:#252d39; --border-strong:#333d4d;
-  --text:#f2f4f7; --text-2:#98a2b3; --text-3:#667085;
-  --accent:#818cf8; --accent-hover:#a5b4fc; --accent-soft:#1e1b4b;
-  --accent-border:#3730a3; --accent-text:#c7d2fe;
-  --success:#3ccb7f; --success-soft:#053321; --success-border:#085d3a; --success-text:#75e0a7;
-  --warn:#fdb022;   --warn-soft:#4e1d09;   --warn-border:#93370d;   --warn-text:#fedf89;
-  --danger:#f97066; --danger-soft:#55160c;  --danger-border:#912018; --danger-text:#fda29b;
-  --info:#53b1fd;   --info-soft:#102a56;    --info-border:#1849a9;   --info-text:#b2ddff;
-  --shadow-xs:0 1px 2px rgba(0,0,0,.3);
-  --shadow-sm:0 1px 3px rgba(0,0,0,.4);
-  --shadow-md:0 4px 8px -2px rgba(0,0,0,.45);
-  --shadow-lg:0 12px 20px -4px rgba(0,0,0,.5);
+  --bg:#000000; --raise:#141416; --sunken:#0c0c0e; --hover:#1c1c1f;
+  --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.16);
+  --ink:#f5f5f7; --ink-2:#a1a1a8; --ink-3:#6e6e78;
+  --accent:#0a84ff; --accent-ink:#7ab8ff; --accent-bg:#0d243d; --accent-line:#1c4a7a;
+  --ok:#30d158; --ok-bg:#0d2a17; --ok-line:#1c5130;
+  --warn:#ffd60a; --warn-bg:#2e2405; --warn-line:#5c4a0d;
+  --bad:#ff453a; --bad-bg:#33100d; --bad-line:#6b241e;
+  --sh-1:0 1px 2px rgba(0,0,0,.5);
+  --sh-2:0 1px 3px rgba(0,0,0,.6), 0 6px 16px -6px rgba(0,0,0,.6);
+  --sh-3:0 2px 8px rgba(0,0,0,.7), 0 16px 40px -10px rgba(0,0,0,.8);
 }
 @media (prefers-color-scheme:dark){
   [data-theme="auto"]{
-    --bg:var(--gray-950); --surface:#141a23; --surface-2:#1a212c; --surface-3:#222b38;
-    --border:#252d39; --border-strong:#333d4d;
-    --text:#f2f4f7; --text-2:#98a2b3; --text-3:#667085;
-    --accent:#818cf8; --accent-hover:#a5b4fc; --accent-soft:#1e1b4b;
-    --accent-border:#3730a3; --accent-text:#c7d2fe;
-    --success:#3ccb7f; --success-soft:#053321; --success-border:#085d3a; --success-text:#75e0a7;
-    --warn:#fdb022;   --warn-soft:#4e1d09;   --warn-border:#93370d;   --warn-text:#fedf89;
-    --danger:#f97066; --danger-soft:#55160c;  --danger-border:#912018; --danger-text:#fda29b;
-    --info:#53b1fd;   --info-soft:#102a56;    --info-border:#1849a9;   --info-text:#b2ddff;
-    --shadow-xs:0 1px 2px rgba(0,0,0,.3);
-    --shadow-sm:0 1px 3px rgba(0,0,0,.4);
-    --shadow-md:0 4px 8px -2px rgba(0,0,0,.45);
-    --shadow-lg:0 12px 20px -4px rgba(0,0,0,.5);
+    --bg:#000000; --raise:#141416; --sunken:#0c0c0e; --hover:#1c1c1f;
+    --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.16);
+    --ink:#f5f5f7; --ink-2:#a1a1a8; --ink-3:#6e6e78;
+    --accent:#0a84ff; --accent-ink:#7ab8ff; --accent-bg:#0d243d; --accent-line:#1c4a7a;
+    --ok:#30d158; --ok-bg:#0d2a17; --ok-line:#1c5130;
+    --warn:#ffd60a; --warn-bg:#2e2405; --warn-line:#5c4a0d;
+    --bad:#ff453a; --bad-bg:#33100d; --bad-line:#6b241e;
+    --sh-1:0 1px 2px rgba(0,0,0,.5);
+    --sh-2:0 1px 3px rgba(0,0,0,.6), 0 6px 16px -6px rgba(0,0,0,.6);
+    --sh-3:0 2px 8px rgba(0,0,0,.7), 0 16px 40px -10px rgba(0,0,0,.8);
   }
 }
 
-/* ─── Base ──────────────────────────────────────────────────────────────── */
-*,*::before,*::after{box-sizing:border-box;}
-html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}
-body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);
-  font-size:14px;line-height:1.5;letter-spacing:-.006em;}
-h1,h2,h3,p{margin:0;}
-button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit;}
-::selection{background:var(--accent-soft);color:var(--accent-text);}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-sm);}
-.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
-  clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+/* ══ Base ═════════════════════════════════════════════════════════════════ */
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+  font-size:14px;line-height:1.47;letter-spacing:-.011em;
+  font-feature-settings:"tnum" 0,"kern" 1}
+h1,h2,h3,p{margin:0}
+button,input,select{font:inherit;color:inherit}
+::selection{background:var(--accent);color:#fff}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.tnum{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.mono{font-family:var(--mono);font-size:12.5px;letter-spacing:-.02em}
 
-/* ─── Layout ────────────────────────────────────────────────────────────── */
-.app{min-height:100vh;display:flex;flex-direction:column;}
-.topbar{position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--surface) 85%,transparent);
-  backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--border);}
-.topbar-inner{max-width:1240px;margin:0 auto;padding:0 var(--sp-6);height:60px;
-  display:flex;align-items:center;gap:var(--sp-4);}
-.brand{display:flex;align-items:center;gap:var(--sp-3);min-width:0;}
-.brand-mark{width:30px;height:30px;border-radius:var(--r-sm);background:var(--accent);
-  display:grid;place-items:center;color:#fff;flex:none;}
-.brand-text{min-width:0;}
-.brand-title{font-size:14px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;}
-.brand-sub{font-size:12px;color:var(--text-3);white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis;}
-.topbar-spacer{flex:1;}
-.main{max-width:1240px;width:100%;margin:0 auto;padding:var(--sp-8) var(--sp-6) var(--sp-12);
-  display:flex;flex-direction:column;gap:var(--sp-6);}
-.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--sp-6);
-  align-items:start;}
-@media (max-width:1000px){.cols{grid-template-columns:minmax(0,1fr);}}
+/* ══ Shell ════════════════════════════════════════════════════════════════ */
+.shell{min-height:100vh}
+.bar{position:sticky;top:0;z-index:50;
+  background:color-mix(in srgb,var(--bg) 72%,transparent);
+  backdrop-filter:saturate(200%) blur(24px);-webkit-backdrop-filter:saturate(200%) blur(24px);
+  border-bottom:1px solid var(--line)}
+.bar-in{max-width:1080px;margin:0 auto;padding:0 var(--s6);height:56px;
+  display:flex;align-items:center;gap:var(--s4)}
+.mark{width:26px;height:26px;border-radius:7px;background:var(--ink);color:var(--bg);
+  display:grid;place-items:center;flex:none}
+.wordmark{font-size:15px;font-weight:600;letter-spacing:-.02em}
+.grow{flex:1}
+.page{max-width:1080px;margin:0 auto;padding:var(--s8) var(--s6) var(--s10)}
+.stack{display:flex;flex-direction:column;gap:var(--s7)}
 
-/* ─── Card ──────────────────────────────────────────────────────────────── */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
-  box-shadow:var(--shadow-xs);overflow:hidden;}
-.card-head{padding:var(--sp-5) var(--sp-5) 0;display:flex;align-items:flex-start;
-  justify-content:space-between;gap:var(--sp-4);}
-.card-title{font-size:15px;font-weight:600;letter-spacing:-.01em;display:flex;
-  align-items:center;gap:var(--sp-2);}
-.card-desc{font-size:13px;color:var(--text-2);margin-top:2px;}
-.card-body{padding:var(--sp-5);}
-.card-foot{padding:var(--sp-4) var(--sp-5);background:var(--surface-2);
-  border-top:1px solid var(--border);display:flex;gap:var(--sp-3);flex-wrap:wrap;
-  align-items:center;}
+/* ══ Hero ═════════════════════════════════════════════════════════════════ */
+.hero{display:flex;align-items:flex-end;justify-content:space-between;
+  gap:var(--s6);flex-wrap:wrap;margin-bottom:var(--s2)}
+.hero-h{font-size:32px;line-height:1.12;font-weight:600;letter-spacing:-.028em}
+.hero-sub{font-size:14px;color:var(--ink-2);margin-top:6px}
+.hero-sub .mono{color:var(--ink-2)}
 
-/* ─── Buttons ───────────────────────────────────────────────────────────── */
+/* ══ Metrics ══════════════════════════════════════════════════════════════ */
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
+  background:var(--line);border:1px solid var(--line);border-radius:var(--r3);
+  overflow:hidden}
+@media(max-width:720px){.metrics{grid-template-columns:repeat(2,1fr)}}
+.metric{background:var(--raise);padding:var(--s5) var(--s5) var(--s5)}
+.metric-k{font-size:12px;font-weight:500;color:var(--ink-3);letter-spacing:.01em;
+  display:flex;align-items:center;gap:6px}
+.metric-v{font-size:30px;font-weight:600;letter-spacing:-.03em;margin-top:6px;
+  line-height:1;transition:color var(--med) var(--ease)}
+.metric[data-live="true"] .metric-v{color:var(--accent)}
+.metric[data-bad="true"] .metric-v{color:var(--bad)}
+
+/* ══ Panel ════════════════════════════════════════════════════════════════ */
+.panel{background:var(--raise);border:1px solid var(--line);border-radius:var(--r3);
+  box-shadow:var(--sh-1);overflow:hidden}
+.panel-h{padding:var(--s5) var(--s6);display:flex;align-items:center;
+  justify-content:space-between;gap:var(--s4)}
+.panel-h+.panel-b{padding-top:0}
+.panel-t{font-size:16px;font-weight:600;letter-spacing:-.019em}
+.panel-d{font-size:13px;color:var(--ink-2);margin-top:2px}
+.panel-b{padding:var(--s5) var(--s6) var(--s6)}
+.panel-b.flush{padding:0}
+.sep{height:1px;background:var(--line);margin:var(--s5) 0}
+
+/* section heading outside panels */
+.sec-h{display:flex;align-items:baseline;gap:var(--s3);margin-bottom:var(--s4)}
+.sec-t{font-size:19px;font-weight:600;letter-spacing:-.021em}
+.sec-d{font-size:13px;color:var(--ink-3)}
+
+/* ══ Buttons ══════════════════════════════════════════════════════════════ */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
-  padding:8px 14px;border-radius:var(--r);border:1px solid var(--border-strong);
-  background:var(--surface);color:var(--text);font-size:13px;font-weight:500;
-  cursor:pointer;transition:all .15s var(--ease);box-shadow:var(--shadow-xs);
-  white-space:nowrap;}
-.btn:hover:not(:disabled){background:var(--surface-2);border-color:var(--text-3);}
-.btn:active:not(:disabled){transform:translateY(.5px);}
-.btn:disabled{opacity:.5;cursor:not-allowed;}
-.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;}
-.btn-primary:hover:not(:disabled){background:var(--accent-hover);border-color:var(--accent-hover);}
-.btn-danger{background:var(--danger);border-color:var(--danger);color:#fff;}
-.btn-danger:hover:not(:disabled){filter:brightness(1.08);}
-.btn-ghost{background:transparent;border-color:transparent;box-shadow:none;}
-.btn-ghost:hover:not(:disabled){background:var(--surface-3);border-color:transparent;}
-.btn-sm{padding:5px 10px;font-size:12px;border-radius:var(--r-sm);}
-.btn-icon{padding:7px;}
+  height:34px;padding:0 15px;border-radius:var(--rp);border:1px solid var(--line-2);
+  background:var(--raise);font-size:13.5px;font-weight:500;letter-spacing:-.01em;
+  cursor:pointer;white-space:nowrap;
+  transition:background var(--fast) var(--ease),border-color var(--fast) var(--ease),
+    transform var(--fast) var(--ease),opacity var(--fast) var(--ease)}
+.btn:hover:not(:disabled){background:var(--hover)}
+.btn:active:not(:disabled){transform:scale(.97)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-pri{background:var(--accent);border-color:transparent;color:#fff}
+.btn-pri:hover:not(:disabled){background:var(--accent);filter:brightness(1.08)}
+.btn-dan{background:var(--bad);border-color:transparent;color:#fff}
+.btn-dan:hover:not(:disabled){filter:brightness(1.08)}
+.btn-q{border-color:transparent;background:transparent}
+.btn-q:hover:not(:disabled){background:var(--hover)}
+.btn-s{height:28px;padding:0 11px;font-size:12.5px}
+.btn-i{width:34px;padding:0}
+.btn-i.btn-s{width:28px}
+.btns{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center}
 
-/* ─── Form ──────────────────────────────────────────────────────────────── */
-.field{display:flex;flex-direction:column;gap:6px;}
-.label{font-size:13px;font-weight:500;color:var(--text);}
-.hint{font-size:12px;color:var(--text-3);line-height:1.45;}
-.input,.select{width:100%;padding:8px 11px;background:var(--surface);
-  border:1px solid var(--border-strong);border-radius:var(--r);font-size:13px;
-  transition:border-color .15s var(--ease),box-shadow .15s var(--ease);
-  box-shadow:var(--shadow-xs);}
-.input::placeholder{color:var(--text-3);}
-.input:hover,.select:hover{border-color:var(--text-3);}
-.input:focus,.select:focus{outline:none;border-color:var(--accent);
-  box-shadow:0 0 0 3px var(--accent-soft);}
-.input-mono{font-family:var(--mono);font-size:12.5px;}
-.input-group{display:flex;gap:var(--sp-2);}
-.input-group .input{flex:1;min-width:0;}
-.select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%23667085' stroke-width='1.6' stroke-linecap='round'><path d='M4 6.5l4 4 4-4'/></svg>");
-  background-repeat:no-repeat;background-position:right 9px center;padding-right:30px;}
+/* ══ Fields ═══════════════════════════════════════════════════════════════ */
+.f{display:flex;flex-direction:column;gap:6px}
+.f-l{font-size:13px;font-weight:500;letter-spacing:-.008em}
+.f-h{font-size:12px;color:var(--ink-3);line-height:1.45}
+.inp,.sel{width:100%;height:36px;padding:0 12px;background:var(--raise);
+  border:1px solid var(--line-2);border-radius:var(--r1);font-size:13.5px;
+  transition:border-color var(--fast) var(--ease),box-shadow var(--fast) var(--ease)}
+.inp::placeholder{color:var(--ink-3)}
+.inp:hover,.sel:hover{border-color:var(--ink-3)}
+.inp:focus,.sel:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3.5px color-mix(in srgb,var(--accent) 16%,transparent)}
+.inp:disabled,.sel:disabled{background:var(--sunken);color:var(--ink-3);cursor:not-allowed}
+.sel{appearance:none;padding-right:32px;cursor:pointer;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%238e8e97' stroke-width='1.7' stroke-linecap='round'><path d='M4 6.5l4 4 4-4'/></svg>");
+  background-repeat:no-repeat;background-position:right 10px center}
+.f-row{display:flex;gap:var(--s2)}
+.f-row .inp{flex:1;min-width:0}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4)}
+@media(max-width:640px){.grid2{grid-template-columns:1fr}}
 
 /* switch */
-.switch-row{display:flex;align-items:flex-start;gap:var(--sp-3);padding:var(--sp-3) 0;}
-.switch{position:relative;flex:none;width:36px;height:20px;border-radius:var(--r-full);
-  background:var(--gray-300);border:none;cursor:pointer;transition:background .18s var(--ease);
-  padding:0;margin-top:1px;}
-[data-theme="dark"] .switch{background:var(--gray-700);}
-.switch[data-on="true"]{background:var(--accent);}
-.switch-knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
-  background:#fff;box-shadow:var(--shadow-sm);transition:transform .18s var(--ease);}
-.switch[data-on="true"] .switch-knob{transform:translateX(16px);}
-.switch-label{font-size:13px;font-weight:500;}
-.switch-hint{font-size:12px;color:var(--text-3);margin-top:1px;}
+.sw-row{display:flex;align-items:flex-start;gap:var(--s3);padding:var(--s2) 0}
+.sw{position:relative;flex:none;width:40px;height:24px;border-radius:var(--rp);
+  background:var(--g5);border:none;cursor:pointer;padding:0;margin-top:1px;
+  transition:background var(--med) var(--ease)}
+[data-theme="dark"] .sw{background:#3a3a41}
+.sw[data-on="true"]{background:var(--ok)}
+.sw-k{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);
+  transition:transform var(--med) var(--ease)}
+.sw[data-on="true"] .sw-k{transform:translateX(16px)}
+.sw:disabled{opacity:.45;cursor:not-allowed}
+.sw-l{font-size:13.5px;font-weight:500}
+.sw-h{font-size:12px;color:var(--ink-3);margin-top:2px;max-width:52ch}
 
-/* ─── Status primitives ────────────────────────────────────────────────── */
-.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:var(--r-full);
-  font-size:12px;font-weight:500;border:1px solid transparent;white-space:nowrap;}
-.badge-neutral{background:var(--surface-3);color:var(--text-2);border-color:var(--border);}
-.badge-accent{background:var(--accent-soft);color:var(--accent-text);border-color:var(--accent-border);}
-.badge-success{background:var(--success-soft);color:var(--success-text);border-color:var(--success-border);}
-.badge-warn{background:var(--warn-soft);color:var(--warn-text);border-color:var(--warn-border);}
-.badge-danger{background:var(--danger-soft);color:var(--danger-text);border-color:var(--danger-border);}
-.badge-info{background:var(--info-soft);color:var(--info-text);border-color:var(--info-border);}
-.dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none;}
-.dot-pulse{position:relative;}
-.dot-pulse::after{content:"";position:absolute;inset:-3px;border-radius:50%;
-  background:currentColor;opacity:.3;animation:pulse 1.8s var(--ease) infinite;}
-@keyframes pulse{0%{transform:scale(.6);opacity:.5}70%{transform:scale(1.8);opacity:0}100%{opacity:0}}
+/* ══ Pills ════════════════════════════════════════════════════════════════ */
+.pill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;
+  border-radius:var(--rp);font-size:12px;font-weight:500;border:1px solid transparent;
+  white-space:nowrap;letter-spacing:-.005em}
+.p-n{background:var(--sunken);color:var(--ink-2);border-color:var(--line)}
+.p-a{background:var(--accent-bg);color:var(--accent-ink);border-color:var(--accent-line)}
+.p-o{background:var(--ok-bg);color:var(--ok);border-color:var(--ok-line)}
+.p-w{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-line)}
+.p-b{background:var(--bad-bg);color:var(--bad);border-color:var(--bad-line)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.dot-l{position:relative}
+.dot-l::after{content:"";position:absolute;inset:-4px;border-radius:50%;
+  background:currentColor;animation:hb 2s var(--ease) infinite}
+@keyframes hb{0%{transform:scale(.5);opacity:.6}70%{transform:scale(2);opacity:0}100%{opacity:0}}
+.spin{width:13px;height:13px;border:2px solid currentColor;border-right-color:transparent;
+  border-radius:50%;animation:sp .8s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
 
-.spinner{width:13px;height:13px;border:1.8px solid currentColor;border-right-color:transparent;
-  border-radius:50%;animation:spin .7s linear infinite;flex:none;}
-@keyframes spin{to{transform:rotate(360deg)}}
+/* ══ Runs ═════════════════════════════════════════════════════════════════ */
+.rows{display:flex;flex-direction:column}
+.row{display:grid;grid-template-columns:170px 1fr auto auto;gap:var(--s4);
+  align-items:center;padding:var(--s4) var(--s6);
+  border-top:1px solid var(--line);transition:background var(--fast) var(--ease)}
+.row:first-child{border-top:none}
+.row:hover{background:var(--sunken)}
+@media(max-width:860px){.row{grid-template-columns:1fr;gap:var(--s3)}}
+.row-id{font-family:var(--mono);font-size:13.5px;font-weight:500;letter-spacing:-.02em}
+.row-job{font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:5px;margin-top:2px}
+.row-mid{min-width:0;display:flex;flex-direction:column;gap:7px}
+.row-note{font-size:12.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.row-time{text-align:right;min-width:78px}
+.row-dur{font-size:13px;font-weight:500}
+.row-ago{font-size:11.5px;color:var(--ink-3)}
+.bar-t{height:3px;background:var(--g4);border-radius:var(--rp);overflow:hidden}
+[data-theme="dark"] .bar-t{background:#2a2a2e}
+.bar-f{height:100%;background:var(--accent);border-radius:var(--rp);
+  transition:width .5s var(--ease)}
+.bar-i{height:100%;width:32%;background:var(--accent);border-radius:var(--rp);
+  animation:ind 1.5s var(--ease) infinite}
+@keyframes ind{0%{margin-left:-32%}100%{margin-left:100%}}
 
-/* ─── Stats ─────────────────────────────────────────────────────────────── */
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--sp-3);}
-.stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
-  padding:var(--sp-4);box-shadow:var(--shadow-xs);transition:border-color .15s var(--ease);}
-.stat[data-active="true"]{border-color:var(--accent-border);background:var(--accent-soft);}
-.stat-label{font-size:12px;color:var(--text-2);font-weight:500;display:flex;
-  align-items:center;gap:5px;}
-.stat-value{font-size:26px;font-weight:600;letter-spacing:-.03em;margin-top:4px;
-  font-variant-numeric:tabular-nums;}
+/* stage rail */
+.rail{display:flex;align-items:center}
+.st{display:flex;align-items:center;gap:6px}
+.st-d{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;
+  background:var(--g4);color:var(--ink-3);flex:none;
+  transition:background var(--med) var(--ease),color var(--med) var(--ease)}
+[data-theme="dark"] .st-d{background:#2a2a2e}
+.st[data-s="done"] .st-d{background:var(--ok);color:#fff}
+.st[data-s="active"] .st-d{background:var(--accent);color:#fff}
+.st[data-s="failed"] .st-d{background:var(--bad);color:#fff}
+.st-n{font-size:11px;color:var(--ink-3);font-weight:500;letter-spacing:-.003em}
+.st[data-s="done"] .st-n,.st[data-s="active"] .st-n{color:var(--ink-2)}
+.st-l{width:22px;height:1.5px;background:var(--g4);margin:0 5px;flex:none;
+  transition:background var(--med) var(--ease)}
+[data-theme="dark"] .st-l{background:#2a2a2e}
+.st-l[data-d="true"]{background:var(--ok)}
+@media(max-width:1000px){.st-n{display:none}.st-l{width:12px}}
 
-/* ─── Run rows ──────────────────────────────────────────────────────────── */
-.runs{display:flex;flex-direction:column;}
-.run{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-4) var(--sp-5);
-  border-bottom:1px solid var(--border);transition:background .15s var(--ease);}
-.run:last-child{border-bottom:none;}
-.run:hover{background:var(--surface-2);}
-.run-id{font-family:var(--mono);font-size:13px;font-weight:500;min-width:96px;}
-.run-mid{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}
-.run-detail{font-size:12.5px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap;}
-.run-actions{display:flex;gap:6px;flex:none;}
-.progress{height:4px;background:var(--surface-3);border-radius:var(--r-full);overflow:hidden;}
-.progress-bar{height:100%;background:var(--accent);border-radius:var(--r-full);
-  transition:width .4s var(--ease);}
-.progress-indet{height:100%;width:35%;background:var(--accent);border-radius:var(--r-full);
-  animation:indet 1.4s var(--ease) infinite;}
-@keyframes indet{0%{margin-left:-35%}100%{margin-left:100%}}
+/* ══ Code / logs ══════════════════════════════════════════════════════════ */
+.code{background:var(--g10);color:#e8e8ed;border-radius:var(--r2);padding:var(--s4);
+  font-family:var(--mono);font-size:12px;line-height:1.7;overflow:auto;
+  white-space:pre-wrap;word-break:break-word;letter-spacing:-.015em}
+[data-theme="dark"] .code{background:#08080a;border:1px solid var(--line)}
+.code-s{max-height:320px}
+.code-w{position:relative}
+.code-c{position:absolute;top:9px;right:9px}
+.log{background:var(--g10);border-radius:var(--r2);font-family:var(--mono);font-size:12px;
+  line-height:1.65;max-height:290px;overflow:auto;padding:var(--s3) var(--s4);
+  letter-spacing:-.015em}
+[data-theme="dark"] .log{background:#08080a;border:1px solid var(--line)}
+.ll{display:flex;gap:10px;white-space:pre-wrap;word-break:break-word}
+.lt{color:#6e6e78;flex:none}
+.lv{flex:none;width:42px;font-weight:600}
+.l-INFO{color:#5ac8fa}.l-WARNING{color:#ffd60a}.l-ERROR,.l-CRITICAL{color:#ff6961}
+.l-DEBUG{color:#6e6e78}
+.lm{color:#e8e8ed;flex:1;min-width:0}
 
-/* ─── Stages ────────────────────────────────────────────────────────────── */
-.stages{display:flex;align-items:center;gap:0;}
-.stage{display:flex;align-items:center;gap:6px;}
-.stage-dot{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;
-  background:var(--surface-3);color:var(--text-3);flex:none;
-  border:1px solid var(--border);transition:all .25s var(--ease);}
-.stage[data-state="done"] .stage-dot{background:var(--success);border-color:var(--success);color:#fff;}
-.stage[data-state="active"] .stage-dot{background:var(--accent);border-color:var(--accent);color:#fff;}
-.stage[data-state="failed"] .stage-dot{background:var(--danger);border-color:var(--danger);color:#fff;}
-.stage-name{font-size:11.5px;color:var(--text-3);font-weight:500;}
-.stage[data-state="done"] .stage-name,.stage[data-state="active"] .stage-name{color:var(--text-2);}
-.stage-line{width:26px;height:1.5px;background:var(--border);margin:0 6px;flex:none;}
-.stage-line[data-done="true"]{background:var(--success);}
-@media (max-width:760px){.stage-name{display:none}.stage-line{width:14px}}
+/* ══ Callout ══════════════════════════════════════════════════════════════ */
+.note{display:flex;gap:var(--s3);padding:var(--s4) var(--s5);border-radius:var(--r2);
+  border:1px solid;font-size:13px;line-height:1.5}
+.n-a{background:var(--accent-bg);border-color:var(--accent-line);color:var(--accent-ink)}
+.n-w{background:var(--warn-bg);border-color:var(--warn-line);color:var(--warn)}
+.n-b{background:var(--bad-bg);border-color:var(--bad-line);color:var(--bad)}
+.note code{font-family:var(--mono);font-size:11.5px;padding:1px 5px;border-radius:5px;
+  background:rgba(0,0,0,.06)}
+[data-theme="dark"] .note code{background:rgba(255,255,255,.1)}
+.n-i{flex:none;margin-top:1px}
 
-/* ─── Code / logs ───────────────────────────────────────────────────────── */
-.code{background:var(--gray-950);color:#e4e7ec;border-radius:var(--r);padding:var(--sp-4);
-  font-family:var(--mono);font-size:12px;line-height:1.65;overflow:auto;
-  white-space:pre-wrap;word-break:break-word;border:1px solid var(--border);}
-[data-theme="dark"] .code{background:#0a0e14;}
-.code-scroll{max-height:340px;}
-.code-wrap{position:relative;}
-.code-copy{position:absolute;top:8px;right:8px;}
+/* ══ Toast ════════════════════════════════════════════════════════════════ */
+.toasts{position:fixed;bottom:var(--s6);left:50%;transform:translateX(-50%);z-index:100;
+  display:flex;flex-direction:column;gap:var(--s2);width:min(440px,calc(100vw - 32px))}
+.toast{display:flex;gap:var(--s3);padding:var(--s3) var(--s4);background:var(--raise);
+  border:1px solid var(--line);border-radius:var(--r2);box-shadow:var(--sh-3);
+  align-items:flex-start;animation:up .34s var(--ease)}
+@keyframes up{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+.toast-t{font-size:13px;font-weight:600;letter-spacing:-.01em}
+.toast-m{font-size:12.5px;color:var(--ink-2);margin-top:2px;white-space:pre-wrap}
 
-/* ─── Callout ───────────────────────────────────────────────────────────── */
-.callout{display:flex;gap:var(--sp-3);padding:var(--sp-4);border-radius:var(--r-md);
-  border:1px solid;font-size:13px;line-height:1.5;}
-.callout-info{background:var(--info-soft);border-color:var(--info-border);color:var(--info-text);}
-.callout-warn{background:var(--warn-soft);border-color:var(--warn-border);color:var(--warn-text);}
-.callout-danger{background:var(--danger-soft);border-color:var(--danger-border);color:var(--danger-text);}
-.callout code{font-family:var(--mono);font-size:12px;background:rgba(0,0,0,.07);
-  padding:1px 5px;border-radius:4px;}
-[data-theme="dark"] .callout code{background:rgba(255,255,255,.1);}
-.callout-icon{flex:none;margin-top:1px;}
+/* ══ Options ══════════════════════════════════════════════════════════════ */
+.opt-bar{display:flex;gap:var(--s2);align-items:center;margin-bottom:var(--s5)}
+.srch{flex:1;position:relative}
+.srch .inp{padding-left:34px}
+.srch-i{position:absolute;left:11px;top:50%;transform:translateY(-50%);
+  color:var(--ink-3);pointer-events:none;display:flex}
+.groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  gap:var(--s5) var(--s6);align-items:start}
+.grp{min-width:0}
+.grp-h{width:100%;display:flex;align-items:center;gap:var(--s2);padding:0 0 var(--s3);
+  background:none;border:none;cursor:pointer;text-align:left;
+  border-bottom:1px solid var(--line);margin-bottom:var(--s4)}
+.grp-n{font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.055em;
+  color:var(--ink-2)}
+.grp-c{font-size:11px;color:var(--ink-3);margin-left:auto;font-variant-numeric:tabular-nums}
+.chev{transition:transform var(--med) var(--ease);color:var(--ink-3);flex:none}
+.chev[data-o="true"]{transform:rotate(90deg)}
+.grp-b{display:flex;flex-direction:column;gap:var(--s5)}
+.mod{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:none}
 
-/* ─── Toast ─────────────────────────────────────────────────────────────── */
-.toasts{position:fixed;bottom:var(--sp-6);right:var(--sp-6);z-index:100;
-  display:flex;flex-direction:column;gap:var(--sp-2);max-width:380px;}
-.toast{display:flex;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);background:var(--surface);
-  border:1px solid var(--border);border-radius:var(--r-md);box-shadow:var(--shadow-lg);
-  animation:slideIn .25s var(--ease);align-items:flex-start;}
-@keyframes slideIn{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
-.toast-title{font-size:13px;font-weight:600;}
-.toast-msg{font-size:12.5px;color:var(--text-2);margin-top:2px;white-space:pre-wrap;}
+/* ══ Browser ══════════════════════════════════════════════════════════════ */
+.br{border:1px solid var(--line);border-radius:var(--r2);overflow:hidden;
+  margin-top:var(--s2);background:var(--sunken)}
+.br-p{display:flex;gap:var(--s2);padding:var(--s2);border-bottom:1px solid var(--line);
+  background:var(--raise)}
+.br-l{max-height:240px;overflow:auto}
+.br-i{display:flex;align-items:center;gap:var(--s3);padding:9px var(--s4);cursor:pointer;
+  border-top:1px solid var(--line);font-size:13px;transition:background var(--fast) var(--ease)}
+.br-i:first-child{border-top:none}
+.br-i:hover{background:var(--hover)}
+.br-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:var(--mono);font-size:12.5px}
 
-/* ─── Options ───────────────────────────────────────────────────────────── */
-.opt-toolbar{display:flex;gap:var(--sp-2);align-items:center;margin-bottom:var(--sp-4);}
-.opt-search{flex:1;position:relative;}
-.opt-search .input{padding-left:32px;}
-.opt-search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);
-  color:var(--text-3);pointer-events:none;display:flex;}
-.group{border-top:1px solid var(--border);}
-.group:first-of-type{border-top:none;}
-.group-head{width:100%;display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-3) 0;
-  background:none;border:none;cursor:pointer;text-align:left;}
-.group-name{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;
-  color:var(--text-2);}
-.group-count{font-size:11px;color:var(--text-3);}
-.chev{transition:transform .2s var(--ease);color:var(--text-3);flex:none;}
-.chev[data-open="true"]{transform:rotate(90deg);}
-.group-body{padding-bottom:var(--sp-3);display:flex;flex-direction:column;gap:var(--sp-4);}
-.opt-modified{width:5px;height:5px;border-radius:50%;background:var(--accent);flex:none;}
+/* ══ Empty / skeleton ═════════════════════════════════════════════════════ */
+.empty{padding:var(--s10) var(--s6);text-align:center}
+.empty-i{width:46px;height:46px;border-radius:var(--r2);background:var(--sunken);
+  display:grid;place-items:center;margin:0 auto var(--s4);color:var(--ink-3)}
+.empty-t{font-size:15px;font-weight:600;letter-spacing:-.015em}
+.empty-d{font-size:13.5px;color:var(--ink-2);margin-top:5px;max-width:430px;
+  margin-inline:auto;line-height:1.55}
+.skel{background:linear-gradient(90deg,var(--sunken) 25%,var(--g3) 37%,var(--sunken) 63%);
+  background-size:400% 100%;animation:sh 1.5s ease infinite;border-radius:7px}
+@keyframes sh{0%{background-position:100% 0}100%{background-position:-100% 0}}
 
-/* ─── Browser ───────────────────────────────────────────────────────────── */
-.browser{border:1px solid var(--border);border-radius:var(--r);overflow:hidden;
-  margin-top:var(--sp-2);background:var(--surface-2);}
-.browser-path{display:flex;gap:var(--sp-2);padding:var(--sp-2);border-bottom:1px solid var(--border);
-  background:var(--surface);}
-.browser-list{max-height:260px;overflow:auto;}
-.browser-item{display:flex;align-items:center;gap:var(--sp-3);padding:9px var(--sp-3);
-  cursor:pointer;border-bottom:1px solid var(--border);font-size:13px;
-  transition:background .12s var(--ease);}
-.browser-item:last-child{border-bottom:none;}
-.browser-item:hover{background:var(--surface-3);}
-.browser-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-family:var(--mono);font-size:12.5px;}
-
-/* ─── Empty / skeleton ─────────────────────────────────────────────────── */
-.empty{padding:var(--sp-12) var(--sp-6);text-align:center;}
-.empty-icon{width:44px;height:44px;border-radius:var(--r-lg);background:var(--surface-3);
-  display:grid;place-items:center;margin:0 auto var(--sp-4);color:var(--text-3);}
-.empty-title{font-size:14px;font-weight:600;}
-.empty-desc{font-size:13px;color:var(--text-2);margin-top:4px;max-width:400px;
-  margin-inline:auto;line-height:1.55;}
-.skel{background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 37%,var(--surface-2) 63%);
-  background-size:400% 100%;animation:shimmer 1.4s ease infinite;border-radius:var(--r-sm);}
-@keyframes shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
-
-/* ─── Live log ──────────────────────────────────────────────────────────── */
-.livelog{background:var(--gray-950);border-radius:var(--r);border:1px solid var(--border);
-  font-family:var(--mono);font-size:12px;line-height:1.6;max-height:300px;overflow:auto;
-  padding:var(--sp-3);}
-[data-theme="dark"] .livelog{background:#0a0e14;}
-.logline{display:flex;gap:10px;white-space:pre-wrap;word-break:break-word;}
-.logtime{color:#667085;flex:none;}
-.loglvl{flex:none;width:44px;font-weight:600;}
-.lvl-INFO{color:#53b1fd;} .lvl-WARNING{color:#fdb022;}
-.lvl-ERROR{color:#f97066;} .lvl-DEBUG{color:#667085;} .lvl-CRITICAL{color:#f97066;}
-.logmsg{color:#e4e7ec;flex:1;min-width:0;}
-.live-dot{width:6px;height:6px;border-radius:50%;background:var(--success);display:inline-block;}
-
-.mono{font-family:var(--mono);font-size:12.5px;}
-.tnum{font-variant-numeric:tabular-nums;}
-.divider{height:1px;background:var(--border);margin:var(--sp-4) 0;}
+/* config summary strip when watching */
+.strip{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5);padding:var(--s4) var(--s6);
+  font-size:12.5px;color:var(--ink-2)}
+.strip b{color:var(--ink);font-weight:500}
 </style>
 </head>
 <body>
@@ -326,348 +340,259 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 <script type="text/babel">
 const {useState,useEffect,useCallback,useRef,useMemo} = React;
 
-/* ─── Icons ───────────────────────────────────────────────────────────── */
-const I = ({d,size=16,fill="none"}) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor"
-       strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
-);
-const IconActivity=p=><I {...p} d={<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>}/>;
-const IconFolder  =p=><I {...p} d={<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>}/>;
-const IconPlay    =p=><I {...p} d={<polygon points="5 3 19 12 5 21 5 3"/>}/>;
-const IconStop    =p=><I {...p} d={<rect x="6" y="6" width="12" height="12" rx="1"/>}/>;
-const IconCheck   =p=><I {...p} d={<polyline points="20 6 9 17 4 12"/>}/>;
-const IconX       =p=><I {...p} d={<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>}/>;
-const IconSearch  =p=><I {...p} d={<><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></>}/>;
-const IconChev    =p=><I {...p} d={<polyline points="9 18 15 12 9 6"/>}/>;
-const IconCopy    =p=><I {...p} d={<><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>}/>;
-const IconTerminal=p=><I {...p} d={<><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></>}/>;
-const IconRefresh =p=><I {...p} d={<><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></>}/>;
-const IconMoon    =p=><I {...p} d={<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>}/>;
-const IconSun     =p=><I {...p} d={<><circle cx="12" cy="12" r="4"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.2" y1="4.2" x2="5.6" y2="5.6"/><line x1="18.4" y1="18.4" x2="19.8" y2="19.8"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.2" y1="19.8" x2="5.6" y2="18.4"/><line x1="18.4" y1="5.6" x2="19.8" y2="4.2"/></>}/>;
-const IconInfo    =p=><I {...p} d={<><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></>}/>;
-const IconAlert   =p=><I {...p} d={<><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>}/>;
-const IconInbox   =p=><I {...p} d={<><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></>}/>;
-const IconClock   =p=><I {...p} d={<><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>}/>;
+/* ── Icons ─────────────────────────────────────────────────────────────── */
+const I=({d,s=16,f="none"})=>(
+  <svg width={s} height={s} viewBox="0 0 24 24" fill={f} stroke="currentColor"
+       strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>);
+const Wave =p=><I {...p} d={<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>}/>;
+const Folder=p=><I {...p} d={<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>}/>;
+const Play =p=><I {...p} f="currentColor" d={<polygon points="6 4 20 12 6 20"/>}/>;
+const Stop =p=><I {...p} f="currentColor" d={<rect x="6" y="6" width="12" height="12" rx="2"/>}/>;
+const Check=p=><I {...p} d={<polyline points="20 6 9 17 4 12"/>}/>;
+const Ex   =p=><I {...p} d={<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>}/>;
+const Search=p=><I {...p} d={<><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></>}/>;
+const Chev =p=><I {...p} d={<polyline points="9 18 15 12 9 6"/>}/>;
+const Copy =p=><I {...p} d={<><rect x="9" y="9" width="13" height="13" rx="2.5"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>}/>;
+const Term =p=><I {...p} d={<><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></>}/>;
+const Sync =p=><I {...p} d={<><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></>}/>;
+const Moon =p=><I {...p} d={<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>}/>;
+const Sun  =p=><I {...p} d={<><circle cx="12" cy="12" r="4.5"/><line x1="12" y1="1.5" x2="12" y2="3.5"/><line x1="12" y1="20.5" x2="12" y2="22.5"/><line x1="4.2" y1="4.2" x2="5.7" y2="5.7"/><line x1="18.3" y1="18.3" x2="19.8" y2="19.8"/><line x1="1.5" y1="12" x2="3.5" y2="12"/><line x1="20.5" y1="12" x2="22.5" y2="12"/><line x1="4.2" y1="19.8" x2="5.7" y2="18.3"/><line x1="18.3" y1="5.7" x2="19.8" y2="4.2"/></>}/>;
+const Info =p=><I {...p} d={<><circle cx="12" cy="12" r="9.5"/><line x1="12" y1="16.5" x2="12" y2="11.5"/><line x1="12" y1="7.8" x2="12.01" y2="7.8"/></>}/>;
+const Alert=p=><I {...p} d={<><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13.5"/><line x1="12" y1="17.2" x2="12.01" y2="17.2"/></>}/>;
+const Inbox=p=><I {...p} d={<><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></>}/>;
+const Clock=p=><I {...p} d={<><circle cx="12" cy="12" r="9.5"/><polyline points="12 6.5 12 12 16 14"/></>}/>;
+const Slide=p=><I {...p} d={<><line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="9" cy="8" r="2.4"/><circle cx="15" cy="16" r="2.4"/></>}/>;
 
-/* ─── API ─────────────────────────────────────────────────────────────── */
-const IS_FILE = window.location.protocol === "file:";
-const HELP_FILE = "This page is open as a local file, so it cannot reach the server.\n\n" +
-  "Start the backend and open it through that instead:\n\n" +
+/* ── API ───────────────────────────────────────────────────────────────── */
+const IS_FILE = location.protocol === "file:";
+const H_FILE="This page is open as a local file, so it cannot reach the server.\n\n"+
+  "Start the backend and open it through that instead:\n\n"+
   "    python orchestration/api.py --port 8000\n\nthen visit http://localhost:8000";
-const HELP_DOWN = "Could not reach the API server.\n\nMake sure it is running:\n\n" +
-  "    python orchestration/api.py --port 8000\n\n" +
+const H_DOWN="Could not reach the API server.\n\nMake sure it is running:\n\n"+
+  "    python orchestration/api.py --port 8000\n\n"+
   "and that this page is open at the same host and port.";
 
-async function api(path, opts){
-  if (IS_FILE) throw new Error(HELP_FILE);
-  let res;
-  try { res = await fetch(path,{headers:{"Content-Type":"application/json"},...opts}); }
-  catch(e){ throw new Error(HELP_DOWN); }
-  const body = await res.json().catch(()=>({}));
-  if(!res.ok){
-    const d = body.detail;
-    throw new Error(d?.errors ? d.errors.join("\n") : (typeof d==="string" ? d : "Request failed"));
-  }
-  return body;
+async function api(path,opts){
+  if(IS_FILE) throw new Error(H_FILE);
+  let r;
+  try{ r=await fetch(path,{headers:{"Content-Type":"application/json"},...opts}); }
+  catch(e){ throw new Error(H_DOWN); }
+  const b=await r.json().catch(()=>({}));
+  if(!r.ok){const d=b.detail;
+    throw new Error(d?.errors?d.errors.join("\n"):(typeof d==="string"?d:"Request failed"));}
+  return b;
 }
 
-/* ─── Helpers ─────────────────────────────────────────────────────────── */
-const STATUS = {
-  waiting:   {label:"Waiting",   cls:"badge-neutral", stage:0},
-  detected:  {label:"Detected",  cls:"badge-info",    stage:1},
-  dispatched:{label:"Queued",    cls:"badge-accent",  stage:2},
-  running:   {label:"Analyzing", cls:"badge-accent",  stage:2},
-  done:      {label:"Complete",  cls:"badge-success", stage:3},
-  failed:    {label:"Failed",    cls:"badge-danger",  stage:3},
+/* ── Helpers ───────────────────────────────────────────────────────────── */
+const ST={
+  waiting:{l:"Waiting",c:"p-n",i:0}, detected:{l:"Detected",c:"p-a",i:1},
+  dispatched:{l:"Queued",c:"p-a",i:2}, running:{l:"Analyzing",c:"p-a",i:2},
+  done:{l:"Complete",c:"p-o",i:3}, failed:{l:"Failed",c:"p-b",i:3},
 };
-const STAGES = ["Detected","Settled","Analyzing","Complete"];
+const STAGES=["Detected","Settled","Analyzing","Complete"];
+const settleLeft=d=>{const m=/settling \((\d+)s remaining\)/.exec(d||"");return m?+m[1]:null;};
+const ago=iso=>{if(!iso)return"";const s=Math.max(0,(Date.now()-new Date(iso))/1e3);
+  return s<60?`${s|0}s ago`:s<3600?`${s/60|0}m ago`:s<86400?`${s/3600|0}h ago`:`${s/86400|0}d ago`;};
+const dur=s=>{if(s==null)return"";if(s<60)return`${Math.round(s)}s`;
+  const m=s/60|0;return m<60?`${m}m ${Math.round(s%60)}s`:`${m/60|0}h ${m%60}m`;};
 
-function settleRemaining(detail){
-  const m = /settling \((\d+)s remaining\)/.exec(detail || "");
-  return m ? Number(m[1]) : null;
-}
-function relTime(iso){
-  if(!iso) return "";
-  const s = Math.max(0,(Date.now()-new Date(iso).getTime())/1000);
-  if(s<60) return `${Math.floor(s)}s ago`;
-  if(s<3600) return `${Math.floor(s/60)}m ago`;
-  if(s<86400) return `${Math.floor(s/3600)}h ago`;
-  return `${Math.floor(s/86400)}d ago`;
-}
-function fmtDur(s){
-  if(s==null) return "";
-  if(s<60) return `${Math.round(s)}s`;
-  const m=Math.floor(s/60), r=Math.round(s%60);
-  if(m<60) return `${m}m ${r}s`;
-  return `${Math.floor(m/60)}h ${m%60}m`;
-}
-
-/* ─── Primitives ──────────────────────────────────────────────────────── */
+/* ── Primitives ────────────────────────────────────────────────────────── */
 function Switch({checked,onChange,label,hint,id,disabled}){
   return (
-    <div className="switch-row" style={disabled?{opacity:.55}:undefined}>
+    <div className="sw-row" style={disabled?{opacity:.5}:undefined}>
       <button type="button" role="switch" aria-checked={!!checked} id={id} disabled={disabled}
-              className="switch" data-on={!!checked}
-              style={disabled?{cursor:"not-allowed"}:undefined}
-              onClick={()=>!disabled&&onChange(!checked)}>
-        <span className="switch-knob"/>
+              className="sw" data-on={!!checked} onClick={()=>!disabled&&onChange(!checked)}>
+        <span className="sw-k"/>
       </button>
       <label htmlFor={id} style={{cursor:disabled?"not-allowed":"pointer"}}>
-        <div className="switch-label">{label}</div>
-        {hint && <div className="switch-hint">{hint}</div>}
+        <div className="sw-l">{label}</div>
+        {hint&&<div className="sw-h">{hint}</div>}
       </label>
     </div>
   );
 }
 
-function Toasts({items,dismiss}){
+function Code({text,scroll}){
+  const [c,setC]=useState(false);
+  return (
+    <div className="code-w">
+      <pre className={"code"+(scroll?" code-s":"")}>{text}</pre>
+      <button className="btn btn-s code-c"
+              onClick={()=>navigator.clipboard?.writeText(text).then(()=>{setC(true);setTimeout(()=>setC(false),1600);})}>
+        {c?<><Check s={12}/> Copied</>:<><Copy s={12}/> Copy</>}
+      </button>
+    </div>
+  );
+}
+
+function Toasts({items,close}){
   return (
     <div className="toasts" role="status" aria-live="polite">
       {items.map(t=>(
         <div key={t.id} className="toast">
-          <span style={{color:`var(--${t.kind==="error"?"danger":t.kind==="success"?"success":"info"})`,
+          <span style={{color:`var(--${t.k==="error"?"bad":t.k==="success"?"ok":"accent"})`,
                         flex:"none",marginTop:1,display:"flex"}}>
-            {t.kind==="error" ? <IconAlert size={15}/> : t.kind==="success" ? <IconCheck size={15}/> : <IconInfo size={15}/>}
+            {t.k==="error"?<Alert s={15}/>:t.k==="success"?<Check s={15}/>:<Info s={15}/>}
           </span>
           <div style={{flex:1,minWidth:0}}>
-            <div className="toast-title">{t.title}</div>
-            {t.msg && <div className="toast-msg">{t.msg}</div>}
+            <div className="toast-t">{t.t}</div>
+            {t.m&&<div className="toast-m">{t.m}</div>}
           </div>
-          <button className="btn btn-ghost btn-sm btn-icon" onClick={()=>dismiss(t.id)} aria-label="Dismiss">
-            <IconX size={13}/>
-          </button>
+          <button className="btn btn-q btn-s btn-i" onClick={()=>close(t.id)} aria-label="Dismiss">
+            <Ex s={13}/></button>
         </div>
       ))}
     </div>
   );
 }
 
-function CodeBlock({text,scroll}){
-  const [copied,setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard?.writeText(text).then(()=>{
-      setCopied(true); setTimeout(()=>setCopied(false),1600);
-    });
-  };
-  return (
-    <div className="code-wrap">
-      <pre className={"code" + (scroll?" code-scroll":"")}>{text}</pre>
-      <button className="btn btn-sm code-copy" onClick={copy}>
-        {copied ? <><IconCheck size={12}/> Copied</> : <><IconCopy size={12}/> Copy</>}
-      </button>
-    </div>
-  );
-}
-
-/* ─── Option field ────────────────────────────────────────────────────── */
-function Field({spec,value,onChange}){
-  const set = v => onChange(spec.key,v);
-  const modified = value !== spec.default && value !== null && value !== "" && value !== false;
-  const labelEl = (
-    <span className="label" style={{display:"flex",alignItems:"center",gap:6}}>
-      {modified && <span className="opt-modified" title="Changed from default"/>}
-      <code className="mono">{spec.flag}</code>
-    </span>
-  );
-
-  if(spec.type==="flag"){
-    return <Switch id={spec.key} checked={!!value} onChange={set}
-                   label={spec.flag} hint={spec.help}/>;
-  }
-  if(spec.type==="tristate"){
-    return (
-      <div className="field">
-        {labelEl}
-        <select className="select" value={value==null?"":String(value)}
-                onChange={e=>set(e.target.value===""?null:e.target.value==="true")}>
-          <option value="">Default</option><option value="true">Enabled</option>
-          <option value="false">Disabled</option>
-        </select>
-        <span className="hint">{spec.help}</span>
-      </div>
-    );
-  }
-  if(spec.type==="choice"){
-    return (
-      <div className="field">
-        {labelEl}
-        <select className="select" value={value??""} onChange={e=>set(e.target.value||null)}>
-          <option value="">Default</option>
-          {spec.choices.map(c=><option key={c} value={c}>{c}</option>)}
-        </select>
-        <span className="hint">{spec.help}</span>
-      </div>
-    );
-  }
-  if(spec.type==="list"){
-    return (
-      <div className="field">
-        {labelEl}
-        <input className="input input-mono" placeholder="comma separated"
-               value={Array.isArray(value)?value.join(", "):(value??"")}
-               onChange={e=>set(e.target.value.split(",").map(s=>s.trim()).filter(Boolean))}/>
-        <span className="hint">{spec.help}</span>
-      </div>
-    );
-  }
-  const numeric = spec.type==="int"||spec.type==="float";
-  return (
-    <div className="field">
-      {labelEl}
-      <input className={"input"+(spec.type==="path"?" input-mono":"")}
-             type={numeric?"number":"text"} step={spec.type==="float"?"0.01":"1"}
-             placeholder={spec.type==="path"?"/path/on/server":"Default"}
-             value={value??""}
-             onChange={e=>set(e.target.value===""?null:(numeric?Number(e.target.value):e.target.value))}/>
-      <span className="hint">{spec.help}</span>
-    </div>
-  );
-}
-
-/* ─── Folder browser ──────────────────────────────────────────────────── */
-function Browser({initial,onPick,onClose}){
-  const [data,setData]=useState(null), [path,setPath]=useState(initial||""), [err,setErr]=useState("");
-  const load = useCallback(async p=>{
-    try{ setErr(""); const d=await api("/api/browse",{method:"POST",body:JSON.stringify({path:p})});
-         setData(d); setPath(d.path); }
-    catch(e){ setErr(e.message); }
-  },[]);
-  useEffect(()=>{load(initial||"");},[load,initial]);
-  return (
-    <div className="browser">
-      <div className="browser-path">
-        <input className="input input-mono" value={path} onChange={e=>setPath(e.target.value)}
-               onKeyDown={e=>e.key==="Enter"&&load(path)} aria-label="Path"/>
-        <button className="btn btn-sm" onClick={()=>load(path)}>Go</button>
-        <button className="btn btn-sm btn-primary" onClick={()=>{onPick(path);onClose();}}>Select</button>
-      </div>
-      {err && <div style={{padding:"10px 12px",fontSize:12.5,color:"var(--danger-text)"}}>{err}</div>}
-      <div className="browser-list">
-        {data?.parent && (
-          <div className="browser-item" onClick={()=>load(data.parent)}>
-            <IconFolder size={14}/><span className="browser-name" style={{color:"var(--text-3)"}}>..</span>
-          </div>
-        )}
-        {data?.entries?.length===0 && (
-          <div style={{padding:"14px 12px",fontSize:12.5,color:"var(--text-3)"}}>No subfolders</div>
-        )}
-        {data?.entries?.map(e=>(
-          <div key={e.path} className="browser-item" onClick={()=>load(e.path)}>
-            <IconFolder size={14} />
-            <span className="browser-name">{e.name}</span>
-            {e.is_run && (
-              <span className={"badge "+(e.finished?"badge-success":"badge-warn")}>
-                <span className="dot"/>{e.finished?"run · finished":"run · in progress"}
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ─── Live activity log ───────────────────────────────────────────────── */
-function LiveLog({lines,follow,onToggleFollow}){
+function LiveLog({lines,follow,setFollow,onClear}){
   const ref=useRef(null);
-  useEffect(()=>{ if(follow&&ref.current) ref.current.scrollTop=ref.current.scrollHeight; },[lines,follow]);
+  useEffect(()=>{if(follow&&ref.current)ref.current.scrollTop=ref.current.scrollHeight;},[lines,follow]);
   return (
     <>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-        <span className="badge badge-neutral"><span className="live-dot"/>Live</span>
-        <span className="hint">{lines.length} line{lines.length===1?"":"s"}</span>
-        <div style={{flex:1}}/>
-        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,cursor:"pointer",color:"var(--text-2)"}}>
-          <input type="checkbox" checked={follow} onChange={e=>onToggleFollow(e.target.checked)}
-                 style={{accentColor:"var(--accent)"}}/>
-          Auto-scroll
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+        <span className="pill p-o"><span className="dot dot-l"/>Live</span>
+        <span className="f-h">{lines.length} line{lines.length===1?"":"s"}</span>
+        <div className="grow"/>
+        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,
+                       cursor:"pointer",color:"var(--ink-2)"}}>
+          <input type="checkbox" checked={follow} onChange={e=>setFollow(e.target.checked)}
+                 style={{accentColor:"var(--accent)"}}/>Auto-scroll
         </label>
+        {lines.length>0&&<button className="btn btn-q btn-s" onClick={onClear}>Clear</button>}
       </div>
-      <div className="livelog" ref={ref}>
+      <div className="log" ref={ref}>
         {lines.length===0
-          ? <div style={{color:"#667085"}}>Waiting for activity…</div>
+          ? <div style={{color:"#6e6e78"}}>Waiting for activity…</div>
           : lines.map(l=>(
-              <div className="logline" key={l.seq}>
-                <span className="logtime">{l.time}</span>
-                <span className={"loglvl lvl-"+l.level}>{l.level}</span>
-                <span className="logmsg">{l.message}</span>
-              </div>
-            ))}
+              <div className="ll" key={l.seq}>
+                <span className="lt">{l.time}</span>
+                <span className={"lv l-"+l.level}>{l.level}</span>
+                <span className="lm">{l.message}</span>
+              </div>))}
       </div>
     </>
   );
 }
 
-/* ─── Run row ─────────────────────────────────────────────────────────── */
-function RunRow({run,onLog,onReset}){
-  const meta = STATUS[run.status] || STATUS.waiting;
-  const remaining = settleRemaining(run.detail);
-  const isRunning = run.status==="running"||run.status==="dispatched";
-  const failed = run.status==="failed";
-  const stageIdx = failed ? 3 : meta.stage;
+function Field({spec,value,onChange}){
+  const set=v=>onChange(spec.key,v);
+  const mod=value!==spec.default&&value!==null&&value!==""&&value!==false;
+  const L=<span className="f-l" style={{display:"flex",alignItems:"center",gap:6}}>
+    {mod&&<span className="mod" title="Changed"/>}<code className="mono">{spec.flag}</code></span>;
 
+  if(spec.type==="flag")
+    return <Switch id={spec.key} checked={!!value} onChange={set} label={spec.flag} hint={spec.help}/>;
+  if(spec.type==="tristate")
+    return <div className="f">{L}
+      <select className="sel" value={value==null?"":String(value)}
+              onChange={e=>set(e.target.value===""?null:e.target.value==="true")}>
+        <option value="">Default</option><option value="true">Enabled</option><option value="false">Disabled</option>
+      </select><span className="f-h">{spec.help}</span></div>;
+  if(spec.type==="choice")
+    return <div className="f">{L}
+      <select className="sel" value={value??""} onChange={e=>set(e.target.value||null)}>
+        <option value="">Default</option>
+        {spec.choices.map(c=><option key={c} value={c}>{c}</option>)}
+      </select><span className="f-h">{spec.help}</span></div>;
+  if(spec.type==="list")
+    return <div className="f">{L}
+      <input className="inp mono" placeholder="comma separated"
+             value={Array.isArray(value)?value.join(", "):(value??"")}
+             onChange={e=>set(e.target.value.split(",").map(s=>s.trim()).filter(Boolean))}/>
+      <span className="f-h">{spec.help}</span></div>;
+  const num=spec.type==="int"||spec.type==="float";
+  return <div className="f">{L}
+    <input className={"inp"+(spec.type==="path"?" mono":"")} type={num?"number":"text"}
+           step={spec.type==="float"?"0.01":"1"}
+           placeholder={spec.type==="path"?"/path/on/server":"Default"} value={value??""}
+           onChange={e=>set(e.target.value===""?null:(num?Number(e.target.value):e.target.value))}/>
+    <span className="f-h">{spec.help}</span></div>;
+}
+
+function Browser({initial,onPick,onClose}){
+  const [d,setD]=useState(null),[p,setP]=useState(initial||""),[e,setE]=useState("");
+  const load=useCallback(async q=>{
+    try{setE("");const r=await api("/api/browse",{method:"POST",body:JSON.stringify({path:q})});
+        setD(r);setP(r.path);}catch(x){setE(x.message);}},[]);
+  useEffect(()=>{load(initial||"");},[load,initial]);
   return (
-    <div className="run">
-      <div style={{minWidth:150,flex:"none"}}>
-        <div className="run-id" style={{minWidth:0}}>{run.run}</div>
-        <div style={{fontSize:11,color:"var(--text-3)",display:"flex",alignItems:"center",gap:4,marginTop:1}}>
-          <span style={{width:5,height:5,borderRadius:"50%",flex:"none",
-            background: run.job==="activity" ? "#1baf7a" : "#4f46e5"}}/>
-          {run.job_label || (run.job==="activity" ? "Activity scan" : "Network")}
-        </div>
+    <div className="br">
+      <div className="br-p">
+        <input className="inp mono" value={p} onChange={e=>setP(e.target.value)}
+               onKeyDown={e=>e.key==="Enter"&&load(p)} aria-label="Path"/>
+        <button className="btn btn-s" onClick={()=>load(p)}>Go</button>
+        <button className="btn btn-s btn-pri" onClick={()=>{onPick(p);onClose();}}>Select</button>
       </div>
-
-      <div className="run-mid">
-        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-          <span className={"badge "+meta.cls}>
-            {isRunning ? <span className="spinner"/> :
-             <span className={"dot"+(run.status==="waiting"?" dot-pulse":"")}/>}
-            {meta.label}
-          </span>
-          <span className="run-detail">{run.detail || (run.returncode!=null?`exit code ${run.returncode}`:"")}</span>
-        </div>
-        {isRunning && <div className="progress"><div className="progress-indet"/></div>}
-        {remaining!=null && run.status==="waiting" && (
-          <div className="progress"><div className="progress-bar"
-            style={{width:`${Math.max(4,100-Math.min(100,remaining))}%`}}/></div>
-        )}
-      </div>
-
-      <div className="stages" aria-label={`Stage: ${meta.label}`}>
-        {STAGES.map((s,i)=>(
-          <React.Fragment key={s}>
-            {i>0 && <span className="stage-line" data-done={i<=stageIdx}/>}
-            <span className="stage" data-state={
-              failed && i===3 ? "failed" : i<stageIdx ? "done" : i===stageIdx ? "active" : "todo"}>
-              <span className="stage-dot">
-                {failed && i===3 ? <IconX size={10}/> : i<stageIdx ? <IconCheck size={10}/> :
-                 <span style={{width:5,height:5,borderRadius:"50%",background:"currentColor"}}/>}
-              </span>
-              <span className="stage-name">{s}</span>
-            </span>
-          </React.Fragment>
-        ))}
-      </div>
-
-      <div style={{minWidth:74,textAlign:"right",flex:"none"}}>
-        <div className="tnum" style={{fontSize:12.5}}>{fmtDur(run.duration_s)}</div>
-        <div style={{fontSize:11,color:"var(--text-3)"}}>
-          {relTime(run.completed_at||run.started_at||run.dispatched_at||run.last_seen)}
-        </div>
-      </div>
-
-      <div className="run-actions">
-        {run.log && <button className="btn btn-sm" onClick={()=>onLog(run)}>
-          <IconTerminal size={12}/> Log</button>}
-        <button className="btn btn-sm btn-ghost" onClick={()=>onReset(run)} title="Forget this run so it can be reprocessed">
-          <IconRefresh size={12}/>
-        </button>
+      {e&&<div style={{padding:"10px 14px",fontSize:12.5,color:"var(--bad)"}}>{e}</div>}
+      <div className="br-l">
+        {d?.parent&&<div className="br-i" onClick={()=>load(d.parent)}>
+          <Folder s={14}/><span className="br-n" style={{color:"var(--ink-3)"}}>..</span></div>}
+        {d?.entries?.length===0&&<div style={{padding:"14px",fontSize:12.5,color:"var(--ink-3)"}}>No subfolders</div>}
+        {d?.entries?.map(x=>(
+          <div key={x.path} className="br-i" onClick={()=>load(x.path)}>
+            <Folder s={14}/><span className="br-n">{x.name}</span>
+            {x.is_run&&<span className={"pill "+(x.finished?"p-o":"p-w")}>
+              <span className="dot"/>{x.finished?"run · finished":"run · in progress"}</span>}
+          </div>))}
       </div>
     </div>
   );
 }
 
-/* ─── App ─────────────────────────────────────────────────────────────── */
+function Row({run,onLog,onReset}){
+  const m=ST[run.status]||ST.waiting;
+  const left=settleLeft(run.detail);
+  const busy=run.status==="running"||run.status==="dispatched";
+  const bad=run.status==="failed";
+  const idx=bad?3:m.i;
+  return (
+    <div className="row">
+      <div>
+        <div className="row-id">{run.run}</div>
+        <div className="row-job">
+          <span className="dot" style={{background:run.job==="activity"?"var(--ok)":"var(--accent)"}}/>
+          {run.job_label||(run.job==="activity"?"Activity scan":"Network")}
+        </div>
+      </div>
+      <div className="row-mid">
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span className={"pill "+m.c}>
+            {busy?<span className="spin"/>:<span className={"dot"+(run.status==="waiting"?" dot-l":"")}/>}
+            {m.l}</span>
+          <span className="row-note">{run.detail||(run.returncode!=null?`exit code ${run.returncode}`:"")}</span>
+        </div>
+        {busy&&<div className="bar-t"><div className="bar-i"/></div>}
+        {left!=null&&run.status==="waiting"&&
+          <div className="bar-t"><div className="bar-f" style={{width:`${Math.max(4,100-Math.min(100,left))}%`}}/></div>}
+      </div>
+      <div className="rail" aria-label={m.l}>
+        {STAGES.map((s,i)=>(
+          <React.Fragment key={s}>
+            {i>0&&<span className="st-l" data-d={i<=idx}/>}
+            <span className="st" data-s={bad&&i===3?"failed":i<idx?"done":i===idx?"active":"todo"}>
+              <span className="st-d">{bad&&i===3?<Ex s={9}/>:i<idx?<Check s={9}/>:
+                <span style={{width:4,height:4,borderRadius:"50%",background:"currentColor"}}/>}</span>
+              <span className="st-n">{s}</span>
+            </span>
+          </React.Fragment>))}
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:"var(--s4)"}}>
+        <div className="row-time">
+          <div className="row-dur tnum">{dur(run.duration_s)}</div>
+          <div className="row-ago">{ago(run.completed_at||run.started_at||run.dispatched_at||run.last_seen)}</div>
+        </div>
+        <div className="btns" style={{flexWrap:"nowrap"}}>
+          {run.log&&<button className="btn btn-s" onClick={()=>onLog(run)}><Term s={12}/> Log</button>}
+          <button className="btn btn-q btn-s btn-i" onClick={()=>onReset(run)} title="Reset this run"><Sync s={12}/></button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── App ───────────────────────────────────────────────────────────────── */
 function App(){
   const [schema,setSchema]=useState(null);
   const [cfg,setCfg]=useState(null);
@@ -676,489 +601,481 @@ function App(){
   const [preview,setPreview]=useState(null);
   const [browsing,setBrowsing]=useState(null);
   const [log,setLog]=useState(null);
-  const [query,setQuery]=useState("");
-  const [openGroups,setOpenGroups]=useState({});
+  const [q,setQ]=useState("");
+  const [open,setOpen]=useState({});
   const [theme,setTheme]=useState(()=>localStorage.getItem("mea-theme")||"auto");
   const [toasts,setToasts]=useState([]);
   const [busy,setBusy]=useState(false);
-  const [activity,setActivity]=useState([]);
+  const [act,setAct]=useState([]);
   const [follow,setFollow]=useState(true);
-  const tid=useRef(0);
-  const lastSeq=useRef(0);
+  const [showCfg,setShowCfg]=useState(true);
+  const tid=useRef(0), seq=useRef(0);
 
-  const toast=useCallback((title,msg,kind="info")=>{
-    const id=++tid.current;
-    setToasts(t=>[...t,{id,title,msg,kind}]);
-    setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)), kind==="error"?9000:4000);
-  },[]);
-  const dismiss=id=>setToasts(t=>t.filter(x=>x.id!==id));
+  const toast=useCallback((t,m,k="info")=>{const id=++tid.current;
+    setToasts(x=>[...x,{id,t,m,k}]);
+    setTimeout(()=>setToasts(x=>x.filter(y=>y.id!==id)),k==="error"?9000:4200);},[]);
 
   useEffect(()=>{document.documentElement.dataset.theme=theme;
     localStorage.setItem("mea-theme",theme);},[theme]);
 
-  useEffect(()=>{(async()=>{
-    try{
-      const s=await api("/api/schema"); const c=await api("/api/config");
-      setSchema(s); setCfg(c);
-      const init={}; s.groups.forEach((g,i)=>init[g.group]= i<3);
-      setOpenGroups(init);
-    }catch(e){ setFatal(e.message); }
-  })();},[]);
+  useEffect(()=>{(async()=>{try{
+    const s=await api("/api/schema"),c=await api("/api/config");
+    setSchema(s);setCfg(c);
+    const o={};s.groups.forEach((g,i)=>o[g.group]=!g.group.toLowerCase().includes("advanced"));
+    setOpen(o);
+  }catch(e){setFatal(e.message);}})();},[]);
 
   const refresh=useCallback(async()=>{
-    try{ setStatus(await api("/api/status")); }catch(e){}
-    try{
-      const d=await api(`/api/logs?since=${lastSeq.current}`);
-      if(d.lines?.length){
-        lastSeq.current=d.last_seq;
-        setActivity(a=>[...a,...d.lines].slice(-400));
-      }
-    }catch(e){}
+    try{const s=await api("/api/status");setStatus(s);
+        setShowCfg(v=>s.running?false:v);}catch(e){}
+    try{const d=await api(`/api/logs?since=${seq.current}`);
+        if(d.lines?.length){seq.current=d.last_seq;setAct(a=>[...a,...d.lines].slice(-400));}}catch(e){}
   },[]);
-  useEffect(()=>{ refresh(); const t=setInterval(refresh,2000); return ()=>clearInterval(t); },[refresh]);
+  useEffect(()=>{refresh();const t=setInterval(refresh,2000);return()=>clearInterval(t);},[refresh]);
 
-  // Keep an open run log fresh while that run is still executing.
   useEffect(()=>{
-    if(!log?.path) return;
-    const active=(status?.runs||[]).some(r=>r.log===log.path&&(r.status==="running"||r.status==="dispatched"));
-    if(!active) return;
-    const t=setInterval(async()=>{
-      try{
-        const d=await api(`/api/runs/log?path=${encodeURIComponent(log.path)}`);
-        setLog(l=>l&&l.path===log.path?{...l,lines:d.lines}:l);
-      }catch(e){}
-    },3000);
-    return ()=>clearInterval(t);
+    if(!log?.path)return;
+    const live=(status?.runs||[]).some(r=>r.log===log.path&&(r.status==="running"||r.status==="dispatched"));
+    if(!live)return;
+    const t=setInterval(async()=>{try{
+      const d=await api(`/api/runs/log?path=${encodeURIComponent(log.path)}`);
+      setLog(l=>l&&l.path===log.path?{...l,lines:d.lines}:l);}catch(e){}},3000);
+    return()=>clearInterval(t);
   },[log?.path,status]);
 
   const payload=useCallback(()=>({
     watch_dir:cfg.watch_dir, driver_options:cfg.driver_options, h5_glob:cfg.h5_glob,
     assay_subfolder:cfg.assay_subfolder,
     run_network:!!cfg.run_network, run_activity:!!cfg.run_activity,
-    activity_subfolder:cfg.activity_subfolder,
-    activity_output_dir:cfg.activity_output_dir||"",
-    activity_active_hz:Number(cfg.activity_active_hz),
-    activity_figures:!!cfg.activity_figures,
+    activity_subfolder:cfg.activity_subfolder, activity_output_dir:cfg.activity_output_dir||"",
+    activity_active_hz:Number(cfg.activity_active_hz), activity_figures:!!cfg.activity_figures,
+    max_concurrent_network:Number(cfg.max_concurrent_network)||1,
+    max_concurrent_activity:Number(cfg.max_concurrent_activity)||1,
+    gpu_cooldown_seconds:Number(cfg.gpu_cooldown_seconds)||0,
+    queue_poll_seconds:Number(cfg.queue_poll_seconds)||1,
     settle_seconds:Number(cfg.settle_seconds), poll_seconds:Number(cfg.poll_seconds),
-    require_finished_marker:!!cfg.require_finished_marker, dry_run:!!cfg.dry_run,
+    require_finished_marker:!!cfg.require_finished_marker,
+    skip_settle_for_existing:!!cfg.skip_settle_for_existing, dry_run:!!cfg.dry_run,
   }),[cfg]);
 
-  const act=useCallback(async(fn,okTitle,okMsg)=>{
-    setBusy(true);
-    try{ await fn(); if(okTitle) toast(okTitle,okMsg,"success"); refresh(); }
-    catch(e){ toast("Something went wrong",e.message,"error"); }
-    finally{ setBusy(false); }
-  },[toast,refresh]);
+  const act_=useCallback(async(fn,t,m)=>{setBusy(true);
+    try{await fn();if(t)toast(t,m,"success");refresh();}
+    catch(e){toast("Something went wrong",e.message,"error");}
+    finally{setBusy(false);}},[toast,refresh]);
 
   if(fatal) return (
-    <div className="app"><div className="main" style={{maxWidth:660,paddingTop:80}}>
-      <div className="card">
-        <div className="card-head"><div>
-          <div className="card-title" style={{color:"var(--danger-text)"}}>
-            <IconAlert size={17}/> Cannot reach the backend</div>
-          <div className="card-desc">This page is the interface only — the Python server
-            reads folders and runs the pipeline, so it must serve this page.</div>
+    <div className="shell"><div className="page" style={{maxWidth:640,paddingTop:96}}>
+      <div className="panel">
+        <div className="panel-h"><div>
+          <div className="panel-t" style={{color:"var(--bad)"}}>Cannot reach the backend</div>
+          <div className="panel-d">This page is the interface only — the Python server reads
+            folders and runs the pipeline, so it must serve this page.</div>
         </div></div>
-        <div className="card-body"><CodeBlock text={fatal}/></div>
-        <div className="card-foot">
-          <button className="btn btn-primary" onClick={()=>location.reload()}>
-            <IconRefresh size={13}/> Retry</button>
+        <div className="panel-b"><Code text={fatal}/></div>
+        <div className="panel-b" style={{paddingTop:0}}>
+          <button className="btn btn-pri" onClick={()=>location.reload()}><Sync s={13}/> Retry</button>
         </div>
       </div>
-    </div></div>
-  );
+    </div></div>);
 
   if(!schema||!cfg) return (
-    <div className="app"><div className="main">
-      <div className="stats">{[0,1,2,3].map(i=>
-        <div key={i} className="stat"><div className="skel" style={{height:12,width:"55%"}}/>
-          <div className="skel" style={{height:26,width:"35%",marginTop:8}}/></div>)}
-      </div>
-      <div className="card"><div className="card-body">
-        <div className="skel" style={{height:15,width:180}}/>
-        <div className="skel" style={{height:38,width:"100%",marginTop:14}}/>
-        <div className="skel" style={{height:38,width:"100%",marginTop:10}}/>
+    <div className="shell"><div className="page"><div className="stack">
+      <div className="skel" style={{height:38,width:280}}/>
+      <div className="metrics">{[0,1,2,3].map(i=>(
+        <div className="metric" key={i}>
+          <div className="skel" style={{height:12,width:"55%"}}/>
+          <div className="skel" style={{height:30,width:"38%",marginTop:8}}/>
+        </div>))}</div>
+      <div className="panel"><div className="panel-b">
+        <div className="skel" style={{height:16,width:190}}/>
+        <div className="skel" style={{height:38,marginTop:16}}/>
+        <div className="skel" style={{height:38,marginTop:10}}/>
       </div></div>
-    </div></div>
-  );
+    </div></div></div>);
 
-  const running = !!status?.running;
-  const setOpt=(k,v)=>setCfg(c=>({...c,driver_options:{...c.driver_options,[k]:v}}));
-  const setTop=(k,v)=>setCfg(c=>({...c,[k]:v}));
-  const counts = status?.counts||{};
-  const runs = status?.runs||[];
+  const running=!!status?.running;
+  const setO=(k,v)=>setCfg(c=>({...c,driver_options:{...c.driver_options,[k]:v}}));
+  const setT=(k,v)=>setCfg(c=>({...c,[k]:v}));
+  const counts=status?.counts||{}, runs=status?.runs||[];
 
-  const save    = ()=>act(async()=>{await api("/api/config",{method:"POST",body:JSON.stringify(payload())});},
-                          "Configuration saved");
-  const start   = ()=>act(async()=>{
-                      await api("/api/config",{method:"POST",body:JSON.stringify(payload())});
-                      await api("/api/watcher/start",{method:"POST"});},
-                      "Watcher started", cfg.dry_run?"Dry run — nothing will be launched.":"Completed runs will be analyzed automatically.");
-  const stop    = ()=>act(async()=>{await api("/api/watcher/stop",{method:"POST"});},"Watcher stopped");
-  const doPrev  = ()=>act(async()=>{setPreview(await api("/api/preview",{method:"POST",body:JSON.stringify(payload())}));});
-  const onReset = r=>act(async()=>{await api("/api/runs/reset",{method:"POST",body:JSON.stringify({path:r.path})});},
-                          "Run reset",`${r.run} will be reprocessed.`);
-  const onLog   = r=>act(async()=>{const d=await api(`/api/runs/log?path=${encodeURIComponent(r.log)}`);
-                          setLog({run:r.run,lines:d.lines,path:r.log});});
+  const save   =()=>act_(async()=>{await api("/api/config",{method:"POST",body:JSON.stringify(payload())});},"Configuration saved");
+  const start  =()=>act_(async()=>{
+                    await api("/api/config",{method:"POST",body:JSON.stringify(payload())});
+                    await api("/api/watcher/start",{method:"POST"});},
+                    "Watcher started",cfg.dry_run?"Dry run — nothing will be launched.":"Completed runs will be analyzed automatically.");
+  const stop   =()=>act_(async()=>{await api("/api/watcher/stop",{method:"POST"});},"Watcher stopped");
+  const doPrev =()=>act_(async()=>{setPreview(await api("/api/preview",{method:"POST",body:JSON.stringify(payload())}));});
+  const onReset=r=>act_(async()=>{await api("/api/runs/reset",{method:"POST",body:JSON.stringify({path:r.path})});},
+                    "Run reset",`${r.run} will be processed again.`);
+  const onLog  =r=>act_(async()=>{const d=await api(`/api/runs/log?path=${encodeURIComponent(r.log)}`);
+                    setLog({run:r.run,lines:d.lines,path:r.log});});
 
-  const q=query.trim().toLowerCase();
-  const groups = schema.groups.map(g=>({
-    ...g, fields: g.fields.filter(f=> !q || f.key.toLowerCase().includes(q) ||
-      f.flag.toLowerCase().includes(q) || (f.help||"").toLowerCase().includes(q))
-  })).filter(g=>g.fields.length);
+  const ql=q.trim().toLowerCase();
+  const groups=schema.groups.map(g=>({...g,fields:g.fields.filter(f=>!ql||
+    f.key.toLowerCase().includes(ql)||f.flag.toLowerCase().includes(ql)||
+    (f.help||"").toLowerCase().includes(ql))})).filter(g=>g.fields.length);
+  const modified=Object.entries(cfg.driver_options).filter(([k,v])=>{
+    const s=schema.groups.flatMap(g=>g.fields).find(f=>f.key===k);
+    return s&&v!==s.default&&v!==null&&v!==""&&v!==false;}).length;
 
-  const modifiedCount = Object.entries(cfg.driver_options).filter(([k,v])=>{
-    const spec = schema.groups.flatMap(g=>g.fields).find(f=>f.key===k);
-    return spec && v!==spec.default && v!==null && v!=="" && v!==false;
-  }).length;
-
-  const statCards = [
-    {key:"waiting",   label:"Waiting",   icon:<IconClock size={13}/>},
-    {key:"running",   label:"Analyzing", icon:<IconActivity size={13}/>},
-    {key:"done",      label:"Complete",  icon:<IconCheck size={13}/>},
-    {key:"failed",    label:"Failed",    icon:<IconAlert size={13}/>},
-  ];
+  const active=(counts.running||0)+(counts.dispatched||0);
+  const heroTitle = running
+    ? (active?`Analyzing ${active} job${active>1?"":""}`:"Watching for recordings")
+    : (runs.length?"Watcher stopped":"Ready to watch");
+  const jobsOn=[cfg.run_network&&"Network",cfg.run_activity&&"Activity scan"].filter(Boolean);
 
   return (
-    <div className="app">
-      <h1 className="sr-only">MEA pipeline control</h1>
+    <div className="shell">
+      <h1 className="sr">MEA pipeline control</h1>
 
-      <div className="topbar"><div className="topbar-inner">
-        <div className="brand">
-          <div className="brand-mark"><IconActivity size={17}/></div>
-          <div className="brand-text">
-            <div className="brand-title">MEA Pipeline</div>
-            <div className="brand-sub mono">{cfg.watch_dir||"No input path set"}</div>
-          </div>
-        </div>
-        <div className="topbar-spacer"/>
-        <span className={"badge "+(running?"badge-success":"badge-neutral")}>
-          <span className={"dot"+(running?" dot-pulse":"")}/>
-          {running ? (cfg.dry_run?"Watching · dry run":"Watching") : "Stopped"}
+      <div className="bar"><div className="bar-in">
+        <div className="mark"><Wave s={15}/></div>
+        <div className="wordmark">MEA Pipeline</div>
+        <div className="grow"/>
+        <span className={"pill "+(running?"p-o":"p-n")}>
+          <span className={"dot"+(running?" dot-l":"")}/>
+          {running?(cfg.dry_run?"Dry run":"Watching"):"Stopped"}
         </span>
-        <button className="btn btn-ghost btn-icon" title="Toggle theme"
-                onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} aria-label="Toggle theme">
-          {theme==="dark"?<IconSun size={15}/>:<IconMoon size={15}/>}
-        </button>
+        <button className="btn btn-q btn-i" onClick={()=>setTheme(t=>t==="dark"?"light":"dark")}
+                aria-label="Toggle theme">{theme==="dark"?<Sun s={15}/>:<Moon s={15}/>}</button>
         {running
-          ? <button className="btn btn-danger" onClick={stop} disabled={busy}><IconStop size={13}/> Stop</button>
-          : <button className="btn btn-primary" onClick={start} disabled={busy}><IconPlay size={13}/> Start watching</button>}
+          ? <button className="btn btn-dan" onClick={stop} disabled={busy}><Stop s={12}/> Stop</button>
+          : <button className="btn btn-pri" onClick={start} disabled={busy}><Play s={12}/> Start watching</button>}
       </div></div>
 
-      <div className="main">
-        {cfg.env?.in_container && (
-          <div className="callout callout-info">
-            <span className="callout-icon"><IconInfo size={15}/></span>
-            <div>
-              Running in a container. Mounted paths are identical inside and out
-              {cfg.env.suggested_input && <> — input <code>{cfg.env.suggested_input}</code> (read-only)</>}
-              {cfg.env.suggested_output && <>, output <code>{cfg.env.suggested_output}</code></>}.
+      <div className="page"><div className="stack">
+
+        <div className="hero">
+          <div>
+            <div className="hero-h">{heroTitle}</div>
+            <div className="hero-sub">
+              {cfg.watch_dir
+                ? <>Monitoring <span className="mono">{cfg.watch_dir}</span>
+                    {jobsOn.length?<> · {jobsOn.join(" + ")}</>:null}</>
+                : "No input folder set yet"}
+            </div>
+          </div>
+          <div className="btns">
+            {!running&&<button className="btn" onClick={()=>setShowCfg(s=>!s)}>
+              <Slide s={13}/> {showCfg?"Hide setup":"Show setup"}</button>}
+            <button className="btn" onClick={refresh}><Sync s={13}/> Refresh</button>
+          </div>
+        </div>
+
+        {cfg.env?.in_container&&(
+          <div className="note n-a"><span className="n-i"><Info s={15}/></span>
+            <div>Running in a container. Mounted paths are identical inside and out
+              {cfg.env.suggested_input&&<> — input <code>{cfg.env.suggested_input}</code> (read-only)</>}
+              {cfg.env.suggested_output&&<>, output <code>{cfg.env.suggested_output}</code></>}.
               The input path must be the folder <b>containing</b> your run folders, not a single run.
-            </div>
-          </div>
-        )}
+            </div></div>)}
 
-        <div className="stats">
-          {statCards.map(s=>(
-            <div key={s.key} className="stat" data-active={s.key==="running"&&counts.running>0}>
-              <div className="stat-label">{s.icon}{s.label}</div>
-              <div className="stat-value tnum">{counts[s.key]||0}</div>
-            </div>
-          ))}
+        <div className="metrics">
+          {[{k:"waiting",l:"Waiting",i:<Clock s={12}/>},
+            {k:"running",l:"Analyzing",i:<Wave s={12}/>},
+            {k:"done",l:"Complete",i:<Check s={12}/>},
+            {k:"failed",l:"Failed",i:<Alert s={12}/>}].map(s=>(
+            <div className="metric" key={s.k}
+                 data-live={s.k==="running"&&(counts.running||0)>0}
+                 data-bad={s.k==="failed"&&(counts.failed||0)>0}>
+              <div className="metric-k">{s.i}{s.l}</div>
+              <div className="metric-v tnum">{counts[s.k]||0}</div>
+            </div>))}
         </div>
 
-        <div className="card">
-          <div className="card-head">
-            <div>
-              <div className="card-title">Runs</div>
-              <div className="card-desc">
-                {running ? "Scanning for completed recordings" : "Watcher is stopped"}
-                {status?.candidates?.length ? ` · ${status.candidates.length} folder${status.candidates.length>1?"s":""} in scope` : ""}
-              </div>
+        <div>
+          <div className="sec-h">
+            <div className="sec-t">Runs</div>
+            <div className="sec-d">
+              {running?"Scanning for completed recordings":"Watcher is stopped"}
+              {status?.candidates?.length?` · ${status.candidates.length} folder${status.candidates.length>1?"s":""} in scope`:""}
             </div>
-            <button className="btn btn-sm" onClick={refresh}><IconRefresh size={12}/> Refresh</button>
           </div>
-          <div className="card-body" style={{padding:runs.length?0:undefined,paddingTop:runs.length?12:undefined}}>
-            {runs.length===0 ? (
-              <div className="empty">
-                <div className="empty-icon"><IconInbox size={20}/></div>
-                <div className="empty-title">No runs yet</div>
-                <div className="empty-desc">
-                  {status?.candidates?.length
-                    ? <>Found <b>{status.candidates.join(", ")}</b> in the input folder.
-                        Start the watcher to begin checking whether they have finished copying.</>
-                    : <>Set an input path below, then start the watcher. Run folders containing
-                        a recording file will appear here as they are detected.</>}
-                </div>
-              </div>
-            ) : (
-              <div className="runs">
-                {runs.map(r=><RunRow key={r.path} run={r} onLog={onLog} onReset={onReset}/>)}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-head">
-            <div>
-              <div className="card-title"><IconTerminal size={15}/> Activity</div>
-              <div className="card-desc">
-                Live watcher output — detection, settle windows, and dispatches
-              </div>
-            </div>
-            {activity.length>0 && (
-              <button className="btn btn-sm btn-ghost" onClick={()=>setActivity([])}>Clear</button>
-            )}
-          </div>
-          <div className="card-body">
-            <LiveLog lines={activity} follow={follow} onToggleFollow={setFollow}/>
-          </div>
-        </div>
-
-        {log && (
-          <div className="card">
-            <div className="card-head">
-              <div><div className="card-title"><IconTerminal size={15}/> Pipeline log · {log.run}</div>
-                   <div className="card-desc">
-                     Last {log.lines.length} lines
-                     {(status?.runs||[]).some(r=>r.log===log.path&&(r.status==="running"||r.status==="dispatched"))
-                       && " · following live"}
-                   </div></div>
-              <button className="btn btn-sm btn-ghost btn-icon" onClick={()=>setLog(null)} aria-label="Close log">
-                <IconX size={14}/></button>
-            </div>
-            <div className="card-body"><CodeBlock text={log.lines.join("\n")} scroll/></div>
-          </div>
-        )}
-
-        <div className="cols">
-          <div style={{display:"flex",flexDirection:"column",gap:"var(--sp-6)"}}>
-            <div className="card">
-              <div className="card-head"><div>
-                <div className="card-title">Paths</div>
-                <div className="card-desc">Where recordings arrive, and where results are written</div>
-              </div></div>
-              <div className="card-body" style={{display:"flex",flexDirection:"column",gap:"var(--sp-5)"}}>
-                <div className="field">
-                  <label className="label" htmlFor="in">Input folder</label>
-                  <div className="input-group">
-                    <input id="in" className="input input-mono" value={cfg.watch_dir}
-                           placeholder="/home/user/MEA" disabled={running}
-                           onChange={e=>setTop("watch_dir",e.target.value)}/>
-                    <button className="btn" disabled={running}
-                            onClick={()=>setBrowsing(browsing==="in"?null:"in")}>
-                      <IconFolder size={13}/> Browse</button>
+          <div className="panel">
+            {runs.length===0
+              ? <div className="empty">
+                  <div className="empty-i"><Inbox s={21}/></div>
+                  <div className="empty-t">No runs yet</div>
+                  <div className="empty-d">
+                    {status?.candidates?.length
+                      ? <>Found <b>{status.candidates.join(", ")}</b> in the input folder.
+                          Start the watcher to begin checking whether they have finished copying.</>
+                      : <>Set an input folder below, then start the watcher. Run folders containing
+                          a recording will appear here as they are detected.</>}
                   </div>
-                  <span className="hint">The folder that contains run folders such as <code className="mono">000041</code> — not a single run.</span>
-                  {browsing==="in" && <Browser initial={cfg.watch_dir} onClose={()=>setBrowsing(null)}
-                                               onPick={p=>setTop("watch_dir",p)}/>}
                 </div>
-                <div className="field">
-                  <label className="label" htmlFor="out">Output folder</label>
-                  <div className="input-group">
-                    <input id="out" className="input input-mono" value={cfg.driver_options.output_dir??""}
-                           placeholder="/home/user/AnalyzedData" disabled={running}
-                           onChange={e=>setOpt("output_dir",e.target.value||null)}/>
-                    <button className="btn" disabled={running}
-                            onClick={()=>setBrowsing(browsing==="out"?null:"out")}>
-                      <IconFolder size={13}/> Browse</button>
-                  </div>
-                  <span className="hint">Passed to the pipeline as <code className="mono">--output-dir</code>.</span>
-                  {browsing==="out" && <Browser initial={cfg.driver_options.output_dir||""} onClose={()=>setBrowsing(null)}
-                                                onPick={p=>setOpt("output_dir",p)}/>}
-                </div>
-              </div>
+              : <div className="rows">{runs.map(r=>
+                  <Row key={r.path} run={r} onLog={onLog} onReset={onReset}/>)}</div>}
+          </div>
+        </div>
+
+        {log&&(
+          <div>
+            <div className="sec-h">
+              <div className="sec-t">Pipeline log</div>
+              <div className="sec-d">{log.run} · last {log.lines.length} lines
+                {(status?.runs||[]).some(r=>r.log===log.path&&(r.status==="running"||r.status==="dispatched"))&&" · following live"}</div>
+              <div className="grow"/>
+              <button className="btn btn-q btn-s btn-i" onClick={()=>setLog(null)} aria-label="Close"><Ex s={14}/></button>
             </div>
+            <div className="panel"><div className="panel-b"><Code text={log.lines.join("\n")} scroll/></div></div>
+          </div>)}
 
-            <div className="card">
-              <div className="card-head"><div>
-                <div className="card-title">Analyses</div>
-                <div className="card-desc">Run independently, tracked separately, separate outputs</div>
-              </div></div>
-              <div className="card-body">
-                <Switch id="net" checked={cfg.run_network} disabled={running}
-                        onChange={v=>setTop("run_network",v)}
-                        label="Network — spike sorting"
-                        hint="run_pipeline_driver.py: Kilosort4, curation, burst analysis. Needs a GPU; hours per chip."/>
-                <Switch id="act" checked={cfg.run_activity} disabled={running}
-                        onChange={v=>setTop("run_activity",v)}
-                        label="Activity scan — whole-array maps"
-                        hint="activity_scan.py: electrode activity maps, QC metrics, figures. CPU only; seconds per chip."/>
+        <div>
+          <div className="sec-h">
+            <div className="sec-t">Activity</div>
+            <div className="sec-d">Live watcher output — detection, settle windows, dispatches</div>
+          </div>
+          <div className="panel"><div className="panel-b">
+            <LiveLog lines={act} follow={follow} setFollow={setFollow} onClear={()=>setAct([])}/>
+          </div></div>
+        </div>
 
-                {cfg.run_activity && (
-                  <>
-                    <div className="divider"/>
-                    <div className="field">
-                      <label className="label" htmlFor="actout">Activity scan output</label>
-                      <input id="actout" className="input input-mono" disabled={running}
-                             placeholder="(defaults to <output folder>/ActivityScan)"
-                             value={cfg.activity_output_dir??""}
-                             onChange={e=>setTop("activity_output_dir",e.target.value)}/>
-                      <span className="hint">Kept separate from the spike-sorting output.</span>
+        {running&&(
+          <div className="panel"><div className="strip">
+            <span>Settle <b className="tnum">{cfg.settle_seconds}s</b></span>
+            <span>Poll <b className="tnum">{cfg.poll_seconds}s</b></span>
+            <span>Analyses <b>{jobsOn.join(" + ")||"none"}</b></span>
+            <span>Output <b className="mono">{cfg.driver_options.output_dir||"—"}</b></span>
+            <div className="grow"/>
+            <span style={{color:"var(--ink-3)"}}>Stop the watcher to edit</span>
+          </div></div>)}
+
+        {showCfg&&!running&&(<>
+          <div>
+            <div className="sec-h">
+              <div className="sec-t">Setup</div>
+              <div className="sec-d">Where recordings arrive, and what runs when they do</div>
+            </div>
+            <div className="grid2">
+              <div className="panel">
+                <div className="panel-h"><div><div className="panel-t">Folders</div></div></div>
+                <div className="panel-b" style={{display:"flex",flexDirection:"column",gap:"var(--s5)"}}>
+                  <div className="f">
+                    <label className="f-l" htmlFor="in">Input</label>
+                    <div className="f-row">
+                      <input id="in" className="inp mono" value={cfg.watch_dir}
+                             placeholder="/home/user/MEA" onChange={e=>setT("watch_dir",e.target.value)}/>
+                      <button className="btn" onClick={()=>setBrowsing(browsing==="in"?null:"in")}>
+                        <Folder s={13}/></button>
                     </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"var(--sp-4)",marginTop:"var(--sp-3)"}}>
-                      <div className="field">
-                        <label className="label" htmlFor="acthz">Active threshold (Hz)</label>
-                        <input id="acthz" className="input tnum" type="number" step="0.01" min="0"
-                               disabled={running} value={cfg.activity_active_hz}
-                               onChange={e=>setTop("activity_active_hz",e.target.value)}/>
-                        <span className="hint">Rate above which an electrode counts as active.</span>
-                      </div>
-                      <div className="field">
-                        <label className="label" htmlFor="actsub">Assay folder</label>
-                        <input id="actsub" className="input input-mono" disabled={running}
-                               value={cfg.activity_subfolder??""}
-                               onChange={e=>setTop("activity_subfolder",e.target.value)}/>
-                        <span className="hint">Folder holding the scans.</span>
-                      </div>
+                    <span className="f-h">Folder containing run folders such as <code className="mono">000041</code>.</span>
+                    {browsing==="in"&&<Browser initial={cfg.watch_dir} onClose={()=>setBrowsing(null)}
+                                               onPick={p=>setT("watch_dir",p)}/>}
+                  </div>
+                  <div className="f">
+                    <label className="f-l" htmlFor="out">Output</label>
+                    <div className="f-row">
+                      <input id="out" className="inp mono" value={cfg.driver_options.output_dir??""}
+                             placeholder="/home/user/AnalyzedData"
+                             onChange={e=>setO("output_dir",e.target.value||null)}/>
+                      <button className="btn" onClick={()=>setBrowsing(browsing==="out"?null:"out")}>
+                        <Folder s={13}/></button>
                     </div>
-                    <Switch id="actfig" checked={cfg.activity_figures} disabled={running}
-                            onChange={v=>setTop("activity_figures",v)}
-                            label="Generate figures"
-                            hint="Activity and amplitude maps, plate overview, group comparison."/>
-                  </>
-                )}
-
-                {!cfg.run_network && !cfg.run_activity && (
-                  <div className="callout callout-danger" style={{marginTop:"var(--sp-3)"}}>
-                    <span className="callout-icon"><IconAlert size={15}/></span>
-                    <div>Enable at least one analysis, or nothing will run.</div>
+                    <span className="f-h">Passed as <code className="mono">--output-dir</code>.</span>
+                    {browsing==="out"&&<Browser initial={cfg.driver_options.output_dir||""} onClose={()=>setBrowsing(null)}
+                                                onPick={p=>setO("output_dir",p)}/>}
                   </div>
-                )}
+                </div>
+              </div>
+
+              <div className="panel">
+                <div className="panel-h"><div><div className="panel-t">Detection</div></div></div>
+                <div className="panel-b">
+                  <div className="grid2">
+                    <div className="f">
+                      <label className="f-l" htmlFor="set">Settle window</label>
+                      <input id="set" className="inp tnum" type="number" min="1"
+                             value={cfg.settle_seconds} onChange={e=>setT("settle_seconds",e.target.value)}/>
+                      <span className="f-h">Seconds of no change before a run counts as complete.</span>
+                    </div>
+                    <div className="f">
+                      <label className="f-l" htmlFor="pol">Poll interval</label>
+                      <input id="pol" className="inp tnum" type="number" min="1"
+                             value={cfg.poll_seconds} onChange={e=>setT("poll_seconds",e.target.value)}/>
+                      <span className="f-h">How often the folder is checked.</span>
+                    </div>
+                  </div>
+                  <div className="sep"/>
+                  <Switch id="mk" checked={cfg.require_finished_marker}
+                          onChange={v=>setT("require_finished_marker",v)}
+                          label="Require MaxWell completion marker"
+                          hint="Also wait for finished= in mxassay.metadata."/>
+                  <Switch id="skip" checked={cfg.skip_settle_for_existing}
+                          onChange={v=>setT("skip_settle_for_existing",v)}
+                          label="Folders already here are ready"
+                          hint="Start analyzing existing folders immediately, skipping the settle window. Use when the copy already finished. Folders arriving later still wait the full window."/>
+                  <Switch id="dry" checked={cfg.dry_run} onChange={v=>setT("dry_run",v)}
+                          label="Dry run"
+                          hint="Detect and record the command, but never launch."/>
+                  {cfg.dry_run&&<div className="note n-w" style={{marginTop:"var(--s3)"}}>
+                    <span className="n-i"><Info s={15}/></span>
+                    <div>Runs will stop at <b>Detected</b>. Turn this off and save to run for real —
+                      already-detected runs are cleared automatically.</div></div>}
+                </div>
               </div>
             </div>
-
-            <div className="card">
-              <div className="card-head"><div>
-                <div className="card-title">Completion detection</div>
-                <div className="card-desc">A run is only analyzed once its folder has stopped changing</div>
-              </div></div>
-              <div className="card-body">
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"var(--sp-4)"}}>
-                  <div className="field">
-                    <label className="label" htmlFor="settle">Settle window</label>
-                    <input id="settle" className="input tnum" type="number" min="1" disabled={running}
-                           value={cfg.settle_seconds} onChange={e=>setTop("settle_seconds",e.target.value)}/>
-                    <span className="hint">Seconds of no change before a run counts as complete.</span>
-                  </div>
-                  <div className="field">
-                    <label className="label" htmlFor="poll">Poll interval</label>
-                    <input id="poll" className="input tnum" type="number" min="1" disabled={running}
-                           value={cfg.poll_seconds} onChange={e=>setTop("poll_seconds",e.target.value)}/>
-                    <span className="hint">How often the input folder is checked.</span>
-                  </div>
-                </div>
-                <div className="field" style={{marginTop:"var(--sp-4)"}}>
-                  <label className="label" htmlFor="glob">Recording filename</label>
-                  <input id="glob" className="input input-mono" value={cfg.h5_glob} disabled={running}
-                         onChange={e=>setTop("h5_glob",e.target.value)}/>
-                </div>
-                <div className="divider"/>
-                <Switch id="marker" checked={cfg.require_finished_marker} disabled={running}
-                        onChange={v=>setTop("require_finished_marker",v)}
-                        label="Require MaxWell completion marker"
-                        hint="Also wait for finished= in mxassay.metadata before analyzing."/>
-                <Switch id="dry" checked={cfg.dry_run} onChange={v=>setTop("dry_run",v)} disabled={running}
-                        label="Dry run"
-                        hint="Detect completed runs and record the command, but never launch the pipeline."/>
-                {cfg.dry_run && (
-                  <div className="callout callout-warn" style={{marginTop:"var(--sp-3)"}}>
-                    <span className="callout-icon"><IconInfo size={15}/></span>
-                    <div>Dry run is on — runs will stop at <b>Detected</b> and nothing will be
-                    analyzed. Turn it off and save to run for real; already-detected runs are
-                    cleared automatically.</div>
-                  </div>
-                )}
-              </div>
-              <div className="card-foot">
-                <button className="btn" onClick={save} disabled={running||busy}>Save configuration</button>
-                <button className="btn" onClick={doPrev} disabled={busy}>
-                  <IconTerminal size={13}/> Preview command</button>
-                {running && <span className="hint" style={{marginLeft:"auto"}}>Stop the watcher to edit</span>}
-              </div>
-            </div>
-
-            {preview && (
-              <div className="card">
-                <div className="card-head"><div>
-                  <div className="card-title">Command preview</div>
-                  <div className="card-desc">
-                    {preview.detected_runs?.length
-                      ? <>Would run for <b>{preview.example_run}</b> · detected: {preview.detected_runs.join(", ")}</>
-                      : "No run folders detected in the input path yet"}
-                  </div>
-                </div></div>
-                <div className="card-body" style={{display:"flex",flexDirection:"column",gap:"var(--sp-4)"}}>
-                  {(preview.commands?.length ? preview.commands : [{job:"network",job_label:"Command",command:preview.command}])
-                    .map(c=>(
-                      <div key={c.job}>
-                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
-                          <span style={{width:6,height:6,borderRadius:"50%",
-                            background:c.job==="activity"?"#1baf7a":"#4f46e5"}}/>
-                          <span style={{fontSize:12.5,fontWeight:500}}>{c.job_label}</span>
-                        </div>
-                        <CodeBlock text={c.command}/>
-                      </div>
-                    ))}
-                  {preview.commands && preview.commands.length===0 && (
-                    <div className="hint">No analyses enabled.</div>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
 
-          <div className="card">
-            <div className="card-head"><div>
-              <div className="card-title">Pipeline options</div>
-              <div className="card-desc">
-                Passed to run_pipeline_driver.py · {modifiedCount} changed from default
-              </div>
+          <div className="panel">
+            <div className="panel-h"><div>
+              <div className="panel-t">Analyses</div>
+              <div className="panel-d">Independent jobs — separate outputs, separate status</div>
             </div></div>
-            <div className="card-body">
-              <div className="opt-toolbar">
-                <div className="opt-search">
-                  <span className="opt-search-icon"><IconSearch size={14}/></span>
-                  <input className="input" placeholder="Search options…" value={query}
-                         onChange={e=>setQuery(e.target.value)} aria-label="Search options"/>
-                </div>
-                {query && <button className="btn btn-sm btn-ghost" onClick={()=>setQuery("")}>Clear</button>}
+            <div className="panel-b">
+              <div className="grid2">
+                <Switch id="net" checked={cfg.run_network} onChange={v=>setT("run_network",v)}
+                        label="Network — spike sorting"
+                        hint="Kilosort4, curation, burst analysis. Needs a GPU; hours per chip."/>
+                <Switch id="ac" checked={cfg.run_activity} onChange={v=>setT("run_activity",v)}
+                        label="Activity scan — whole-array maps"
+                        hint="Activity maps, QC metrics, network bursts. CPU only; seconds per chip."/>
               </div>
-
-              {groups.length===0 && (
-                <div className="empty" style={{padding:"32px 0"}}>
-                  <div className="empty-title">No matching options</div>
-                  <div className="empty-desc">Try a different search term.</div>
-                </div>
-              )}
-
-              {groups.map(g=>{
-                const open = q ? true : !!openGroups[g.group];
-                return (
-                  <div className="group" key={g.group}>
-                    <button className="group-head" onClick={()=>setOpenGroups(o=>({...o,[g.group]:!o[g.group]}))}
-                            aria-expanded={open}>
-                      <span className="chev" data-open={open}><IconChev size={13}/></span>
-                      <span className="group-name">{g.group}</span>
-                      <span className="group-count">{g.fields.length}</span>
-                    </button>
-                    {open && (
-                      <div className="group-body">
-                        {g.fields.map(f=>(
-                          <Field key={f.key} spec={f} value={cfg.driver_options[f.key]} onChange={setOpt}/>
-                        ))}
-                      </div>
-                    )}
+              {cfg.run_activity&&(<>
+                <div className="sep"/>
+                <div className="grid2">
+                  <div className="f">
+                    <label className="f-l" htmlFor="ao">Activity output</label>
+                    <input id="ao" className="inp mono" placeholder="(defaults to <output>/ActivityScan)"
+                           value={cfg.activity_output_dir??""}
+                           onChange={e=>setT("activity_output_dir",e.target.value)}/>
+                    <span className="f-h">Kept separate from spike-sorting output.</span>
                   </div>
-                );
-              })}
+                  <div className="grid2">
+                    <div className="f">
+                      <label className="f-l" htmlFor="ah">Active threshold</label>
+                      <input id="ah" className="inp tnum" type="number" step="0.01" min="0"
+                             value={cfg.activity_active_hz}
+                             onChange={e=>setT("activity_active_hz",e.target.value)}/>
+                      <span className="f-h">Hz</span>
+                    </div>
+                    <div className="f">
+                      <label className="f-l" htmlFor="as">Assay folder</label>
+                      <input id="as" className="inp mono" value={cfg.activity_subfolder??""}
+                             onChange={e=>setT("activity_subfolder",e.target.value)}/>
+                      <span className="f-h">Holds the scans</span>
+                    </div>
+                  </div>
+                </div>
+                <Switch id="af" checked={cfg.activity_figures} onChange={v=>setT("activity_figures",v)}
+                        label="Generate figures"
+                        hint="Activity maps, rasters, connectivity, plate overview."/>
+              </>)}
+              <div className="sep"/>
+              <div className="grid2">
+                <div className="f">
+                  <label className="f-l" htmlFor="cn">Concurrent Network jobs</label>
+                  <input id="cn" className="inp tnum" type="number" min="1" max="8"
+                         value={cfg.max_concurrent_network??1}
+                         onChange={e=>setT("max_concurrent_network",e.target.value)}/>
+                  <span className="f-h">Kilosort4 reserves several GB of VRAM — two at once will
+                    exhaust a single GPU. Extra jobs queue. Raise only with multiple GPUs.</span>
+                </div>
+                <div className="f">
+                  <label className="f-l" htmlFor="ca">Concurrent Activity jobs</label>
+                  <input id="ca" className="inp tnum" type="number" min="1" max="16"
+                         value={cfg.max_concurrent_activity??2}
+                         onChange={e=>setT("max_concurrent_activity",e.target.value)}/>
+                  <span className="f-h">CPU only, so this can be higher. Never waits behind
+                    spike sorting.</span>
+                </div>
+                <div className="f">
+                  <label className="f-l" htmlFor="cool">GPU cooldown</label>
+                  <input id="cool" className="inp tnum" type="number" min="0" max="600"
+                         value={cfg.gpu_cooldown_seconds??5}
+                         onChange={e=>setT("gpu_cooldown_seconds",e.target.value)}/>
+                  <span className="f-h">Seconds to wait before starting the next queued Network
+                    job. CUDA memory is not always released the moment a process exits.</span>
+                </div>
+                <div className="f">
+                  <label className="f-l" htmlFor="qp">Queue check interval</label>
+                  <input id="qp" className="inp tnum" type="number" min="1" max="120"
+                         value={cfg.queue_poll_seconds??2}
+                         onChange={e=>setT("queue_poll_seconds",e.target.value)}/>
+                  <span className="f-h">How often a queued job looks for a free slot.</span>
+                </div>
+              </div>
+              {!cfg.run_network&&!cfg.run_activity&&
+                <div className="note n-b" style={{marginTop:"var(--s3)"}}>
+                  <span className="n-i"><Alert s={15}/></span>
+                  <div>Enable at least one analysis, or nothing will run.</div></div>}
             </div>
           </div>
-        </div>
-      </div>
 
-      <Toasts items={toasts} dismiss={dismiss}/>
+          <div>
+            <div className="sec-h">
+              <div className="sec-t">Pipeline options</div>
+              <div className="sec-d">
+                Passed to run_pipeline_driver.py · {modified} changed from default
+              </div>
+            </div>
+            <div className="panel"><div className="panel-b">
+              <div className="opt-bar">
+                <div className="srch">
+                  <span className="srch-i"><Search s={14}/></span>
+                  <input className="inp" placeholder="Search options…" value={q}
+                         onChange={e=>setQ(e.target.value)} aria-label="Search options"/>
+                </div>
+                {q&&<button className="btn btn-q btn-s" onClick={()=>setQ("")}>Clear</button>}
+              </div>
+              {groups.length===0
+                ? <div className="empty" style={{padding:"36px 0"}}>
+                    <div className="empty-t">No matching options</div>
+                    <div className="empty-d">Try a different search term.</div></div>
+                : <div className="groups">{groups.map(g=>{
+                    const o=ql?true:!!open[g.group];
+                    return (
+                      <div className="grp" key={g.group}>
+                        <button className="grp-h" onClick={()=>setOpen(x=>({...x,[g.group]:!x[g.group]}))}
+                                aria-expanded={o}>
+                          <span className="chev" data-o={o}><Chev s={12}/></span>
+                          <span className="grp-n">{g.group}</span>
+                          <span className="grp-c">{g.fields.length}</span>
+                        </button>
+                        {o&&<div className="grp-b">{g.fields.map(f=>
+                          <Field key={f.key} spec={f} value={cfg.driver_options[f.key]} onChange={setO}/>)}</div>}
+                      </div>);})}</div>}
+            </div></div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-b" style={{display:"flex",gap:"var(--s2)",flexWrap:"wrap",alignItems:"center"}}>
+              <button className="btn btn-pri" onClick={start} disabled={busy}>
+                <Play s={12}/> Start watching</button>
+              <button className="btn" onClick={save} disabled={busy}>Save configuration</button>
+              <button className="btn" onClick={doPrev} disabled={busy}><Term s={13}/> Preview command</button>
+            </div>
+          </div>
+
+          {preview&&(
+            <div>
+              <div className="sec-h">
+                <div className="sec-t">Command preview</div>
+                <div className="sec-d">
+                  {preview.detected_runs?.length
+                    ? <>For <b>{preview.example_run}</b> · detected: {preview.detected_runs.join(", ")}</>
+                    : "No run folders detected yet"}
+                </div>
+              </div>
+              <div className="panel"><div className="panel-b"
+                   style={{display:"flex",flexDirection:"column",gap:"var(--s5)"}}>
+                {(preview.commands?.length?preview.commands:
+                  [{job:"network",job_label:"Command",command:preview.command}]).map(c=>(
+                  <div key={c.job}>
+                    <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8}}>
+                      <span className="dot" style={{background:c.job==="activity"?"var(--ok)":"var(--accent)"}}/>
+                      <span style={{fontSize:12.5,fontWeight:600,letterSpacing:"-.01em"}}>{c.job_label}</span>
+                    </div>
+                    <Code text={c.command}/>
+                  </div>))}
+                {preview.commands&&preview.commands.length===0&&
+                  <div className="f-h">No analyses enabled.</div>}
+              </div></div>
+            </div>)}
+        </>)}
+      </div></div>
+
+      <Toasts items={toasts} close={id=>setToasts(t=>t.filter(x=>x.id!==id))}/>
     </div>
   );
 }

@@ -104,9 +104,33 @@ class JobConfig:
     activity_active_hz: float = 0.05
     activity_figures: bool = True
 
+    # --- Concurrency --------------------------------------------------------
+    # Kilosort4 holds many GB of VRAM, so two Network jobs on one GPU will
+    # OOM. Jobs beyond the limit queue instead of running; they are shown as
+    # "Queued" in the UI. Activity scans are CPU-only and cheap, so they get a
+    # separate, larger limit and never wait behind spike sorting.
+    max_concurrent_network: int = 1
+    max_concurrent_activity: int = 2
+    # Pause after a job releases its slot, before the next queued job starts.
+    # CUDA memory is not always returned the instant a process exits, so a
+    # queued Kilosort run starting immediately can still hit OOM. Applies to
+    # GPU work only; activity scans are not delayed.
+    gpu_cooldown_seconds: int = 5
+    # How often a queued job re-checks for a free slot.
+    queue_poll_seconds: int = 2
+
     settle_seconds: int = 600
     poll_seconds: int = 30
     require_finished_marker: bool = True
+    # Treat folders that already exist when watching starts as complete, and
+    # dispatch them on the first poll instead of waiting out the settle window.
+    #
+    # The settle window exists to catch a copy that is still in flight. If you
+    # start the watcher *after* the copy finished, that wait buys nothing. This
+    # is deliberately a manual assertion rather than something inferred: only
+    # the operator knows whether the transfer is done. Folders that appear
+    # *after* start are unaffected and still wait the full window.
+    skip_settle_for_existing: bool = False
 
     # Execution
     driver: str = str(DEFAULT_DRIVER)
@@ -358,11 +382,35 @@ class Watcher:
         # run_key -> (fingerprint, observed_at) from the previous poll
         self._prints: dict[str, tuple[tuple[int, int, float], float]] = {}
 
+        # One semaphore per analysis type. Acquired inside the worker thread, so
+        # a queued job holds no resources while it waits.
+        self._slots = {
+            JOB_NETWORK: threading.Semaphore(max(1, cfg.max_concurrent_network)),
+            JOB_ACTIVITY: threading.Semaphore(max(1, cfg.max_concurrent_activity)),
+        }
+        self._active: dict[str, int] = {JOB_NETWORK: 0, JOB_ACTIVITY: 0}
+        self._preexisting: set[str] = set()
+        self._active_lock = threading.Lock()
+
     # -- lifecycle ---------------------------------------------------------- #
     def start(self) -> None:
         if self.is_running:
             return
         self._stop.clear()
+
+        # Snapshot what is already on disk. Only these folders may skip the
+        # settle window — anything arriving later could still be copying.
+        self._preexisting = set()
+        if self.cfg.skip_settle_for_existing:
+            try:
+                self._preexisting = {str(d.resolve()) for d, _ in self.scan_candidates()}
+                if self._preexisting:
+                    LOG.info("Settle window skipped for %d folder(s) already present: %s",
+                             len(self._preexisting),
+                             ", ".join(sorted(Path(p).name for p in self._preexisting)))
+            except Exception:  # noqa: BLE001
+                LOG.exception("Could not snapshot existing folders; all will settle normally")
+
         self._thread = threading.Thread(target=self._loop, name="mea-watcher", daemon=True)
         self._thread.start()
         LOG.info("Watcher started on %s", self.cfg.watch_dir)
@@ -431,32 +479,50 @@ class Watcher:
             if not pending:
                 continue
 
-            # Completion is a property of the folder, so it is checked once and
-            # shared by both analyses.
+            # Quiescence is a property of the folder, so it is computed once and
+            # shared. The completion marker is per assay, so it is checked per
+            # job — one analysis must never gate the other.
             ready, detail = self._check_ready(run_dir, str(resolved), jobs)
             for job in pending:
                 key = self.state_key(resolved, job)
-                if ready:
+                if not self.marker_ok(run_dir, job):
+                    self.state.update(
+                        key, status="waiting", job=job, run=run_dir.name,
+                        detail=f"waiting for MaxWell 'finished' marker in "
+                               f"{self.cfg.subfolder_for(job)}",
+                        last_seen=_now())
+                elif ready:
                     self.dispatch(run_dir, job, detail=detail)
                 else:
                     self.state.update(key, status="waiting", detail=detail,
                                       job=job, run=run_dir.name, last_seen=_now())
 
+    def marker_ok(self, run_dir: Path, job: str) -> bool:
+        """Whether *this analysis's* assay folder is marked complete.
+
+        Checked per job, never across jobs: an ActivityScan without a finished
+        marker must not hold back the Network analysis, or vice versa. The two
+        analyses are independent and a missing marker in one assay says nothing
+        about the other.
+        """
+        if not self.cfg.require_finished_marker:
+            return True
+        return has_finished_marker(run_dir, self.cfg.h5_glob, self.cfg.subfolder_for(job))
+
     def _check_ready(self, run_dir: Path, key: str,
                      jobs: Optional[list[str]] = None) -> tuple[bool, str]:
-        """Stateless-across-polls completion check (never blocks).
+        """Folder-level quiescence check (never blocks).
 
-        ``jobs`` is passed in by the scan loop so the tree is not walked again.
+        Only about whether the folder has stopped changing — that is a property
+        of the folder and is shared by both analyses. Per-job marker checks are
+        handled separately by ``marker_ok``.
         """
-        if jobs is None:
-            jobs = self.jobs_for(run_dir)
-        # Check markers across every assay folder we are going to analyze, so a
-        # still-recording activity scan holds back its own job too.
-        subfolders = [self.cfg.subfolder_for(j) for j in jobs]
-        if self.cfg.require_finished_marker and not all(
-                has_finished_marker(run_dir, self.cfg.h5_glob, sf) for sf in subfolders or [None]):
-            self._prints.pop(key, None)
-            return False, "waiting for MaxWell 'finished' marker"
+        # Operator asserted this folder was already fully copied before watching
+        # started, so there is nothing to wait for.
+        if key in getattr(self, "_preexisting", ()):
+            fp = folder_fingerprint(run_dir)
+            gb = fp[1] / 1e9 if fp[1] > 0 else 0
+            return True, f"already present at start ({fp[0]} files, {gb:.1f} GB)"
 
         now = time.time()
         current = folder_fingerprint(run_dir)
@@ -563,12 +629,49 @@ class Watcher:
     def _run_job(self, run_dir: Path, job: str, key: str,
                  cmd: list[str], log_path: Path) -> None:
         label = JOB_LABELS.get(job, job)
+        slot = self._slots.get(job)
+        limit = (self.cfg.max_concurrent_network if job == JOB_NETWORK
+                 else self.cfg.max_concurrent_activity)
+
+        # Wait for a slot before starting. Kilosort4 reserves many GB of VRAM,
+        # so two concurrent Network jobs OOM on a single GPU. The run stays
+        # "Queued" while waiting and holds nothing.
+        if slot is not None and not slot.acquire(blocking=False):
+            with self._active_lock:
+                busy = self._active.get(job, 0)
+            LOG.info("%s [%s] queued — %d/%d %s slot(s) busy",
+                     run_dir.name, label, busy, limit, label.lower())
+            self.state.update(key, detail=f"queued — waiting for a free {label.lower()} slot")
+            self.on_event("queued", {"run": run_dir.name, "job": job})
+            wait = max(1, self.cfg.queue_poll_seconds)
+            while not self._stop.is_set():
+                if slot.acquire(timeout=wait):
+                    break
+            else:
+                self.state.update(key, status="failed", completed_at=_now(),
+                                  error="watcher stopped before the job could start")
+                return
+
+            # Let the previous job's GPU memory actually be reclaimed.
+            cool = self.cfg.gpu_cooldown_seconds if job == JOB_NETWORK else 0
+            if cool > 0:
+                LOG.info("%s [%s] waiting %ss for GPU memory to free", run_dir.name, label, cool)
+                self.state.update(key, detail=f"starting in {cool}s (GPU cooldown)")
+                self._stop.wait(cool)
+
         started = time.time()
+        with self._active_lock:
+            self._active[job] = self._active.get(job, 0) + 1
         self.state.update(key, status="running", started_at=_now())
         self.on_event("running", {"run": run_dir.name, "job": job})
         try:
+            env = dict(os.environ)
+            # Reduces CUDA fragmentation, which is what the allocator suggests
+            # after an OOM. Harmless for the CPU-only activity scan.
+            env.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
             with open(log_path, "w") as fh:
-                proc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, check=False)
+                proc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT,
+                                      check=False, env=env)
             ok = proc.returncode == 0
             self.state.update(
                 key,
@@ -586,6 +689,12 @@ class Watcher:
             self.state.update(key, status="failed", completed_at=_now(), error=str(exc))
             LOG.exception("%s [%s]: dispatch raised", run_dir.name, label)
             self.on_event("failed", {"run": run_dir.name, "job": job, "error": str(exc)})
+        finally:
+            # Always release, so one crashed job cannot deadlock the queue.
+            with self._active_lock:
+                self._active[job] = max(0, self._active.get(job, 1) - 1)
+            if slot is not None:
+                slot.release()
 
     # -- status for the UI --------------------------------------------------- #
     def snapshot(self) -> dict[str, Any]:
@@ -614,6 +723,9 @@ class Watcher:
             "output_dir": self.cfg.output_dir,
             "activity_output_dir": self.cfg.activity_out,
             "enabled_jobs": self.cfg.enabled_jobs(),
+            "active_jobs": dict(self._active),
+            "limits": {JOB_NETWORK: self.cfg.max_concurrent_network,
+                       JOB_ACTIVITY: self.cfg.max_concurrent_activity},
             "counts": counts,
             "counts_by_job": by_job,
             "runs": runs,

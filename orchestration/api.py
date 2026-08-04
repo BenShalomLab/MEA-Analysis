@@ -124,9 +124,14 @@ class ConfigPayload(BaseModel):
     activity_output_dir: str = ""
     activity_active_hz: float = 0.05
     activity_figures: bool = True
+    max_concurrent_network: int = 1
+    max_concurrent_activity: int = 2
+    gpu_cooldown_seconds: int = 5
+    queue_poll_seconds: int = 2
     settle_seconds: int = 600
     poll_seconds: int = 30
     require_finished_marker: bool = True
+    skip_settle_for_existing: bool = False
     dry_run: bool = False
 
 
@@ -186,9 +191,14 @@ def api_get_config():
         "activity_output_dir": cfg.activity_output_dir,
         "activity_active_hz": cfg.activity_active_hz,
         "activity_figures": cfg.activity_figures,
+        "max_concurrent_network": cfg.max_concurrent_network,
+        "max_concurrent_activity": cfg.max_concurrent_activity,
+        "gpu_cooldown_seconds": cfg.gpu_cooldown_seconds,
+        "queue_poll_seconds": cfg.queue_poll_seconds,
         "settle_seconds": cfg.settle_seconds,
         "poll_seconds": cfg.poll_seconds,
         "require_finished_marker": cfg.require_finished_marker,
+        "skip_settle_for_existing": cfg.skip_settle_for_existing,
         "dry_run": cfg.dry_run,
         "work_dir": cfg.work_dir,
     }
@@ -218,9 +228,14 @@ def api_set_config(payload: ConfigPayload):
         activity_output_dir=payload.activity_output_dir,
         activity_active_hz=payload.activity_active_hz,
         activity_figures=payload.activity_figures,
+        max_concurrent_network=payload.max_concurrent_network,
+        max_concurrent_activity=payload.max_concurrent_activity,
+        gpu_cooldown_seconds=payload.gpu_cooldown_seconds,
+        queue_poll_seconds=payload.queue_poll_seconds,
         settle_seconds=payload.settle_seconds,
         poll_seconds=payload.poll_seconds,
         require_finished_marker=payload.require_finished_marker,
+        skip_settle_for_existing=payload.skip_settle_for_existing,
         work_dir=str(WORK_DIR),
         dry_run=payload.dry_run,
     )

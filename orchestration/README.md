@@ -44,6 +44,39 @@ and one can fail without affecting the other.
 Each folder therefore appears as **one row per enabled analysis** in the Runs
 table, labelled Network or Activity scan, with its own status, log, and reset.
 
+They are independent in every direction that matters:
+
+* **Completion markers are checked per assay.** A missing `finished=` in
+  `ActivityScan` blocks only the activity job; the Network job proceeds.
+* **Failure is not shared.** A Kilosort crash does not stop the activity scan
+  for the same folder, and vice versa.
+* **Queues are separate.** Activity scans never wait behind spike sorting.
+
+## Concurrency
+
+Kilosort4 reserves several GB of VRAM, so **two Network jobs on one GPU will
+run out of memory**:
+
+```
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 4.24 GiB.
+GPU 0 has a total capacity of 31.36 GiB of which 3.04 GiB is free.
+... Process 3529253 has 18.78 GiB memory in use.
+```
+
+Each analysis type therefore has its own limit (**Analyses** card in the UI):
+
+| Setting | Default | Why |
+|---|---|---|
+| Concurrent Network jobs | 1 | One GPU, one Kilosort. Raise only with multiple GPUs. |
+| Concurrent Activity jobs | 2 | CPU only and seconds long, so it can run wider. |
+
+Jobs beyond the limit show as **Queued** and start when a slot frees. They hold
+no resources while waiting, and the slot is always released — including when a
+job crashes — so a failure cannot deadlock the queue.
+
+Subprocesses also inherit `PYTORCH_ALLOC_CONF=expandable_segments:True`, which
+reduces the CUDA fragmentation the allocator warns about after an OOM.
+
 When both are enabled, the activity job automatically passes
 `--selection-from` pointing at the Network recording, so its maps show which
 electrodes were actually kept.
