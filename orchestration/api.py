@@ -37,6 +37,7 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from driver_schema import schema_for_ui, validate_options, default_options  # noqa: E402
+from checkpoints import read_checkpoints, summarise  # noqa: E402
 from watcher import (  # noqa: E402
     JobConfig, Watcher, DEFAULT_WORK_DIR, JOB_LABELS,
     find_recording, find_recordings, has_finished_marker,
@@ -415,6 +416,25 @@ def api_log(path: str, tail: int = 400):
 
     lines = p.read_text(errors="ignore").splitlines()
     return {"path": str(p), "lines": lines[-tail:], "size": p.stat().st_size}
+
+
+@app.get("/api/runs/checkpoints")
+def api_checkpoints(path: str = "", tail: int = 0):
+    """True per-well status, read from the pipeline's own checkpoint files.
+
+    A subprocess exit code cannot distinguish "every well failed" from "one well
+    hit an OOM and the rest are fine". The checkpoints can.
+    """
+    watcher = get_watcher()
+    roots = [Path(p) for p in (watcher.cfg.output_dir,
+                               watcher.cfg.driver_options.get("checkpoint_dir")) if p]
+    if not roots:
+        return {"summary": {"wells": 0}, "wells": [], "note": "No output directory configured"}
+
+    folder = Path(path.split("::")[0]) if path else None
+    rows = read_checkpoints(roots, folder)
+    return {"summary": summarise(rows), "wells": rows,
+            "searched": [str(r) for r in roots]}
 
 
 @app.get("/api/logs")

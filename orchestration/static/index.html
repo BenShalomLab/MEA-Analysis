@@ -541,7 +541,54 @@ function Browser({initial,onPick,onClose}){
   );
 }
 
-function Row({run,onLog,onReset}){
+function Wells({rows,summary}){
+  if(!rows?.length) return null;
+  const cls={complete:"p-o",failed:"p-b",running:"p-a",pending:"p-n"};
+  return (
+    <div style={{padding:"0 24px 18px",borderTop:"1px solid var(--line)",paddingTop:16}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+        <span className={"pill "+(summary.verdict==="complete"?"p-o":
+          summary.verdict==="failed"?"p-b":summary.verdict==="partial"?"p-w":"p-a")}>
+          {summary.verdict==="partial"?"Partial":summary.verdict==="complete"?"All wells complete":
+           summary.verdict==="failed"?"All wells failed":"In progress"}
+        </span>
+        <span className="f-h">
+          {summary.complete}/{summary.wells} complete
+          {summary.failed>0&&<> · <span style={{color:"var(--bad)"}}>{summary.failed} failed</span></>}
+          {summary.running>0&&<> · {summary.running} running</>}
+        </span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:8}}>
+        {rows.map(w=>(
+          <div key={w.checkpoint_file}
+               style={{display:"flex",alignItems:"center",gap:9,padding:"7px 10px",
+                       background:"var(--sunken)",borderRadius:"var(--r1)",minWidth:0}}>
+            <span className={"pill "+(cls[w.status]||"p-n")} style={{height:20,padding:"0 8px"}}>
+              {w.well}</span>
+            <span style={{fontSize:12,color:"var(--ink-2)",overflow:"hidden",
+                          textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}
+                  title={w.error||w.stage_name}>
+              {w.status==="failed"?`failed at ${w.failed_stage||w.stage_name}`:w.stage_name}
+            </span>
+          </div>))}
+      </div>
+      {summary.errors?.length>0&&(
+        <div className="note n-b" style={{marginTop:12}}>
+          <span className="n-i"><Alert s={15}/></span>
+          <div style={{minWidth:0}}>
+            {summary.errors.map((e,i)=>(
+              <div key={i} style={{marginTop:i?8:0}}>
+                <b>{e.well}</b> — {e.failed_stage}
+                <div className="mono" style={{fontSize:11.5,marginTop:3,opacity:.9,
+                     whiteSpace:"pre-wrap",wordBreak:"break-word"}}>
+                  {(e.error||"").split("\n")[0].slice(0,240)}</div>
+              </div>))}
+          </div></div>)}
+    </div>
+  );
+}
+
+function Row({run,onLog,onReset,wells,onWells,expanded}){
   const m=ST[run.status]||ST.waiting;
   const left=settleLeft(run.detail);
   const busy=run.status==="running"||run.status==="dispatched";
@@ -584,10 +631,28 @@ function Row({run,onLog,onReset}){
           <div className="row-ago">{ago(run.completed_at||run.started_at||run.dispatched_at||run.last_seen)}</div>
         </div>
         <div className="btns" style={{flexWrap:"nowrap"}}>
+          {run.job!=="activity"&&
+            <button className="btn btn-s" onClick={()=>onWells(run)} title="Per-well status from checkpoints">
+              <Slide s={12}/> Wells</button>}
           {run.log&&<button className="btn btn-s" onClick={()=>onLog(run)}><Term s={12}/> Log</button>}
           <button className="btn btn-q btn-s btn-i" onClick={()=>onReset(run)} title="Reset this run"><Sync s={12}/></button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RunBlock(props){
+  const {run,wells,expanded}=props;
+  return (
+    <div style={{borderTop:"1px solid var(--line)"}}>
+      <Row {...props}/>
+      {expanded&&wells&&<Wells rows={wells.wells} summary={wells.summary}/>}
+      {expanded&&wells&&!wells.wells?.length&&
+        <div style={{padding:"0 24px 18px"}} className="f-h">
+          No checkpoint files found yet for this run{wells.searched?.length
+            ? <> under <span className="mono">{wells.searched.join(", ")}</span></>:null}.
+        </div>}
     </div>
   );
 }
@@ -609,11 +674,15 @@ function App(){
   const [act,setAct]=useState([]);
   const [follow,setFollow]=useState(true);
   const [showCfg,setShowCfg]=useState(true);
-  const tid=useRef(0), seq=useRef(0);
+  const [wells,setWells]=useState({});      // run key -> checkpoint payload
+  const [openWells,setOpenWells]=useState({});
+  const tid=useRef(0), seq=useRef(0), openWellsRef=useRef({});
 
   const toast=useCallback((t,m,k="info")=>{const id=++tid.current;
     setToasts(x=>[...x,{id,t,m,k}]);
     setTimeout(()=>setToasts(x=>x.filter(y=>y.id!==id)),k==="error"?9000:4200);},[]);
+
+  useEffect(()=>{openWellsRef.current=openWells;},[openWells]);
 
   useEffect(()=>{document.documentElement.dataset.theme=theme;
     localStorage.setItem("mea-theme",theme);},[theme]);
@@ -628,6 +697,13 @@ function App(){
   const refresh=useCallback(async()=>{
     try{const s=await api("/api/status");setStatus(s);
         setShowCfg(v=>s.running?false:v);}catch(e){}
+    try{
+      const keys=Object.keys(openWellsRef.current||{}).filter(k=>openWellsRef.current[k]);
+      for(const k of keys){
+        const d=await api(`/api/runs/checkpoints?path=${encodeURIComponent(k)}`);
+        setWells(w=>({...w,[k]:d}));
+      }
+    }catch(e){}
     try{const d=await api(`/api/logs?since=${seq.current}`);
         if(d.lines?.length){seq.current=d.last_seq;setAct(a=>[...a,...d.lines].slice(-400));}}catch(e){}
   },[]);
@@ -709,6 +785,15 @@ function App(){
                     "Run reset",`${r.run} will be processed again.`);
   const onLog  =r=>act_(async()=>{const d=await api(`/api/runs/log?path=${encodeURIComponent(r.log)}`);
                     setLog({run:r.run,lines:d.lines,path:r.log});});
+  const onWells=r=>{
+    const isOpen=!!openWells[r.path];
+    setOpenWells(o=>({...o,[r.path]:!isOpen}));
+    if(isOpen) return;
+    act_(async()=>{
+      const d=await api(`/api/runs/checkpoints?path=${encodeURIComponent(r.path)}`);
+      setWells(w=>({...w,[r.path]:d}));
+    });
+  };
 
   const ql=q.trim().toLowerCase();
   const groups=schema.groups.map(g=>({...g,fields:g.fields.filter(f=>!ql||
@@ -805,7 +890,9 @@ function App(){
                   </div>
                 </div>
               : <div className="rows">{runs.map(r=>
-                  <Row key={r.path} run={r} onLog={onLog} onReset={onReset}/>)}</div>}
+                  <RunBlock key={r.path} run={r} onLog={onLog} onReset={onReset}
+                            onWells={onWells} wells={wells[r.path]}
+                            expanded={!!openWells[r.path]}/>)}</div>}
           </div>
         </div>
 

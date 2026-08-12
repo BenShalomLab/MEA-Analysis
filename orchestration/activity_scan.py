@@ -1115,16 +1115,41 @@ def process_file(h5_path: Path, out_dir: Path, *, figures: bool = True,
 # --------------------------------------------------------------------------- #
 def discover(path: Path, assay_subfolder: Optional[str] = "ActivityScan",
              h5_glob: str = "data.raw.h5") -> list[Path]:
-    """Find recordings to process, mirroring the pipeline's own conventions."""
+    """Find recordings to process, mirroring the pipeline's own conventions.
+
+    Logs what was searched and what matched: an empty result is the most common
+    surprise here, and it is almost always the assay folder not being named what
+    was assumed, or the recordings sitting at a different depth.
+    """
     if path.is_file():
+        LOG.info("Target is a single file: %s", path)
         return [path]
+
+    if not path.is_dir():
+        LOG.error("Path does not exist or is not a directory: %s", path)
+        return []
+
     hits = sorted(path.rglob(h5_glob))
+    LOG.info("Searched %s for '%s' — %d recording(s) found in total", path, h5_glob, len(hits))
+
+    if not hits:
+        subs = sorted({p.name for p in path.iterdir() if p.is_dir()})[:12]
+        LOG.error("No '%s' anywhere under %s. Top-level folders here: %s",
+                  h5_glob, path, ", ".join(subs) or "(none)")
+        return []
+
     if assay_subfolder:
         filtered = [p for p in hits if assay_subfolder in p.parts]
         if filtered:
+            LOG.info("%d of them are under a '%s' folder", len(filtered), assay_subfolder)
             return filtered
-        LOG.warning("No recordings under a '%s' folder; using all %d found",
-                    assay_subfolder, len(hits))
+        # Naming the folders that *do* exist is what usually solves this.
+        present = sorted({part for p in hits for part in p.relative_to(path).parts[:-1]})
+        LOG.warning(
+            "None of the %d recording(s) sit under a folder named '%s'. "
+            "Folders seen on those paths: %s. Processing all %d instead — "
+            "pass --assay-subfolder '' to silence this, or the correct name to filter.",
+            len(hits), assay_subfolder, ", ".join(present[:15]) or "(none)", len(hits))
     return hits
 
 
