@@ -27,7 +27,8 @@ class WaveformMixin:
             json.dump(payload, f, indent=2)
         self.state.update(payload)
 
-    def _extract_rawsortedspikes(self, *, max_spikes_per_unit=200, ms_before=1.0, ms_after=2.0, seed=0):
+    def _extract_rawsortedspikes(self, *, max_spikes_per_unit=200, ms_before=1.0, ms_after=2.0,
+                                  seed=0, align_search_ms=0.5):
         # ── 1. Load curated spike times ────────────────────────────────────────
         spike_times_file = self.output_dir / "spike_times.npy"
         self.logger.debug("spike_times.npy: %s  exists=%s", spike_times_file, spike_times_file.exists())
@@ -129,10 +130,21 @@ class WaveformMixin:
         n_after  = int(round(ms_after  / 1000.0 * fs))
         window_samples = n_before + n_after
 
+        # KS4 stamps every spike with its unit's template-match time, not the
+        # spike's own trough — search a small window around that stamped
+        # center for the true negative peak and recenter on it. 0/None keeps
+        # the raw template-time centering (legacy behavior).
+        search_radius = (
+            int(round(align_search_ms / 1000.0 * fs)) if align_search_ms else 0
+        )
+        padded_before = n_before + search_radius
+        padded_after  = n_after + search_radius
+        padded_window = padded_before + padded_after
+
         rng = np.random.default_rng(seed=seed)
         self.logger.debug(
-            "Recording: fs=%.0f Hz  n_frames=%d  window=%d+%d=%d samples",
-            fs, n_frames, n_before, n_after, window_samples,
+            "Recording: fs=%.0f Hz  n_frames=%d  window=%d+%d=%d samples  align_search=%d samples",
+            fs, n_frames, n_before, n_after, window_samples, search_radius,
         )
 
         # ── 4. Per-unit: resolve primary channel + sample spike centers ───────────
@@ -166,9 +178,10 @@ class WaveformMixin:
             ).astype(np.int64)
 
             # Filter boundary spikes across ALL spikes first, then random-sample up to limit.
+            # Uses the padded margin so the alignment search window is always fully in-bounds.
             all_valid = [
                 int(c) for c in spike_samples
-                if n_before <= int(c) < n_frames - n_after
+                if padded_before <= int(c) < n_frames - padded_after
             ]
             if len(all_valid) > max_spikes_per_unit:
                 chosen = rng.choice(len(all_valid), size=max_spikes_per_unit, replace=False)
@@ -221,11 +234,12 @@ class WaveformMixin:
             if not block_events:
                 continue
 
-            # Extend the read range by the window margins so edge-of-block spikes
-            # have their full window available.  Boundary spikes were pre-filtered
-            # in pass 4, so clamping to [0, n_frames] is purely defensive.
-            read_start = max(0, block_start - n_before)
-            read_end   = min(n_frames, block_end + n_after)
+            # Extend the read range by the padded window margins (window + alignment
+            # search radius) so edge-of-block spikes have their full window available.
+            # Boundary spikes were pre-filtered in pass 4, so clamping to [0, n_frames]
+            # is purely defensive.
+            read_start = max(0, block_start - padded_before)
+            read_end   = min(n_frames, block_end + padded_after)
 
             needed_channels = list({ch for _, _, ch in block_events})
             block_data = np.asarray(
@@ -240,9 +254,20 @@ class WaveformMixin:
             n_blocks += 1
 
             for center, uid, ch_id in block_events:
-                local_start = center - n_before - read_start
+                local_start = center - padded_before - read_start
                 col = ch_to_col[ch_id]
-                snippet = block_data[local_start: local_start + window_samples, col]
+                padded_snippet = block_data[local_start: local_start + padded_window, col]
+                if padded_snippet.shape[0] != padded_window:
+                    continue
+                if search_radius:
+                    # Recenter on the true trough near the template-stamped time
+                    # (padded_before is where that stamped time sits in this snippet).
+                    peak_idx = padded_before - search_radius + int(np.argmin(
+                        padded_snippet[padded_before - search_radius: padded_before + search_radius + 1]
+                    ))
+                    snippet = padded_snippet[peak_idx - n_before: peak_idx - n_before + window_samples]
+                else:
+                    snippet = padded_snippet[padded_before - n_before: padded_before - n_before + window_samples]
                 if snippet.shape[0] == window_samples:
                     snippets_by_unit[uid].append(snippet.copy())
 
