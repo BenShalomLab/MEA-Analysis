@@ -13,6 +13,38 @@ except ImportError:
     from MEA_Analysis.IPNAnalysis.mea_checkpoint import ProcessingStage, CHECKPOINT_SCHEMA_VERSION
 
 
+def resolve_hdf5_plugin_path():
+    """Set HDF5_PLUGIN_PATH from a known install location if it isn't set already.
+
+    Must run before spikeinterface/h5py is imported anywhere in the process —
+    the underlying HDF5 C library reads this env var once, at library init,
+    and caches the plugin search path. Setting it from Python afterward (e.g.
+    from inside MEAPipeline.__init__) has no effect on an already-initialized
+    library, which is why this is a standalone function callable at module
+    import time, not just an InfraMixin method.
+
+    Docker images and sbatch.sh export HDF5_PLUGIN_PATH explicitly; a bare
+    `salloc` + `conda activate` shell on NERSC doesn't, so h5py falls back to
+    its compiled-in default plugin dir (doesn't exist there) and Maxwell .h5
+    reads crash.
+
+    Returns the path it set, or None if already set / nothing found.
+    """
+    if os.environ.get("HDF5_PLUGIN_PATH"):
+        return None
+    candidates = [
+        Path.home() / "hdf5_plugin_path_maxwell",   # NERSC home-dir install
+        Path("/opt/hdf5/plugins"),                  # baked into the Docker images
+    ]
+    if os.environ.get("SCRATCH"):
+        candidates.append(Path(os.environ["SCRATCH"]) / "hdf5_plugin")
+    for candidate in candidates:
+        if candidate.is_dir() and any(candidate.glob("libcompression.*")):
+            os.environ["HDF5_PLUGIN_PATH"] = str(candidate)
+            return candidate
+    return None
+
+
 class InfraMixin:
     """Infrastructure methods: logging, metadata parsing, checkpointing, runtime controls."""
 
@@ -39,29 +71,22 @@ class InfraMixin:
         self._apply_hdf5_plugin_path_fallback()
 
     def _apply_hdf5_plugin_path_fallback(self):
-        # Maxwell .h5 reads need HDF5_PLUGIN_PATH pointing at libcompression.so.
-        # Docker images and sbatch.sh export it explicitly; a bare `salloc` +
-        # `conda activate` shell doesn't, so h5py falls back to its compiled-in
-        # default plugin dir (doesn't exist on NERSC) and crashes on first read.
-        # Fall back to known install locations if the env var isn't already set.
+        # The real work already happened at module-import time, before
+        # spikeinterface/h5py was imported (see resolve_hdf5_plugin_path()
+        # docstring for why it has to run that early). This just logs what
+        # was resolved, now that self.logger exists — or re-checks in case
+        # something cleared the env var between then and now.
         if os.environ.get("HDF5_PLUGIN_PATH"):
+            self.logger.debug("HDF5_PLUGIN_PATH=%s", os.environ["HDF5_PLUGIN_PATH"])
             return
-        candidates = [
-            Path.home() / "hdf5_plugin_path_maxwell",   # NERSC home-dir install
-            Path("/opt/hdf5/plugins"),                  # baked into the Docker images
-        ]
-        if os.environ.get("SCRATCH"):
-            candidates.append(Path(os.environ["SCRATCH"]) / "hdf5_plugin")
-        for candidate in candidates:
-            if candidate.is_dir() and any(candidate.glob("libcompression.*")):
-                os.environ["HDF5_PLUGIN_PATH"] = str(candidate)
-                self.logger.info("HDF5_PLUGIN_PATH not set — falling back to %s", candidate)
-                return
-        self.logger.warning(
-            "HDF5_PLUGIN_PATH not set and no Maxwell compression plugin found in "
-            "known locations (%s) — raw .h5 reads will fail if the file is compressed.",
-            ", ".join(str(c) for c in candidates),
-        )
+        candidate = resolve_hdf5_plugin_path()
+        if candidate:
+            self.logger.info("HDF5_PLUGIN_PATH not set — falling back to %s", candidate)
+        else:
+            self.logger.warning(
+                "HDF5_PLUGIN_PATH not set and no Maxwell compression plugin found in "
+                "known locations — raw .h5 reads will fail if the file is compressed."
+            )
 
     def _log_runtime_controls(self):
         def _env_or_none(name):

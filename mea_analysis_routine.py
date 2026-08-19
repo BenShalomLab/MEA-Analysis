@@ -8,6 +8,16 @@
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["QT_QPA_PLATFORM"] = "offscreen"  # For headless environments
+
+# Must run before spikeinterface/h5py is imported below — HDF5's C library
+# reads HDF5_PLUGIN_PATH once at init and caches it, so setting it any later
+# (e.g. from MEAPipeline.__init__) has no effect. See mea_infra.py for details.
+try:
+    from mea_infra import resolve_hdf5_plugin_path
+except ImportError:
+    from MEA_Analysis.IPNAnalysis.mea_infra import resolve_hdf5_plugin_path
+resolve_hdf5_plugin_path()
+
 import sys
 import shutil
 import gc
