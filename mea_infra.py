@@ -36,6 +36,32 @@ class InfraMixin:
                 os.environ["CUDA_VISIBLE_DEVICES"] = str(self.cuda_visible_devices)
             except Exception:
                 pass
+        self._apply_hdf5_plugin_path_fallback()
+
+    def _apply_hdf5_plugin_path_fallback(self):
+        # Maxwell .h5 reads need HDF5_PLUGIN_PATH pointing at libcompression.so.
+        # Docker images and sbatch.sh export it explicitly; a bare `salloc` +
+        # `conda activate` shell doesn't, so h5py falls back to its compiled-in
+        # default plugin dir (doesn't exist on NERSC) and crashes on first read.
+        # Fall back to known install locations if the env var isn't already set.
+        if os.environ.get("HDF5_PLUGIN_PATH"):
+            return
+        candidates = [
+            Path.home() / "hdf5_plugin_path_maxwell",   # NERSC home-dir install
+            Path("/opt/hdf5/plugins"),                  # baked into the Docker images
+        ]
+        if os.environ.get("SCRATCH"):
+            candidates.append(Path(os.environ["SCRATCH"]) / "hdf5_plugin")
+        for candidate in candidates:
+            if candidate.is_dir() and any(candidate.glob("libcompression.*")):
+                os.environ["HDF5_PLUGIN_PATH"] = str(candidate)
+                self.logger.info("HDF5_PLUGIN_PATH not set — falling back to %s", candidate)
+                return
+        self.logger.warning(
+            "HDF5_PLUGIN_PATH not set and no Maxwell compression plugin found in "
+            "known locations (%s) — raw .h5 reads will fail if the file is compressed.",
+            ", ".join(str(c) for c in candidates),
+        )
 
     def _log_runtime_controls(self):
         def _env_or_none(name):
