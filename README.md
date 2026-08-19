@@ -49,6 +49,40 @@ file.h5
 
 The pipeline uses a `recording_map` to efficiently map all recordings to their corresponding wells without keeping the entire file open.
 
+### Maxwell HDF5 compression plugin
+
+Maxwell `.raw.h5` files use a custom HDF5 compression filter — reading them
+requires `libcompression.so` on disk and `HDF5_PLUGIN_PATH` pointing at it,
+*set before spikeinterface/h5py is imported* (the HDF5 C library reads this
+env var once at init and caches it — setting it later in the process has no
+effect).
+
+Download the plugin from [share.mxwbio.com](https://share.mxwbio.com/d/7f2d1e98a1724a1b8b35)
+(direct link used by the Docker build:
+`https://share.mxwbio.com/d/7f2d1e98a1724a1b8b35/files/?p=%2FLinux%2Flibcompression.so&dl=1`),
+then either:
+
+```bash
+export HDF5_PLUGIN_PATH=/path/to/plugin/dir
+```
+or set it in Python before any spikeinterface import:
+```python
+os.environ['HDF5_PLUGIN_PATH'] = '/path/to/plugin/dir'
+```
+
+**Already handled for you in most cases:**
+- Both Docker images bake it in at `/opt/hdf5/plugins`.
+- `sbatch.sh` exports it explicitly for batch jobs.
+- `mea_analysis_routine.py` auto-falls-back to a known location
+  (`$HOME/hdf5_plugin_path_maxwell`, `/opt/hdf5/plugins`, or
+  `$SCRATCH/hdf5_plugin`) if `HDF5_PLUGIN_PATH` isn't already set — this
+  covers plain interactive `salloc` shells on NERSC once the plugin has
+  been downloaded once to one of those paths. See
+  `resolve_hdf5_plugin_path()` in `mea_infra.py`.
+
+If none of those locations have the plugin, download it there once and the
+fallback picks it up automatically on every future run.
+
 ## Processing Pipeline Stages
 
 | Stage | Method | Purpose |
