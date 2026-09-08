@@ -150,6 +150,8 @@ def _default_option_kwargs() -> dict[str, Any]:
         "skip_preprocessing": False,
         "cuda_visible_devices": None,
         "output_subdir_after_well": None,
+        "burst_detector": "parameter_free",
+        "gaussian_burst_kwargs": None,
     }
 
 
@@ -237,6 +239,10 @@ class MEAPipeline(
         self.preprocessed_recording = self.option_kwargs.get("preprocessed_recording")
         self.skip_preprocessing = bool(self.option_kwargs.get("skip_preprocessing"))
         self.cuda_visible_devices = self.option_kwargs.get("cuda_visible_devices")
+        self.burst_detector = self.option_kwargs.get("burst_detector") or "parameter_free"
+        # Only non-None values override compute_network_bursts()'s own defaults.
+        gaussian_kwargs = self.option_kwargs.get("gaussian_burst_kwargs") or {}
+        self.gaussian_burst_kwargs = {k: v for k, v in gaussian_kwargs.items() if v is not None}
 
         # 1. Parse Metadata & Paths
         self.metadata = self._parse_metadata()
@@ -525,6 +531,25 @@ def main():
     sort_group.add_argument("--skip-spikesorting", action="store_true",
         help="Run spike detection only, skip full sorting")
 
+    # --- Burst detection ---
+    burst_group = parser.add_argument_group("burst detection")
+    burst_group.add_argument("--burst-detector", type=str, default=None,
+        choices=["parameter_free", "gaussian"],
+        help="Network burst detector to use (default: parameter_free).\n"
+             "'gaussian' is a literature-standard Gaussian population-rate\n"
+             "detector (single-tier: network_bursts only, no fragment/\n"
+             "superburst merging).")
+    burst_group.add_argument("--gaussian-bin-size-s", type=float, default=None,
+        help="Gaussian detector: histogram bin width in seconds (default: 0.01)")
+    burst_group.add_argument("--gaussian-sigma-s", type=float, default=None,
+        help="Gaussian detector: smoothing kernel sigma in seconds (default: 0.1)")
+    burst_group.add_argument("--gaussian-min-prominence", type=float, default=None,
+        help="Gaussian detector: minimum peak prominence in Hz\n(default: derived from signal as baseline SD)")
+    burst_group.add_argument("--gaussian-min-peak-distance-s", type=float, default=None,
+        help="Gaussian detector: minimum spacing between burst peaks in seconds (default: 1.0)")
+    burst_group.add_argument("--gaussian-onset-offset-peak-frac", type=float, default=None,
+        help="Gaussian detector: burst edges at peak * (1 - this fraction) (default: 0.3)")
+
     # --- Plotting ---
     plot_group = parser.add_argument_group("plotting")
     plot_group.add_argument("--plot-mode", choices=["separate", "merged"], default=None,
@@ -651,6 +676,14 @@ def main():
                 option_kwargs={
                     "force_rerun_analyzer": bool(args.rerun_analyzer),
                     "output_subdir_after_well": resolved.get("output_subdir_after_well"),
+                    "burst_detector": resolved["burst_detector"],
+                    "gaussian_burst_kwargs": {
+                        "bin_size_s": resolved["gaussian_bin_size_s"],
+                        "gaussian_sigma_s": resolved["gaussian_sigma_s"],
+                        "min_prominence": resolved["gaussian_min_prominence"],
+                        "min_peak_distance_s": resolved["gaussian_min_peak_distance_s"],
+                        "onset_offset_peak_frac": resolved["gaussian_onset_offset_peak_frac"],
+                    },
                 },
                 reanalyze_bursts=bool(args.reanalyze_bursts),
                 skip_spikesorting=bool(args.skip_spikesorting),

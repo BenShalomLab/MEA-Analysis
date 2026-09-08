@@ -66,7 +66,7 @@ There is no test suite or linter configured. The only CI hook strips Jupyter not
 
 **`config_loader.py` — Configuration**
 - Priority chain: CLI flag → `mea_config.json` → hardcoded default
-- Sections: `io`, `sorting`, `filtering`, `plotting`, `curation`, `merging`
+- Sections: `io`, `sorting`, `burst_detection`, `filtering`, `plotting`, `curation`, `merging`
 - `build_extra_args()` produces the subprocess argument string used by the driver
 
 ### Supporting Modules
@@ -74,10 +74,11 @@ There is no test suite or linter configured. The only CI hook strips Jupyter not
 | File | Purpose |
 |------|---------|
 | `helper_functions.py` | Peak detection, file discovery, raster/network plotting, burst statistics |
-| `parameter_free_burst_detector.py` | Adaptive burst detection — ISI-based per-unit bursts, population rate, adaptive thresholding, synchrony metrics |
+| `parameter_free_burst_detector.py` | Default network burst detector (`burst_detector: "parameter_free"`) — ISI-based per-unit bursts, participation-fraction signal, adaptive thresholding, three-tier fragment → network burst → superburst merging |
 | `meaplotter.py` | Visualization utilities (rasters, waveforms, probe maps) |
 | `spikeMatrix.py` | Spike raster and matrix operations |
-| `gaussianNetworkBursts.py` | Gaussian-based burst modeling |
+| `gaussianNetworkBursts.py` | Alternate network burst detector (`burst_detector: "gaussian"`) — literature-standard Gaussian-smoothed population-rate detector (mean+N·SD threshold, percentage-of-peak onset/offset), single-tier only, no fragment/superburst merging |
+| `burst_common.py` | Shared `stats()`/`level_metrics()` used by both burst detectors so metric schemas stay identical |
 | `UnitMatch/runner.py` | Recursive unit merging pipeline |
 | `UnitMatch/reporting.py` | Merge report generation |
 | `mea_pipeline_gui.py` | PyQt6/PySide6 GUI for pipeline control |

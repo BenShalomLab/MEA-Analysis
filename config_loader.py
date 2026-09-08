@@ -23,6 +23,14 @@ DEFAULTS = {
         "sorter":           "kilosort4",
         "docker_image":     None,
     },
+    "burst_detection": {
+        "burst_detector":   "parameter_free",
+        "gaussian_bin_size_s":            0.01,
+        "gaussian_sigma_s":               0.1,
+        "gaussian_min_prominence":        None,
+        "gaussian_min_peak_distance_s":   1.0,
+        "gaussian_onset_offset_peak_frac": 0.3,
+    },
     "merging": {
         "unitmatch_scored_dry_run": True,
         "unitmatch_output_subdir_name": "unitmatch_outputs",
@@ -128,6 +136,13 @@ def resolve_args(args, config):
         # sorting
         "sorter":           _resolve(getattr(args, "sorter", None),          _cfg(config, "sorting", "sorter"),           DEFAULTS["sorting"]["sorter"]),
         "docker_image":     _resolve(getattr(args, "docker", None),          _cfg(config, "sorting", "docker_image"),     DEFAULTS["sorting"]["docker_image"]),
+        # burst detection
+        "burst_detector":   _resolve(getattr(args, "burst_detector", None),  _cfg(config, "burst_detection", "burst_detector"), DEFAULTS["burst_detection"]["burst_detector"]),
+        "gaussian_bin_size_s":             _resolve(getattr(args, "gaussian_bin_size_s", None),             _cfg(config, "burst_detection", "gaussian_bin_size_s"),             DEFAULTS["burst_detection"]["gaussian_bin_size_s"]),
+        "gaussian_sigma_s":                _resolve(getattr(args, "gaussian_sigma_s", None),                _cfg(config, "burst_detection", "gaussian_sigma_s"),                DEFAULTS["burst_detection"]["gaussian_sigma_s"]),
+        "gaussian_min_prominence":         _resolve(getattr(args, "gaussian_min_prominence", None),         _cfg(config, "burst_detection", "gaussian_min_prominence"),         DEFAULTS["burst_detection"]["gaussian_min_prominence"]),
+        "gaussian_min_peak_distance_s":    _resolve(getattr(args, "gaussian_min_peak_distance_s", None),    _cfg(config, "burst_detection", "gaussian_min_peak_distance_s"),    DEFAULTS["burst_detection"]["gaussian_min_peak_distance_s"]),
+        "gaussian_onset_offset_peak_frac": _resolve(getattr(args, "gaussian_onset_offset_peak_frac", None), _cfg(config, "burst_detection", "gaussian_onset_offset_peak_frac"), DEFAULTS["burst_detection"]["gaussian_onset_offset_peak_frac"]),
         # merging (UnitMatch)
         "unitmatch_scored_dry_run":             _resolve(_bool(args, "unitmatch_scored_dry_run"),                       _cfg(config, "merging", "unitmatch_scored_dry_run"),                DEFAULTS["merging"]["unitmatch_scored_dry_run"]),
         "unitmatch_output_subdir_name":         _resolve(getattr(args, "unitmatch_output_subdir_name", None),           _cfg(config, "merging", "unitmatch_output_subdir_name"),            DEFAULTS["merging"]["unitmatch_output_subdir_name"]),
@@ -179,6 +194,19 @@ def build_extra_args(resolved, cli_args):
     # sorting
     if resolved["sorter"]:          extra.append(f"--sorter {resolved['sorter']}")
     if resolved["docker_image"]:    extra.append(f"--docker {resolved['docker_image']}")
+
+    # burst detection
+    if resolved["burst_detector"]:  extra.append(f"--burst-detector {resolved['burst_detector']}")
+    if resolved.get("gaussian_bin_size_s") is not None:
+        extra.append(f"--gaussian-bin-size-s {resolved['gaussian_bin_size_s']}")
+    if resolved.get("gaussian_sigma_s") is not None:
+        extra.append(f"--gaussian-sigma-s {resolved['gaussian_sigma_s']}")
+    if resolved.get("gaussian_min_prominence") is not None:
+        extra.append(f"--gaussian-min-prominence {resolved['gaussian_min_prominence']}")
+    if resolved.get("gaussian_min_peak_distance_s") is not None:
+        extra.append(f"--gaussian-min-peak-distance-s {resolved['gaussian_min_peak_distance_s']}")
+    if resolved.get("gaussian_onset_offset_peak_frac") is not None:
+        extra.append(f"--gaussian-onset-offset-peak-frac {resolved['gaussian_onset_offset_peak_frac']}")
 
     # plotting
     if resolved["plot_mode"]:       extra.append(f"--plot-mode {resolved['plot_mode']}")

@@ -15,6 +15,16 @@
     "docker_image": null
   },
 
+  "burst_detection": {
+    "_comment": "burst_detector options: parameter_free (default, adaptive fragment/network-burst/superburst hierarchy) | gaussian (mirrors the lab MATLAB pipeline's ThresholdMethod='Adaptive' as actually shipped: no height/amplitude threshold, peaks gated by prominence + min distance only; network_bursts tier only, no merging). gaussian_* fields only apply when burst_detector is 'gaussian'; gaussian_min_prominence: null derives it from the signal (baseline SD, per-unit Hz), or set an explicit Hz/unit value to mirror MATLAB's MinPeakProminence.",
+    "burst_detector": "parameter_free",
+    "gaussian_bin_size_s": 0.01,
+    "gaussian_sigma_s": 0.1,
+    "gaussian_min_prominence": null,
+    "gaussian_min_peak_distance_s": 1.0,
+    "gaussian_onset_offset_peak_frac": 0.3
+  },
+
   "filtering": {
     "_comment": "Driver only. reference_file = Excel with 'Run #' and 'Assay' columns.",
     "reference_file": null,

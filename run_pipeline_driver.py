@@ -133,6 +133,22 @@ def main():
         help="Docker image name for containerized sorting")
     sort_group.add_argument("--skip-spikesorting", action="store_true",
         help="Run spike detection only, skip full sorting")
+    sort_group.add_argument("--burst-detector", type=str, default=None,
+        choices=["parameter_free", "gaussian"],
+        help="Network burst detector to use, passed to each well (default: parameter_free).\n"
+             "'gaussian' is a literature-standard Gaussian population-rate\n"
+             "detector (single-tier: network_bursts only, no fragment/\n"
+             "superburst merging).")
+    sort_group.add_argument("--gaussian-bin-size-s", type=float, default=None,
+        help="Gaussian detector: histogram bin width in seconds (default: 0.01)")
+    sort_group.add_argument("--gaussian-sigma-s", type=float, default=None,
+        help="Gaussian detector: smoothing kernel sigma in seconds (default: 0.1)")
+    sort_group.add_argument("--gaussian-min-prominence", type=float, default=None,
+        help="Gaussian detector: minimum peak prominence in Hz\n(default: derived from signal as baseline SD)")
+    sort_group.add_argument("--gaussian-min-peak-distance-s", type=float, default=None,
+        help="Gaussian detector: minimum spacing between burst peaks in seconds (default: 1.0)")
+    sort_group.add_argument("--gaussian-onset-offset-peak-frac", type=float, default=None,
+        help="Gaussian detector: burst edges at peak * (1 - this fraction) (default: 0.3)")
     sort_group.add_argument("--extract-rawsortedspikes", action="store_true",
         help="Extract per-unit raw mean templates and save raw_mean_templates.npy (requires analyzer_output or phy_output)")
     sort_group.add_argument("--unitmatch-merge-units", action="store_true",

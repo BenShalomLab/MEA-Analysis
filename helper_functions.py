@@ -262,37 +262,54 @@ def plot_clean_network(
     participation_baseline=None,
     detection_threshold=None,
     ylim=None,
-    use_twinx=True
+    use_twinx=True,
+    primary_ylabel="Participation",
+    primary_label="Participation",
 ):
     """
-    Plot participation/recruitment and mean firing rate per unit.
+    Plot a primary signal (participation/recruitment by default, but any
+    single population signal — e.g. population firing rate — can be passed
+    in its place) and, optionally, mean firing rate per unit on a second
+    axis.
 
     Parameters
     ----------
     ax : matplotlib axis
-        Main axis for participation signal.
+        Main axis for the primary signal.
     time_s : array-like
         Time vector (seconds).
     participation_fraction_signal : array-like
-        Smoothed participation / recruitment signal (dimensionless).
+        Primary signal to plot on `ax` (dimensionless participation
+        fraction by default; a detector may pass a different signal, e.g.
+        population firing rate in Hz, using `primary_ylabel`/`primary_label`
+        to relabel accordingly).
     population_firing_rate_hz : array-like, optional
-        Smoothed mean firing rate per unit (Hz / unit).
+        Smoothed mean firing rate per unit (Hz / unit), plotted on a second
+        axis. Pass None to omit the second-axis trace entirely (no empty
+        twin axis is created in that case).
     nb_peak_times_s : array-like, optional
-        Times of network burst peaks.
+        Times of network burst peaks — always marked on the primary axis
+        regardless of whether population_firing_rate_hz is provided.
     nb_peak_participation_fraction : array-like, optional
-        Peak participation values at burst peaks.
+        Unused by this function; accepted for call-site compatibility with
+        detector plot_data dicts.
     participation_baseline : float, optional
-        Baseline of participation signal.
+        Baseline of the primary signal.
     detection_threshold : float, optional
-        Detection threshold in participation space.
+        Detection threshold in the primary signal's units.
     ylim : tuple, optional
-        Y-limits for main participation axis.
+        Y-limits for the primary axis.
     use_twinx : bool
-        If True, draw population_firing_rate_hz on a second y-axis.
+        If True and population_firing_rate_hz is provided, draw it on a
+        second y-axis.
+    primary_ylabel : str
+        Y-axis label for the primary signal.
+    primary_label : str
+        Legend label for the primary signal's line.
     """
 
     # -------------------------------------------------
-    # Main axis = participation / recruitment
+    # Main axis = primary signal (participation by default)
     # -------------------------------------------------
     part_line, = ax.plot(
         time_s,
@@ -300,10 +317,10 @@ def plot_clean_network(
         color="#B22222",
         lw=1.5,
         zorder=3,
-        label="Participation"
+        label=primary_label
     )
 
-    ax.set_ylabel("Participation")
+    ax.set_ylabel(primary_ylabel)
     ax.spines["top"].set_visible(False)
     ax.tick_params(direction="out")
 
@@ -334,10 +351,18 @@ def plot_clean_network(
         for s, e in zip(sb_start_times_s, sb_end_times_s):
             ax.axvspan(s, e, facecolor="#6c5ce7", alpha=0.07, linewidth=0, zorder=1)
 
+    # Peak markers on the primary axis — independent of whether a second
+    # signal is plotted, so a single-signal detector (e.g. gaussian) still
+    # gets its NB peak dots.
+    if nb_peak_times_s is not None and len(nb_peak_times_s) > 0:
+        peak_y = np.interp(nb_peak_times_s, time_s, participation_fraction_signal)
+        ax.plot(nb_peak_times_s, peak_y, 'o', color='#d63031', ms=4, zorder=6)
+
     # -------------------------------------------------
-    # Secondary axis = rate signal
+    # Secondary axis = rate signal (only created if there's something to
+    # plot on it — no empty twin axis for single-signal detectors).
     # -------------------------------------------------
-    ax_rate = ax.twinx() if use_twinx else ax
+    ax_rate = ax.twinx() if (use_twinx and population_firing_rate_hz is not None) else ax
     rate_line = None
 
     if population_firing_rate_hz is not None:
@@ -350,10 +375,6 @@ def plot_clean_network(
             zorder=4,
             label="Mean rate / unit"
         )
-
-        if nb_peak_times_s is not None and len(nb_peak_times_s) > 0:
-            peak_y = np.interp(nb_peak_times_s, time_s, participation_fraction_signal)
-            ax.plot(nb_peak_times_s, peak_y, 'o', color='#d63031', ms=4, zorder=6)
 
     if use_twinx and population_firing_rate_hz is not None:
         smin = np.nanmin(population_firing_rate_hz) if len(population_firing_rate_hz) else 0.0

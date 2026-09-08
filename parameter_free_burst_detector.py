@@ -3,6 +3,11 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 from scipy.stats import skew, kurtosis as sp_kurtosis
 
+try:
+    from burst_common import stats, level_metrics as _level_metrics
+except ImportError:
+    from MEA_Analysis.IPNAnalysis.burst_common import stats, level_metrics as _level_metrics
+
 
 def compute_network_bursts(
     SpikeTimes=None,
@@ -514,41 +519,8 @@ def compute_network_bursts(
     # ---------------------------------------------------------
     # 8. Metrics
     # ---------------------------------------------------------
-    def stats(x):
-
-        x = np.asarray(x)
-
-        if x.size == 0:
-            return {"mean": 0.0, "std": 0.0, "cv": 0.0}
-
-        mean_val = x.mean()
-        std_val  = x.std()
-        cv       = std_val / mean_val if abs(mean_val) > 1e-12 else np.nan
-
-        return {
-            "mean": float(mean_val),
-            "std":  float(std_val),
-            "cv":   float(cv)
-        }
-
     def level_metrics(events, ibi_key="ibi_s"):
-
-        if not events:
-            return {}
-
-        starts = [ev["start_time_s"] for ev in events]
-
-        return {
-            "burst_count":                    len(events),
-            "burst_rate_hz":                  len(events) / total_dur,
-            "burst_duration_s":               stats([ev["burst_duration_s"] for ev in events]),
-            ibi_key:                          stats(np.diff(starts)) if len(starts) > 1 else stats([]),
-            "burst_area":                     stats([ev["burst_area"] for ev in events]),
-            "participation_fraction":         stats([ev["participation_fraction"] for ev in events]),
-            "spike_count_per_burst":          stats([ev["spike_count"] for ev in events]),
-            "peak_population_firing_rate_hz": stats([ev["peak_population_firing_rate_hz"] for ev in events]),
-            "peak_participation_fraction":    stats([ev["peak_participation_fraction"] for ev in events]),
-        }
+        return _level_metrics(events, total_dur, ibi_key=ibi_key)
 
     # ---------------------------------------------------------
     # 9. Return

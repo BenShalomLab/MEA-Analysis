@@ -20,18 +20,31 @@ except ImportError:
     from MEA_Analysis.IPNAnalysis.mea_checkpoint import ProcessingStage
 
 try:
-    from parameter_free_burst_detector import compute_network_bursts
+    from parameter_free_burst_detector import compute_network_bursts as compute_network_bursts_parameter_free
+    from gaussianNetworkBursts import compute_network_bursts as compute_network_bursts_gaussian
     import helper_functions as helper
     from scalebury import add_scalebar
 except ImportError:
     try:
-        from MEA_Analysis.IPNAnalysis.parameter_free_burst_detector import compute_network_bursts
+        from MEA_Analysis.IPNAnalysis.parameter_free_burst_detector import compute_network_bursts as compute_network_bursts_parameter_free
+        from MEA_Analysis.IPNAnalysis.gaussianNetworkBursts import compute_network_bursts as compute_network_bursts_gaussian
         from MEA_Analysis.IPNAnalysis import helper_functions as helper
         from MEA_Analysis.IPNAnalysis.scalebury import add_scalebar
     except ImportError:
-        compute_network_bursts = None
+        compute_network_bursts_parameter_free = None
+        compute_network_bursts_gaussian = None
         helper = None
         add_scalebar = None
+
+# Registry of interchangeable network-burst detectors. Both return the same
+# schema (see parameter_free_burst_detector.compute_network_bursts docstring
+# and gaussianNetworkBursts.compute_network_bursts docstring); the Gaussian
+# detector only populates the "network_bursts" tier ("burst_fragments" and
+# "superbursts" come back empty — it does not do fragment/superburst merging).
+BURST_DETECTORS = {
+    "parameter_free": compute_network_bursts_parameter_free,
+    "gaussian": compute_network_bursts_gaussian,
+}
 
 
 class ReportsMixin:
@@ -100,7 +113,7 @@ class ReportsMixin:
 
     def _apply_curation_logic(self, metrics, user_thresholds):
         defaults = {'presence_ratio': 0.75, 'rp_contamination': 0.15, 'firing_rate': 0.05,
-                    'amplitude_median': -20, 'amplitude_cv_median': 0.5}
+                    'firing_rate_max': 100.0, 'amplitude_median': -20, 'amplitude_cv_median': 0.5}
         if user_thresholds:
             defaults.update(user_thresholds)
 
@@ -111,6 +124,9 @@ class ReportsMixin:
             if row.get('presence_ratio', 1) < defaults['presence_ratio']: reasons.append("Low Presence")
             if row.get('rp_contamination', 0) > defaults['rp_contamination']: reasons.append("High Contam")
             if row.get('firing_rate', 0) < defaults['firing_rate']: reasons.append("Low FR")
+            # Physiologically-implausible rate (>100 Hz sustained) usually means a noisy/faulty
+            # electrode rather than a real unit; Kilosort4 doesn't always cluster these out.
+            if row.get('firing_rate', 0) > defaults['firing_rate_max']: reasons.append("Implausibly High FR")
             if row.get('amplitude_median', -100) > defaults['amplitude_median']: reasons.append("Low Amp")
             #TODO: add cv_median logic after checking if metric exists in current version of SI
 
@@ -238,7 +254,18 @@ class ReportsMixin:
 
         try:
             # A. Run network burst detector
-            network_data = compute_network_bursts(SpikeTimes=spike_times)
+            detector_name = getattr(self, "burst_detector", "parameter_free")
+            detector_fn = BURST_DETECTORS.get(detector_name)
+            if detector_fn is None:
+                self.logger.error(
+                    "Unknown or unavailable burst detector '%s' (available: %s)",
+                    detector_name, [k for k, v in BURST_DETECTORS.items() if v is not None],
+                )
+                return
+            detector_kwargs = {}
+            if detector_name == "gaussian":
+                detector_kwargs = getattr(self, "gaussian_burst_kwargs", {}) or {}
+            network_data = detector_fn(SpikeTimes=spike_times, **detector_kwargs)
 
             if isinstance(network_data, dict) and "error" in network_data:
                 self.logger.error(f"Burst detector returned error: {network_data['error']}")
@@ -247,6 +274,26 @@ class ReportsMixin:
             # B. Extract array and tabular data before JSON serialization
             plot_data  = network_data.pop("plot_data", {})
             unit_stats = network_data.pop("unit_stats", {})
+
+            # B2. What actually gets plotted vs. what gets saved to
+            # network_plot_data.npz can differ: the gaussian detector only
+            # has a population firing-rate signal (no participation-fraction
+            # detection), so its plot should show only that — one line, no
+            # twin axis, no participation trace — rather than reusing the
+            # participation-fraction slot that parameter_free detectors fill.
+            # network_plot_kwargs is what gets passed to plot_clean_network;
+            # plot_data (unmodified) is still what's saved to the npz below.
+            if detector_name == "gaussian":
+                diagnostics = network_data.get("diagnostics", {})
+                network_plot_kwargs = dict(plot_data)
+                network_plot_kwargs["participation_fraction_signal"] = plot_data.get("population_firing_rate_hz")
+                network_plot_kwargs["population_firing_rate_hz"] = None
+                network_plot_kwargs["participation_baseline"] = diagnostics.get("baseline_mean_hz")
+                network_plot_kwargs["detection_threshold"] = diagnostics.get("detection_threshold_hz")
+                network_plot_kwargs["primary_ylabel"] = "Population Firing Rate (Hz)"
+                network_plot_kwargs["primary_label"] = "Population firing rate"
+            else:
+                network_plot_kwargs = plot_data
 
             # C. Save plot_data as npz — large float arrays, not suited for JSON
             if plot_data:
@@ -324,7 +371,7 @@ class ReportsMixin:
                         color="#2d3436", markersize=3, markeredgewidth=0.4, alpha=0.85
                     )
                     ax_network, ax_network_red = helper.plot_clean_network(
-                        ax_network, **plot_data, use_twinx=True
+                        ax_network, **network_plot_kwargs, use_twinx=True
                     )
 
                 elif plot_mode == "merged":
@@ -337,7 +384,7 @@ class ReportsMixin:
 
                     ax_network = ax_raster.twinx()
                     ax_network, ax_network_red = helper.plot_clean_network(
-                        ax_network, **plot_data, use_twinx=False
+                        ax_network, **network_plot_kwargs, use_twinx=False
                     )
 
                     ax_raster.spines["right"].set_visible(False)
@@ -442,7 +489,7 @@ class ReportsMixin:
                     ax_raster2, ax_network2 = axs2
                     helper.plot_clean_raster(ax_raster2, spike_times, color='gray',
                                              markersize=4, markeredgewidth=0.5, alpha=1.0)
-                    helper.plot_clean_network(ax_network2, **plot_data)
+                    helper.plot_clean_network(ax_network2, **network_plot_kwargs)
                     ax_network2.set_ylim(0, global_max)
                     plt.tight_layout()
                     plt.subplots_adjust(hspace=0.05)

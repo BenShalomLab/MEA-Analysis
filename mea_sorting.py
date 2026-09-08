@@ -1,3 +1,4 @@
+import json
 import traceback
 from datetime import datetime
 from timeit import default_timer as timer
@@ -14,6 +15,16 @@ except ImportError:
 
 class SortingMixin:
     """Phase 2: spike sorting (Kilosort4) or spike detection only."""
+
+    # Sanity-check thresholds applied after threshold-crossing-only spike detection
+    # (--skip-spikesorting has no sorter-side curation, so bad channels that slip past
+    # preprocessing's detect_bad_channels() still need a last-resort filter here).
+    # 100 Hz is well above sustained firing rates seen even in fast-spiking interneurons
+    # in MEA cultures; a channel averaging above this for the whole recording is almost
+    # always continuous noise-threshold crossings, not real units.
+    MAX_PHYSIOLOGICAL_HZ = 100.0
+    REFRACTORY_VIOLATION_MS = 1.5
+    REFRACTORY_VIOLATION_FRAC = 0.01
 
     def run_sorting(self):
         sorter_folder = self.output_dir / "sorter_output"
@@ -111,6 +122,7 @@ class SortingMixin:
         fs = self.recording.get_sampling_frequency()
         self.metadata['fs'] = fs
         channel_ids = self.recording.get_channel_ids()
+        duration_s = self.recording.get_num_frames() / fs
         spike_times = {}
 
         for ch_index, ch_id in enumerate(channel_ids):
@@ -121,5 +133,40 @@ class SortingMixin:
                 else np.array([])
             )
 
+        spike_times, excluded = self._exclude_implausible_channels(spike_times, duration_s)
+
         np.save(self.output_dir / "spike_times.npy", spike_times)
+        if excluded:
+            with open(self.output_dir / "excluded_channels.json", "w", encoding="utf-8") as f:
+                json.dump(excluded, f, indent=2)
         return list(spike_times.keys())
+
+    def _exclude_implausible_channels(self, spike_times, duration_s):
+        """Drop channels whose threshold-crossing rate/ISI pattern is not physiologically
+        plausible (i.e. noise, not a real unit) before they reach burst analysis/plots."""
+        kept = {}
+        excluded = []
+        for ch_id, times in spike_times.items():
+            rate_hz = (len(times) / duration_s) if duration_s > 0 else 0.0
+            isi_ms = np.diff(np.sort(times)) * 1000.0 if len(times) > 1 else np.array([])
+            violation_frac = (
+                float(np.mean(isi_ms < self.REFRACTORY_VIOLATION_MS)) if isi_ms.size else 0.0
+            )
+
+            if rate_hz > self.MAX_PHYSIOLOGICAL_HZ:
+                excluded.append({
+                    "channel_id": str(ch_id),
+                    "firing_rate_hz": rate_hz,
+                    "refractory_violation_frac": violation_frac,
+                    "reason": "firing_rate_exceeds_physiological_max",
+                })
+                continue
+            kept[ch_id] = times
+
+        if excluded:
+            self.logger.warning(
+                "Excluding %d channel(s) with implausible firing rate (> %.0f Hz): %s",
+                len(excluded), self.MAX_PHYSIOLOGICAL_HZ,
+                [e["channel_id"] for e in excluded],
+            )
+        return kept, excluded
