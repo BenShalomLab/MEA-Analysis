@@ -50,6 +50,11 @@ try:
 except ImportError:
     from MEA_Analysis.IPNAnalysis.burst_common import level_metrics
 
+try:
+    from catch22_features import compute_catch22, compute_unit_catch22_features
+except ImportError:
+    from MEA_Analysis.IPNAnalysis.catch22_features import compute_catch22, compute_unit_catch22_features
+
 
 def compute_network_bursts(
     SpikeTimes=None,
@@ -58,6 +63,7 @@ def compute_network_bursts(
     min_prominence=None,
     min_peak_distance_s=1.0,
     onset_offset_peak_frac=0.3,
+    compute_catch22_features=False,
 ):
     """Gaussian population-rate network burst detector.
 
@@ -85,6 +91,14 @@ def compute_network_bursts(
         peak_value * (1 - onset_offset_peak_frac), walking outward from
         the peak. Mirrors MATLAB thresholdStartStop in
         gaussianFiringRateBurstDetector.
+    compute_catch22_features : bool
+        Off by default (no change to schema/runtime cost unless opted in).
+        When True, adds a "catch22_features" block to the return value:
+        {"population": {...}, "unit_features": {unit_id: {...}}} — 22
+        canonical time-series characteristics (github.com/
+        DynamicsAndNeuralSystems/catch22) computed on the smoothed
+        population-rate trace and on each unit's binned spike train,
+        respectively. See catch22_features.py.
 
     Returns
     -------
@@ -226,9 +240,21 @@ def compute_network_bursts(
             })
 
     # ---------------------------------------------------------
+    # 3b. catch22 features (opt-in, see compute_catch22_features docstring)
+    # ---------------------------------------------------------
+    catch22_block = None
+    if compute_catch22_features:
+        catch22_block = {
+            "population": compute_catch22(smoothed_rate_hz),
+            "unit_features": compute_unit_catch22_features(
+                SpikeTimes, bin_size_s, rec_start, rec_end
+            ),
+        }
+
+    # ---------------------------------------------------------
     # 4. Assemble return value (schema-compatible, single tier)
     # ---------------------------------------------------------
-    return {
+    result = {
         "burst_fragments": {"events": [], "metrics": {}},
         "network_bursts": {
             "events": network_bursts,
@@ -266,3 +292,8 @@ def compute_network_bursts(
             "detection_threshold": None,  # threshold is in Hz, not participation-fraction space; see diagnostics.detection_threshold_hz
         },
     }
+
+    if catch22_block is not None:
+        result["catch22_features"] = catch22_block
+
+    return result
