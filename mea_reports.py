@@ -264,7 +264,15 @@ class ReportsMixin:
                 return
             detector_kwargs = {}
             if detector_name == "gaussian":
-                detector_kwargs = getattr(self, "gaussian_burst_kwargs", {}) or {}
+                detector_kwargs = dict(getattr(self, "gaussian_burst_kwargs", {}) or {})
+            # Opt-in, off by default: both detectors accept this kwarg
+            # (see their compute_catch22_features docstrings). Kept out of
+            # network_results.json on purpose — written to its own
+            # catch22_features.json below (see step B2b) so it can be
+            # integrated into downstream reports/UnitMatch later without
+            # having to touch the existing network_results.json schema.
+            if getattr(self, "compute_catch22_features", False):
+                detector_kwargs["compute_catch22_features"] = True
             network_data = detector_fn(SpikeTimes=spike_times, **detector_kwargs)
 
             if isinstance(network_data, dict) and "error" in network_data:
@@ -309,6 +317,18 @@ class ReportsMixin:
                 df_units.index.name = "unit_id"
                 df_units.to_csv(self.output_dir / "unit_stats.csv")
                 self.logger.info("Saved unit_stats.csv")
+
+            # D2. catch22 features (opt-in, see self.compute_catch22_features
+            # above): kept out of network_results.json for now — written to
+            # its own file so this stays a purely additive output that can
+            # be joined back onto network_results.json / unit_stats.csv
+            # later (by well/unit_id) once a consumer for it exists,
+            # without having to version the main schema.
+            catch22_features = network_data.pop("catch22_features", None)
+            if catch22_features:
+                with open(self.output_dir / "catch22_features.json", "w") as f:
+                    json.dump(helper.recursive_clean(catch22_features), f, indent=2)
+                self.logger.info("Saved catch22_features.json")
 
             # E. Save lean JSON
             network_data_clean = helper.recursive_clean(network_data)

@@ -8,6 +8,11 @@ try:
 except ImportError:
     from MEA_Analysis.IPNAnalysis.burst_common import stats, level_metrics as _level_metrics
 
+try:
+    from catch22_features import compute_catch22, compute_unit_catch22_features
+except ImportError:
+    from MEA_Analysis.IPNAnalysis.catch22_features import compute_catch22, compute_unit_catch22_features
+
 
 def compute_network_bursts(
     SpikeTimes=None,
@@ -20,7 +25,22 @@ def compute_network_bursts(
     min_superburst_dur_s=2.5,
     min_superburst_components=1,
     min_peak_synchrony=0.05,
+    compute_catch22_features=False,
 ):
+    """
+    ... (see module docstring / class table in CLAUDE.md for the overall
+    detector). `compute_catch22_features` is off by default (no schema or
+    runtime cost unless opted in). When True, the return value gains a
+    "catch22_features" block: {"population": {...}, "unit_features":
+    {unit_id: {...}}} — 22 canonical time-series characteristics (github.com/
+    DynamicsAndNeuralSystems/catch22). "population" is computed on
+    `participation_fraction_signal`, the actual detection signal this
+    detector operates on (NOT population_firing_rate_signal, which is only
+    secondary/reporting here — see burst_detector docstring discussion).
+    "unit_features" is computed per-unit on the same bin_size/window used
+    for that signal, so unit- and population-level features share a
+    timescale. See catch22_features.py.
+    """
 
     # ---------------------------------------------------------
     # 0. Sanity checks
@@ -523,9 +543,23 @@ def compute_network_bursts(
         return _level_metrics(events, total_dur, ibi_key=ibi_key)
 
     # ---------------------------------------------------------
+    # 8b. catch22 features (opt-in, see compute_catch22_features docstring).
+    # Population-level runs on participation_fraction_signal — the signal
+    # detection actually operates on here, not the firing-rate signal.
+    # ---------------------------------------------------------
+    catch22_block = None
+    if compute_catch22_features:
+        catch22_block = {
+            "population": compute_catch22(participation_fraction_signal),
+            "unit_features": compute_unit_catch22_features(
+                SpikeTimes, bin_size, rec_start, rec_end
+            ),
+        }
+
+    # ---------------------------------------------------------
     # 9. Return
     # ---------------------------------------------------------
-    return {
+    result = {
 
         "burst_fragments": {
             "events":  burst_fragments,
@@ -578,3 +612,8 @@ def compute_network_bursts(
             "detection_threshold":             detection_threshold,
         }
     }
+
+    if catch22_block is not None:
+        result["catch22_features"] = catch22_block
+
+    return result
