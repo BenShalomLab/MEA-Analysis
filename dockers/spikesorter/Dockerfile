@@ -32,7 +32,14 @@ RUN pip3 install --upgrade pip setuptools wheel && \
     pip3 cache purge
 
 # baseline clone at build time
-RUN git clone https://github.com/roybens/MEA_Analysis.git /MEA_Analysis
+# Override at build time to use a different fork or branch:
+#   docker build --build-arg MEA_REPO_URL=https://github.com/<you>/<repo>.git \
+#                --build-arg MEA_REPO_BRANCH=<branch> ...
+ARG MEA_REPO_URL=https://github.com/hiteshkumar18/MEA-Analysis.git
+ARG MEA_REPO_BRANCH=main
+ENV MEA_REPO_URL=${MEA_REPO_URL}
+ENV MEA_REPO_BRANCH=${MEA_REPO_BRANCH}
+RUN git clone --branch "${MEA_REPO_BRANCH}" "${MEA_REPO_URL}" /MEA_Analysis
 
 # runtime updater
 COPY dockers/spikesorter/entrypoint.sh /entrypoint.sh

@@ -1,0 +1,88 @@
+# MEA orchestration — UI + watcher
+#
+#   cp .env.example .env     # set your paths, then:
+#   docker compose up -d
+#   open http://localhost:${UI_PORT}
+#
+# IDENTITY MOUNTS: every path is mounted at the SAME location inside the
+# container as it has on the host. So a path you type in the UI, see in a log,
+# or copy from a command is valid both inside and outside the container —
+# no translation needed.
+
+services:
+  mea-orchestration:
+    build:
+      context: .
+      dockerfile: dockers/orchestration/Dockerfile
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-mea-spikesorter:latest}
+        MEA_REPO_URL: ${MEA_REPO_URL:-https://github.com/hiteshkumar18/MEA-Analysis.git}
+        MEA_REPO_BRANCH: ${MEA_REPO_BRANCH:-main}
+    image: mea-orchestration:latest
+    container_name: mea-orchestration
+    # on-failure (not unless-stopped) so a misconfiguration surfaces as a
+    # stopped container with a readable error, instead of a restart loop.
+    restart: on-failure:3
+
+    ports:
+      - "${UI_PORT:-8000}:8000"
+
+    volumes:
+      # Recording data — READ-ONLY, mounted at its own path.
+      # Enforces at the Docker level that we never write to the data location.
+      - "${HOST_INPUT_DIR:?set HOST_INPUT_DIR in .env}:${HOST_INPUT_DIR}:ro"
+
+      # Pipeline results — writable, same path inside and out.
+      - "${HOST_OUTPUT_DIR:?set HOST_OUTPUT_DIR in .env}:${HOST_OUTPUT_DIR}"
+
+      # Job config, watcher state, and run logs. Persisting this is what keeps
+      # the watcher from re-processing runs after a restart.
+      - "${HOST_WORK_DIR:?set HOST_WORK_DIR in .env}:${HOST_WORK_DIR}"
+
+      # The repo itself, also at its own path. Code changes apply without a
+      # rebuild.
+      - "${HOST_REPO_DIR:?set HOST_REPO_DIR in .env}:${HOST_REPO_DIR}"
+
+    environment:
+      # Everything points at the real host paths, since they are identical here.
+      MEA_REPO: "${HOST_REPO_DIR}"
+      MEA_WATCHER_HOME: "${HOST_WORK_DIR}"
+      MEA_INPUT_DIR: "${HOST_INPUT_DIR}"
+      MEA_OUTPUT_DIR: "${HOST_OUTPUT_DIR}"
+      MEA_UI_PORT: "8000"
+      MEA_UI_HOST: "0.0.0.0"
+      # The repo is bind-mounted from the host, so never let the inherited
+      # entrypoint git-reset it — that would wipe uncommitted local changes.
+      MEA_SKIP_UPDATE: "1"
+      MEA_REPO_BRANCH: ${MEA_REPO_BRANCH:-main}
+      HDF5_PLUGIN_PATH: /opt/hdf5/plugins
+      # Kilosort needs a GPU; make it explicit.
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+    # Write outputs as your own user instead of root. Get these with: id -u ; id -g
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+
+    # PyTorch dataloaders need more than Docker's default 64 MB of /dev/shm.
+    shm_size: "8gb"
+
+    # GPU access.
+    #
+    # No `deploy.resources.devices` block here on purpose. That syntax needs
+    # Docker's CDI device-driver API, which many hosts with a working NVIDIA
+    # Container Toolkit do not expose — they fail with:
+    #     could not select device driver "nvidia" with capabilities: [[gpu]]
+    #
+    # Instead we rely on the NVIDIA runtime plus NVIDIA_VISIBLE_DEVICES=all
+    # (set above), which works wherever the toolkit is installed. Verify with:
+    #     docker info | grep -i runtime
+    #
+    # If "Default Runtime" is NOT nvidia, uncomment the line below:
+    # runtime: nvidia
+    #
+    # On hosts that do support CDI, you can instead layer on:
+    #     docker compose -f docker-compose.yml -f docker-compose.gpu-cdi.yml up -d
+
+    # Default is the UI. For a headless watcher with no browser, use:
+    #   docker compose run --rm mea-orchestration watch
+    command: ["ui"]
