@@ -15,9 +15,9 @@ cuda-python==12.8.0
 # -------------------------
 # SPIKE SORTING
 # -------------------------
-spikeinterface==0.103.0
+spikeinterface
 kilosort==4.1.1
-probeinterface==0.3.0
+
 
 # -------------------------
 # VIS + STORAGE

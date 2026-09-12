@@ -1,0 +1,59 @@
+{
+  "io": {
+    "output_dir": null,
+    "checkpoint_dir": null,
+    "output_subdir_after_well": null,
+    "export_to_phy": false,
+    "clean_up": false
+  },
+  "sorting": {
+    "sorter": "kilosort4",
+    "docker_image": null,
+    "skip_spikesorting": false
+  },
+  "merging": {
+    "unitmatch_scored_dry_run": true,
+    "unitmatch_output_subdir_name": "unitmatch_outputs",
+    "unitmatch_throughput_subdir_name": "unitmatch_throughput",
+    "unitmatch_max_candidate_pairs": 20000,
+    "unitmatch_oversplit_min_probability": 0.8,
+    "unitmatch_oversplit_max_suggestions": 2000,
+    "unitmatch_apply_merges": false,
+    "unitmatch_recursive": false,
+    "unitmatch_max_iterations": 5,
+    "unitmatch_max_spikes_per_unit": 100,
+    "unitmatch_keep_all_iterations": false,
+    "unitmatch_generate_reports": true,
+    "unitmatch_report_subdir_name": "unitmatch_reports",
+    "unitmatch_report_max_heatmap_units": 200
+  },
+  "filtering": {
+    "reference_file": null,
+    "assay_types": [
+      "network today",
+      "network today/best"
+    ]
+  },
+  "plotting": {
+    "plot_mode": "separate",
+    "raster_sort": "none",
+    "plot_debug": false,
+    "fixed_y": false
+  },
+  "curation": {
+    "no_curation": false,
+    "quality_thresholds": {
+      "presence_ratio": 0.75,
+      "rp_contamination": 0.15,
+      "firing_rate": 0.05,
+      "amplitude_median": -20,
+      "amplitude_cv_median": 0.5
+    }
+  },
+  "runtime": {
+    "max_concurrent_wells": null,
+    "gpu_ids": null,
+    "n_jobs": null,
+    "chunk_duration": null
+  }
+}
