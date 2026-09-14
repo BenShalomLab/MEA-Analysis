@@ -134,8 +134,23 @@ def save_json(file_path, data):
 # --- Burst Detection & Statistics ---
 
 def detect_bursts_statistics(spike_times, isi_threshold):
-    """
-    Detect bursts and calculate stats with DEBUG prints and SAFE covariance.
+    """Fixed-threshold burst detection with per-unit ISI statistics.
+
+    DEPRECATED for analysis. Kept because several notebooks under workbooks/
+    call it, but do not use it for new work:
+
+    * A single fixed ISI threshold applied to every unit is the approach
+      Cotterill et al. 2016 found least reliable across developmental ages.
+      `unit_bursts.compute_unit_burst_features` implements the two methods
+      they recommend (MaxInterval and logISI) and reports their agreement.
+    * It has no minimum spike count, so any two spikes closer than the
+      threshold count as a burst.
+
+    The `cov_*` fields report the coefficient of variation (std / mean) of the
+    interspike intervals. They previously returned `np.cov` of a 1-D array,
+    which is its variance, not a coefficient of variation: a quantity in
+    seconds squared, unnormalised, and not comparable between units with
+    different firing rates.
     """
     print(f"[HELPER] Detecting bursts for {len(spike_times)} units (ISI thresh={isi_threshold}s)...")
     results = {}
@@ -181,9 +196,12 @@ def detect_bursts_statistics(spike_times, isi_threshold):
             return np.mean(arr) if arr.size > 0 else np.nan
 
         def safe_cov(arr):
-            # Covariance requires at least 2 data points to be valid
-            # If size is 0 or 1, return NaN to avoid 'Degrees of freedom <= 0' warning
-            return np.cov(arr) if arr.size > 1 else np.nan
+            # Coefficient of variation: std / mean. Undefined for fewer than
+            # two intervals, or when the mean is zero.
+            if arr.size < 2:
+                return np.nan
+            mean = np.mean(arr)
+            return float(np.std(arr) / mean) if abs(mean) > 1e-12 else np.nan
 
         results[unit] = {
             "bursts": bursts,
@@ -447,6 +465,15 @@ def plot_raster_with_bursts(ax, spike_times, bursts, sorted_units=None, title_su
     return ax
 
 def plot_network_activity(ax, SpikeTimes, min_peak_distance=1.0, binSize=0.1, gaussianSigma=0.16, thresholdBurst=1.2):
+    """Quick population-rate plot with peak counting.
+
+    DEPRECATED for analysis; the notebooks under workbooks/ still call it.
+    `thresholdBurst` is accepted but never applied, peaks are gated by
+    prominence alone, and the returned `cov_*` entries are `np.cov` of a 1-D
+    array, which is a variance rather than a coefficient of variation. For
+    network bursts use the detectors in gaussianNetworkBursts.py or
+    parameter_free_burst_detector.py, which are what the pipeline itself runs.
+    """
     print("[HELPER] Calculating Network Activity...")
     
     # Flatten all spikes
@@ -525,6 +552,10 @@ def plot_network_activity(ax, SpikeTimes, min_peak_distance=1.0, binSize=0.1, ga
 
 def recursive_clean(obj):
     """Recursively converts numpy types and keys to Python standard types."""
+    # Before the int branch: bool is a subclass of int, so True would
+    # otherwise be written to JSON as 1.
+    if isinstance(obj, (bool, np.bool_)):
+        return bool(obj)
     if isinstance(obj, dict):
         new_dict = {}
         for k, v in obj.items():

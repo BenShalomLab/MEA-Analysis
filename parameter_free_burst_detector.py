@@ -4,9 +4,17 @@ from scipy.signal import find_peaks
 from scipy.stats import skew, kurtosis as sp_kurtosis
 
 try:
-    from burst_common import stats, level_metrics as _level_metrics
+    from burst_common import (
+        stats,
+        level_metrics as _level_metrics,
+        spike_participation,
+    )
 except ImportError:
-    from MEA_Analysis.IPNAnalysis.burst_common import stats, level_metrics as _level_metrics
+    from MEA_Analysis.IPNAnalysis.burst_common import (
+        stats,
+        level_metrics as _level_metrics,
+        spike_participation,
+    )
 
 
 def compute_network_bursts(
@@ -365,12 +373,17 @@ def compute_network_bursts(
         if min_absolute_rate_Hz > 0 and peak_drive_rate < min_absolute_rate_Hz:
             continue
 
+        peak_time_s = float(t_centers[p])
         burst_fragments.append({
             "start_time_s":                   float(start_time_s),
             "end_time_s":                     float(end_time_s),
             "burst_duration_s":               float(burst_duration_s),
             "peak_participation_fraction":    float(peak_val),
-            "peak_time_s":                    float(t_centers[p]),
+            "peak_time_s":                    peak_time_s,
+            # Recruitment vs. termination, which dissociate in several
+            # disease models even when duration and rate do not.
+            "rise_time_s":                    max(0.0, peak_time_s - float(start_time_s)),
+            "decay_time_s":                   max(0.0, float(end_time_s) - peak_time_s),
             "burst_area":                     float(np.sum(population_firing_rate_signal[start_idx:end_idx + 1]) * bin_size),
             "participation_fraction":         float(participation_fraction),
             "spike_count":                    spike_count,
@@ -429,6 +442,8 @@ def compute_network_bursts(
             "burst_duration_s":               e - s,
             "peak_participation_fraction":    best["peak_participation_fraction"],
             "peak_time_s":                    best["peak_time_s"],
+            "rise_time_s":                    max(0.0, best["peak_time_s"] - s),
+            "decay_time_s":                   max(0.0, e - best["peak_time_s"]),
             "burst_area":                     sum(ev["burst_area"] for ev in evs),
             "component_count":                sum(ev.get("component_count", 1) for ev in evs),
             "spike_count":                    sum(ev["spike_count"] for ev in evs),
@@ -579,6 +594,8 @@ def compute_network_bursts(
             "events":  superbursts,
             "metrics": level_metrics(superbursts, ibi_key="isbi_s")
         },
+
+        "spike_participation": spike_participation(all_spikes, network_bursts),
 
         "diagnostics": {
             "detector":                     "parameter_free",

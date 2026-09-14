@@ -4,13 +4,22 @@
 Uses the canonical schema produced by parameter_free_burst_detector.py:
   - burst_fragments / network_bursts / superbursts
   - metrics keys: burst_count, burst_rate_hz, burst_duration_s,
-                  ifbi_s / ibi_s / isbi_s, burst_area,
-                  participation_fraction, spike_count_per_burst,
-                  peak_population_firing_rate_hz, peak_participation_fraction
+                  burst_duration_p95_s / _max_s, duty_cycle,
+                  ifbi_s / ibi_s / isbi_s and their _gap_s counterparts,
+                  burst_area, participation_fraction, spike_count_per_burst,
+                  peak_population_firing_rate_hz, peak_participation_fraction,
+                  rise_time_s, decay_time_s
   - diagnostics keys: bin_size_ms, reference_isi_s, participation_baseline,
                       detection_threshold, fragment_merge_gap_s, nb_merge_gap_s,
                       participation_bc, threshold_source, min_units_for_burst, …
   - n_units at top level
+
+Column prefixes in the output table:
+  sample_  what was cultured in the well (genotype, line, batch, DIV)
+  ul_      per-unit burst features summarised across units (unit_bursts.py)
+  sp_      share of spiking inside network bursts
+  bf_/nb_/sb_  burst fragment / network burst / superburst tiers
+  diag_    detector diagnostics
 
 Usage
 -----
@@ -164,6 +173,32 @@ def _flatten_sample(sample: dict | None) -> dict:
     return row
 
 
+def _flatten_unit_level(unit_level: dict | None) -> dict:
+    """Per-unit burst features summarised across units -> ul_* columns.
+
+    The per-unit table itself stays in unit_stats.csv; what reaches the
+    well-level table is how the units in this well are distributed.
+    """
+    if not isinstance(unit_level, dict):
+        return {}
+    summary = unit_level.get("summary") or {}
+    row: dict = {}
+    for key, value in summary.items():
+        if isinstance(value, dict):
+            for statistic in ("n", "mean", "median", "std", "cv"):
+                row[f"ul_{key}_{statistic}"] = value.get(statistic)
+        else:
+            row[f"ul_{key}"] = value
+    return row
+
+
+def _flatten_spike_participation(block: dict | None) -> dict:
+    """Share of spiking inside network bursts -> sp_* columns."""
+    if not isinstance(block, dict):
+        return {}
+    return {f"sp_{key}": value for key, value in block.items()}
+
+
 def _flatten_run_context(raw: dict) -> dict:
     row = {
         "detector": raw.get("detector") or (raw.get("diagnostics") or {}).get("detector"),
@@ -207,6 +242,8 @@ def extract_row(json_path: Path) -> dict:
     row["n_units"] = raw.get("n_units")
     row.update(_flatten_sample(raw.get("sample")))
     row.update(_flatten_run_context(raw))
+    row.update(_flatten_unit_level(raw.get("unit_level")))
+    row.update(_flatten_spike_participation(raw.get("spike_participation")))
 
     for prefix, (section_key, _ibi_key) in _SECTIONS.items():
         sec     = raw.get(section_key) or {}
@@ -273,11 +310,13 @@ def to_dataframes(rows: list[dict]) -> dict[str, pd.DataFrame]:
     metric_cols = [c for c in df.columns if c not in id_cols and c != "error"]
 
     def _col_sort_key(c: str) -> tuple:
-        if c.startswith("bf_"):   return (0, c)
-        if c.startswith("nb_"):   return (1, c)
-        if c.startswith("sb_"):   return (2, c)
-        if c.startswith("diag_"): return (3, c)
-        return (4, c)
+        if c.startswith("ul_"):   return (0, c)
+        if c.startswith("sp_"):   return (1, c)
+        if c.startswith("bf_"):   return (2, c)
+        if c.startswith("nb_"):   return (3, c)
+        if c.startswith("sb_"):   return (4, c)
+        if c.startswith("diag_"): return (5, c)
+        return (6, c)
 
     metric_cols = sorted(metric_cols, key=_col_sort_key)
     ordered = [c for c in id_cols if c in df.columns] + metric_cols

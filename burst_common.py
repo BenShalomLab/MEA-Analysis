@@ -39,6 +39,48 @@ def stats(x):
     }
 
 
+def spike_participation(all_spikes_sorted, events):
+    """How much of the well's spiking happens inside network bursts.
+
+    `percent_random_spikes` is the complement, the share of spikes firing
+    outside any network burst. Mossink et al. 2021 use it as one of their
+    core parameters: a culture can keep its burst rate while its neurons
+    drift out of the bursts, and only this ratio shows that.
+
+    Overlapping event windows are merged first, so a spike is never counted
+    twice.
+    """
+    spikes = np.asarray(all_spikes_sorted, dtype=float)
+    n_total = int(spikes.size)
+    result = {
+        "n_spikes_total": n_total,
+        "n_spikes_in_network_bursts": 0,
+        "fraction_spikes_in_network_bursts": 0.0 if n_total else None,
+        "percent_random_spikes": 100.0 if n_total else None,
+    }
+    if n_total == 0 or not events:
+        return result
+
+    windows = sorted((ev["start_time_s"], ev["end_time_s"]) for ev in events)
+    merged = [list(windows[0])]
+    for start, end in windows[1:]:
+        if start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+
+    n_inside = 0
+    for start, end in merged:
+        left = np.searchsorted(spikes, start, side="left")
+        right = np.searchsorted(spikes, end, side="right")
+        n_inside += int(right - left)
+
+    result["n_spikes_in_network_bursts"] = n_inside
+    result["fraction_spikes_in_network_bursts"] = n_inside / n_total
+    result["percent_random_spikes"] = 100.0 * (1.0 - n_inside / n_total)
+    return result
+
+
 def level_metrics(events, total_dur, ibi_key="ibi_s"):
     """Aggregate per-event dicts (as produced by any detector's event list)
     into the summary block used under burst_fragments/network_bursts/
@@ -87,12 +129,28 @@ def level_metrics(events, total_dur, ibi_key="ibi_s"):
         gap_key: stats(gaps),
     }
 
+    mean_duration = float(durations.mean())
+    mean_gap = float(gaps.mean()) if gaps.size else None
+    if mean_gap is not None and (mean_duration + mean_gap) > 0:
+        # Fraction of time the network spends inside a burst. This is the
+        # parameter-free factor of the effective excitability in Vinogradov et
+        # al. 2024 (their alpha is this multiplied by a model scale constant);
+        # reported on its own so it can be compared across conditions without
+        # committing to their model fit. It rises both when bursts lengthen and
+        # when they come closer together.
+        summary["duty_cycle"] = mean_duration / (mean_duration + mean_gap)
+
     optional_fields = (
         "burst_area",
         "participation_fraction",
         "spike_count",
         "peak_population_firing_rate_hz",
         "peak_participation_fraction",
+        # Burst shape (Mossink et al. 2021 report rise and decay separately:
+        # they dissociate in several disease models even when burst duration
+        # and rate do not).
+        "rise_time_s",
+        "decay_time_s",
     )
     for field in optional_fields:
         if all(field in ev for ev in events):

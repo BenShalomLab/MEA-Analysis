@@ -46,9 +46,9 @@ import numpy as np
 from scipy.signal import find_peaks, convolve
 
 try:
-    from burst_common import level_metrics
+    from burst_common import level_metrics, spike_participation
 except ImportError:
-    from MEA_Analysis.IPNAnalysis.burst_common import level_metrics
+    from MEA_Analysis.IPNAnalysis.burst_common import level_metrics, spike_participation
 
 
 def compute_network_bursts(
@@ -247,11 +247,14 @@ def compute_network_bursts(
             participating_units = len(np.unique(all_spike_units[in_burst])) if spike_count else 0
             participation_fraction = participating_units / n_units if n_units else 0.0
 
+            peak_time_s = float(t_centers[peak_idx])
             network_bursts.append({
                 "start_time_s": start_time_s,
                 "end_time_s": end_time_s,
                 "burst_duration_s": burst_duration_s,
-                "peak_time_s": float(t_centers[peak_idx]),
+                "peak_time_s": peak_time_s,
+                "rise_time_s": max(0.0, peak_time_s - start_time_s),
+                "decay_time_s": max(0.0, end_time_s - peak_time_s),
                 "peak_population_firing_rate_hz": float(peak_val),
                 "burst_area": float(np.sum(smoothed_rate_hz[i:j + 1]) * bin_size_s),
                 "spike_count": spike_count,
@@ -269,6 +272,8 @@ def compute_network_bursts(
             "metrics": level_metrics(network_bursts, total_dur, ibi_key="ibi_s"),
         },
         "superbursts": {"events": [], "metrics": {}},
+
+        "spike_participation": spike_participation(all_spike_times, network_bursts),
 
         "diagnostics": {
             "detector": "gaussian",

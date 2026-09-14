@@ -2,6 +2,8 @@
 
 Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code does now, what the reference implementation or paper does, verdict, fix. Verdict key: **OK** sound; **BUG** wrong; **DRIFT** differs from stated reference; **VERIFY** cannot confirm without running on data; **GAP** missing.
 
+> **Status.** Epic C has landed: per-unit burst detection (`unit_bursts.py`, MaxInterval + logISI), burst rise/decay times, spike participation and percent random spikes, and a burst duty cycle. Columns reach the well table as `ul_*` and `sp_*`.
+>
 > **Status.** Epic B (B1, B2) has landed: a `samples.csv` carries genotype, line, prep type, batch and DIV into every result and into the collector, and the collector's run-id column is fixed. See `docs/samples_schema.md`.
 >
 > **Status.** Epic A (A1-A8) has landed: the trim, the local common reference, recording-duration rates, the superburst definition, the Gaussian height gate and edge rule, the curation rules and their audit trail, provenance stamping, and exception handling. Rows fixed by it are marked **[fixed A*]**. Everything else below still stands. `tests/test_epic_a_fixes.py` pins each fixed behaviour.
@@ -124,7 +126,7 @@ Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code
 | Raster sort `location_y` advertised in CLI, not implemented (`_sort_units_for_raster` handles none/firing_rate/unit_id) | BUG | implement with `unit_locations` |
 | y-max summary JSON written by every subprocess (race across parallel SLURM jobs) | BUG under parallel batch | write per-well file, aggregate later |
 | `fixed_y` replot omits burst hierarchy and uses `plot_clean_raster` without `sorted_units` | inconsistent | minor |
-| `helper.detect_bursts_statistics` fixed-ISI bursts + `np.cov` on 1-D (returns variance, labelled cov); `plot_network_activity` legacy | dead, wrong | delete (C3) |
+| `helper.detect_bursts_statistics` fixed-ISI bursts + `np.cov` on 1-D (returns variance, labelled cov); `plot_network_activity` legacy | **[fixed C3]** the `cov_*` fields now return std/mean. Not deleted: three notebooks under `workbooks/` call them, so both are marked deprecated in favour of `unit_bursts.py` and the pipeline detectors | — |
 | `mark_burst_hierarchy` hides superbursts < 2.5 s though detector already filters | redundant | — |
 
 ## 10. Raw template extraction (`mea_waveform.py`)

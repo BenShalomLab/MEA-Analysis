@@ -88,16 +88,18 @@ Also fixed here, because it corrupts the same columns B2 adds: the collector rea
 
 Checks: `tests/test_samples.py` (24 tests), `tests/test_collect_network_jsons.py` (7 tests).
 
-### Epic C — unit-level features
+### Epic C — unit-level features — DONE (2026-09-14)
 
-| ID | Task | Files | Check | Deps |
-|---|---|---|---|---|
-| C1 | `unit_bursts.py`: MaxInterval + logISI per-unit burst detectors (Cotterill 2016 params); returns per-unit burst rate, duration, spikes/burst, intra-burst FR, % spikes in bursts, IBI CV, method agreement | new | synthetic bursty vs Poisson train | — |
-| C2 | Wire C1 into reports: `unit_stats.csv` gains columns; JSON `unit_level` block with mean/median/CV across units | `mea_reports.py` | JSON keys | C1 |
-| C3 | Delete dead `helper.detect_bursts_statistics`, `plot_network_activity` | `helper_functions.py` | grep 0 | C2 |
-| C4 | Extend collector with `unit_level` and `sample` sections | `collect_network_jsons.py` | CSV columns | B2, C2 |
-| C5 | NB shape: rise time, decay time, area normalised by n_units, % spikes in NBs, PRS | `burst_common.py` (additive), detectors | tests | A3 |
-| C6 | Effective excitability α from NB stats (Vinogradov 2024) | `burst_common.py` | value on synthetic | A3 |
+| ID | Task | Outcome |
+|---|---|---|
+| C1 | `unit_bursts.py` | MaxInterval and logISI (Pasquale 2010 antimode with a 100 ms fallback, reporting which was used), per-unit burst rate, duration, spikes per burst, intra-burst rate, fraction of spikes in bursts, IBI mean/CV/gap, and a Jaccard agreement between the two detectors as Cotterill et al. 2016 advise |
+| C2 | Wired into reports | `unit_stats.csv` now carries the detector's ISI statistics and both detectors' burst features per unit; `network_results.json` gains a `unit_level` block with the across-unit summary and the parameters used. Non-fatal: a failure here logs and leaves the network results intact |
+| C3 | Dead helpers | **Not deleted.** `detect_bursts_statistics` and `plot_network_activity` are called by three notebooks under `workbooks/`. Both are documented as deprecated in favour of `unit_bursts.py` and the pipeline detectors, and a real defect was fixed: their `cov_*` fields returned `np.cov` of a 1-D array, which is a variance in seconds squared, not a coefficient of variation |
+| C4 | Collector | `ul_*` columns from the unit-level summary and `sp_*` from spike participation, ordered ahead of the burst tiers |
+| C5 | NB shape | `rise_time_s` and `decay_time_s` per event, summarised per tier; `spike_participation` block with the fraction of spikes inside network bursts and its complement, percent random spikes |
+| C6 | Effective excitability | `duty_cycle` per tier, the time fraction spent bursting. This is the parameter-free factor of the effective excitability in Vinogradov et al. 2024; their alpha is this times a model scale constant, which is deliberately not guessed |
+
+Checks: `tests/test_unit_bursts.py` (24 tests), `tests/test_burst_shape.py` (13 tests).
 
 ### Epic D — synchrony and connectivity
 

@@ -25,6 +25,14 @@ except ImportError:
     from MEA_Analysis.IPNAnalysis.mea_infra import collect_provenance
 
 try:
+    from unit_bursts import compute_unit_burst_features
+except ImportError:
+    try:
+        from MEA_Analysis.IPNAnalysis.unit_bursts import compute_unit_burst_features
+    except ImportError:
+        compute_unit_burst_features = None
+
+try:
     from parameter_free_burst_detector import compute_network_bursts as compute_network_bursts_parameter_free
     from gaussianNetworkBursts import compute_network_bursts as compute_network_bursts_gaussian
     import helper_functions as helper
@@ -276,6 +284,59 @@ class ReportsMixin:
                 pdf_doc.savefig(fig)
                 plt.close(fig)
 
+    @staticmethod
+    def _build_unit_stats_frame(detector_unit_stats, per_unit_bursts):
+        """One row per unit: detector ISI statistics plus burst features.
+
+        Both sources report mean_firing_rate_hz; the duplicate is dropped so
+        the CSV does not end up with two identically named columns, which
+        pandas will happily write and then refuse to index by name.
+        """
+        frames = []
+        if detector_unit_stats:
+            frames.append(pd.DataFrame.from_dict(detector_unit_stats, orient="index"))
+        if per_unit_bursts:
+            burst_frame = pd.DataFrame.from_dict(per_unit_bursts, orient="index")
+            if frames:
+                duplicates = [c for c in burst_frame.columns if c in frames[0].columns]
+                burst_frame = burst_frame.drop(columns=duplicates)
+            frames.append(burst_frame)
+
+        if not frames:
+            return None
+
+        frame = pd.concat(frames, axis=1) if len(frames) > 1 else frames[0]
+        frame.index.name = "unit_id"
+        return frame
+
+    def _compute_unit_level_features(self, spike_times, duration_s):
+        """Per-unit burst features for every unit, or {} if unavailable.
+
+        Never fatal: this is an added measurement, and losing it should not
+        cost a well its network results after a long sort.
+        """
+        if compute_unit_burst_features is None:
+            self.logger.warning(
+                "unit_bursts module unavailable; per-unit burst features skipped."
+            )
+            return {}
+
+        try:
+            result = compute_unit_burst_features(spike_times, duration_s=duration_s)
+        except Exception:
+            self.logger.warning("Per-unit burst feature extraction failed.", exc_info=True)
+            return {}
+
+        summary = result.get("summary", {})
+        self.logger.info(
+            "Per-unit bursts: %s/%s units bursting (MaxInterval), %s (logISI); "
+            "%s units used an adaptive logISI threshold.",
+            summary.get("n_bursting_units_maxinterval"), summary.get("n_units"),
+            summary.get("n_bursting_units_logisi"),
+            summary.get("n_units_logisi_adaptive_threshold"),
+        )
+        return result
+
     def _resolve_recording_metadata(self):
         """Return (recording, sampling_rate_hz, duration_s); entries may be None.
 
@@ -426,12 +487,18 @@ class ReportsMixin:
                 )
                 self.logger.info("Saved network_plot_data.npz")
 
-            # D. Save unit_stats as CSV
-            if unit_stats:
-                df_units = pd.DataFrame.from_dict(unit_stats, orient="index")
-                df_units.index.name = "unit_id"
+            # D. Per-unit burst features, then unit_stats.csv
+            # Network bursts alone cannot separate "fewer neurons bursting"
+            # from "each neuron bursting less"; these are the per-unit half of
+            # the standard phenotyping feature set.
+            unit_level = self._compute_unit_level_features(spike_times, recording_duration_s)
+            per_unit_bursts = unit_level.pop("units", {}) if unit_level else {}
+
+            df_units = self._build_unit_stats_frame(unit_stats, per_unit_bursts)
+            if df_units is not None:
                 df_units.to_csv(self.output_dir / "unit_stats.csv")
-                self.logger.info("Saved unit_stats.csv")
+                self.logger.info("Saved unit_stats.csv (%d units, %d columns)",
+                                 len(df_units), len(df_units.columns))
 
             # E. Save lean JSON
             network_data_clean = helper.recursive_clean(network_data)
@@ -443,6 +510,8 @@ class ReportsMixin:
                 network_data_clean["duration_s"] = recording_duration_s
             network_data_clean["detector"] = detector_name
             network_data_clean["detector_params"] = helper.recursive_clean(detector_kwargs)
+            if unit_level:
+                network_data_clean["unit_level"] = helper.recursive_clean(unit_level)
             network_data_clean["curation"] = getattr(self, "curation_summary", None)
             network_data_clean["provenance"] = collect_provenance()
             # Genotype/line/DIV etc. Without this block the results identify the

@@ -36,6 +36,19 @@ def _write_result(root, *, project="CDKL5", date="2025-02-12", chip="16657",
         "curation": {"applied": True, "n_units_input": 60, "n_units_rejected": 18,
                      "rejected_by_reason": {"Low Presence": 12, "High Contam": 6}},
         "provenance": {"git_commit": "abc123", "git_dirty": False},
+        "spike_participation": {
+            "n_spikes_total": 1000, "n_spikes_in_network_bursts": 700,
+            "fraction_spikes_in_network_bursts": 0.7, "percent_random_spikes": 30.0,
+        },
+        "unit_level": {
+            "summary": {
+                "n_units": 42,
+                "n_bursting_units_maxinterval": 30,
+                "mi_burst_rate_hz": {"n": 30, "mean": 0.12, "median": 0.11,
+                                     "std": 0.03, "cv": 0.25},
+            },
+            "params": {"maxinterval": {"min_spikes": 5}},
+        },
         "sample": sample if sample is not None else {
             "matched": True, "genotype": "KO", "line": "Cdkl5_KO_3",
             "prep_type": "dissociated_mouse", "batch": "B12", "div": 28,
@@ -99,6 +112,20 @@ def test_sample_columns_sit_with_the_ids_not_among_the_metrics(tmp_path):
     frame = to_dataframes(rows)["ALL"]
     columns = list(frame.columns)
     assert columns.index("sample_genotype") < columns.index("nb_burst_count")
+
+
+def test_unit_level_summary_becomes_ul_columns(tmp_path):
+    row = extract_row(_write_result(tmp_path))
+    assert row["ul_n_bursting_units_maxinterval"] == 30
+    assert row["ul_mi_burst_rate_hz_mean"] == pytest.approx(0.12)
+    assert row["ul_mi_burst_rate_hz_median"] == pytest.approx(0.11)
+    assert row["ul_mi_burst_rate_hz_n"] == 30
+
+
+def test_spike_participation_becomes_sp_columns(tmp_path):
+    row = extract_row(_write_result(tmp_path))
+    assert row["sp_percent_random_spikes"] == pytest.approx(30.0)
+    assert row["sp_fraction_spikes_in_network_bursts"] == pytest.approx(0.7)
 
 
 def test_unreadable_json_produces_an_error_row_not_a_crash(tmp_path):
