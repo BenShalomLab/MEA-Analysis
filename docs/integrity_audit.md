@@ -2,6 +2,8 @@
 
 Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code does now, what the reference implementation or paper does, verdict, fix. Verdict key: **OK** sound; **BUG** wrong; **DRIFT** differs from stated reference; **VERIFY** cannot confirm without running on data; **GAP** missing.
 
+> **Status.** Epic A (A1-A8) has landed: the trim, the local common reference, recording-duration rates, the superburst definition, the Gaussian height gate and edge rule, the curation rules and their audit trail, provenance stamping, and exception handling. Rows fixed by it are marked **[fixed A*]**. Everything else below still stands. `tests/test_epic_a_fixes.py` pins each fixed behaviour.
+
 ## 1. Preprocessing (`mea_preprocessing.py`)
 
 | Step | Current | Reference | Verdict | Fix |
@@ -143,10 +145,10 @@ Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code
 
 ## 12. Priority list from this audit
 
-1. CMR annulus no-op (1.5) and `invert_sign` (2.1): both can change every unit count already produced. Verify on one well before any new analysis.
-2. Gaussian edge inversion (7.3) and no height gate (7.2): any MATLAB-parity comparison done so far is suspect.
-3. Duration base (6.1), superburst definition (6.11), zeros-for-empty (8.1): bias group statistics.
-4. Collector path parse (8.3): mislabels project/date/chip in every CSV.
-5. VRAM-dependent KS4 params (2.10): reproducibility.
-6. presence_ratio (5.1) and amplitude sign (5.5): curation bias / version fragility.
-7. y-max race, raster_sort location_y, dead helpers: hygiene.
+1. ~~CMR annulus no-op (1.5)~~ **[fixed A2]** — radius is now (30, 200) µm with a coverage check that falls back to global referencing and logs the fraction of channels that have neighbours. `invert_sign` (2.1) is **still open**: it needs one well sorted both ways on real data. `--kilosort-params '{"invert_sign": false}'` now makes that a one-flag comparison.
+2. ~~Gaussian edge inversion (7.3) and no height gate (7.2)~~ **[fixed A5]** — edges are at `frac * peak`, and a mean + 2·SD height gate is on by default (`gaussian_min_height_sd: 0` restores MATLAB parity). Burst durations from this detector will be longer than in any earlier run.
+3. ~~Duration base (6.1), superburst definition (6.11), zeros-for-empty (8.1)~~ **[fixed A3, A4]** — rates divide by the recording duration, a superburst needs ≥2 component bursts, and empty metrics serialise as null with `burst_count: 0`.
+4. Collector path parse (8.3): mislabels project/date/chip in every CSV. **Still open** (task C4).
+5. ~~VRAM-dependent KS4 params (2.10)~~ **[partly fixed A7]** — the resolved parameters are written to `sorting_params.json` and the checkpoint, and the low-VRAM tier now logs a warning that its results are not comparable. Pinning one parameter set across machines is a config choice (`sorting.kilosort_params`), deliberately left to the user.
+6. ~~amplitude sign (5.5)~~ **[fixed A6]** — compared in absolute value, and `amplitude_cv_median` is applied instead of being a TODO. presence_ratio (5.1) is **unchanged by design**: the threshold is a scientific choice, so instead every well writes `curation_summary.json` with per-rule rejection counts. Compare those across genotypes before trusting group statistics.
+7. y-max race, raster_sort location_y, dead helpers: hygiene. **Still open.**

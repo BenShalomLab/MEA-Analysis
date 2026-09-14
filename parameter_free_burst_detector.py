@@ -11,6 +11,7 @@ except ImportError:
 
 def compute_network_bursts(
     SpikeTimes=None,
+    duration_s=None,
     extent_frac=0.30,
     network_merge_gap_min=0.75,
     threshold_mad_scale=0.75,
@@ -18,9 +19,29 @@ def compute_network_bursts(
     min_burst_density_Hz=0.0,
     min_absolute_rate_Hz=0.0,
     min_superburst_dur_s=2.5,
-    min_superburst_components=1,
+    min_superburst_components=2,
     min_peak_synchrony=0.05,
 ):
+    """Adaptive, three-tier network burst detector.
+
+    Parameters
+    ----------
+    SpikeTimes : dict[unit_id, array-like]
+        Spike times in seconds, per unit.
+    duration_s : float or None
+        Duration of the *recording* in seconds. All firing and burst rates
+        are divided by this. When None it falls back to the span between the
+        first and last spike, which overestimates every rate in a well that
+        is silent for part of the recording — pass the real duration
+        (`recording.get_num_frames() / fs`) whenever it is known.
+        Detection itself still operates on the spike span, so passing this
+        changes reported rates but not which bursts are found.
+    min_superburst_components : int
+        Minimum number of component network bursts for a superburst.
+        Default 2: a superburst is a *cluster* of network bursts (Wagenaar
+        et al. 2006). A single long network burst is reported instead
+        through `network_bursts.metrics.burst_duration_p95_s`.
+    """
 
     # ---------------------------------------------------------
     # 0. Sanity checks
@@ -38,7 +59,20 @@ def compute_network_bursts(
 
     rec_start = float(all_spikes[0])
     rec_end   = float(all_spikes[-1])
-    total_dur = rec_end - rec_start
+
+    # Binning/detection window: the active span. Rate denominator: the whole
+    # recording. Keeping these separate means a partially silent well is not
+    # credited with a higher rate than a continuously active one, while
+    # detection thresholds are still estimated from the period that has data.
+    analysis_window_s = rec_end - rec_start
+    if duration_s is not None and float(duration_s) > 0:
+        total_dur = float(duration_s)
+        duration_source = "recording"
+    else:
+        total_dur = analysis_window_s
+        duration_source = "spike_span"
+    if total_dur <= 0:
+        return {"error": "no_spikes"}
 
     # ---------------------------------------------------------
     # 1. Biological calibration
@@ -453,14 +487,14 @@ def compute_network_bursts(
 
         return [m for m in merged if m["burst_duration_s"] >= min_dur]
 
-    def merge_superbursts(events, gap, min_dur=2.5, min_components=1):
+    def merge_superbursts(events, gap, min_dur=2.5, min_components=2):
         """
         Network burst -> superburst merge.
 
         Superbursts are prolonged episodes of elevated network activity
-        containing one or more network bursts (Wagenaar et al. 2006:
-        duration > 2.5s). Detection is gap-only — no valley floor applied
-        because superbursts can contain full silences between component NBs.
+        containing several network bursts (Wagenaar et al. 2006: duration
+        > 2.5s). Detection is gap-only — no valley floor applied because
+        superbursts can contain full silences between component NBs.
 
         Parameters
         ----------
@@ -471,8 +505,14 @@ def compute_network_bursts(
             Minimum superburst duration in seconds. Default 2.5s per
             Wagenaar et al. 2006 operational definition.
         min_components : int
-            Minimum number of component NBs. Default 1 includes long single
-            NBs representing sustained reverberant recruitment.
+            Minimum number of component NBs. Default 2, so a superburst is a
+            *cluster* of network bursts as in Wagenaar et al. 2006. With
+            min_components=1 every network burst longer than min_dur is also
+            reported as a superburst, which conflates a single prolonged
+            burst (typical of organoids) with a superburst train (typical of
+            mature dissociated cultures) and double-counts it across tiers.
+            Long single bursts are captured by the network burst tier's
+            burst_duration_p95_s / burst_duration_max_s instead.
         """
         if not events:
             return []
@@ -541,6 +581,10 @@ def compute_network_bursts(
         },
 
         "diagnostics": {
+            "detector":                     "parameter_free",
+            "recording_duration_s":         total_dur,
+            "analysis_window_s":            analysis_window_s,
+            "duration_source":              duration_source,
             "bin_size_ms":                  bin_size_ms,
             "reference_isi_s":              reference_isi_s,
             "reference_isi_source":         "bursty_peak" if len(bursty_log_isis) > 50 else ("all_percentile15" if all_log_isis else "default"),
@@ -557,6 +601,7 @@ def compute_network_bursts(
             "nb_merge_gap_s":               nb_merge_gap_s,
             "nb_merge_gap_source":          nb_merge_gap_source,
             "superburst_min_dur_s":         min_superburst_dur_s,
+            "superburst_min_components":    min_superburst_components,
             "superburst_merge_gap_s":       nb_merge_gap_s,
             "n_units":                      n_units,
             "n_bursty_units":               sum(1 for s in unit_stats.values() if s.get("is_bursty")),

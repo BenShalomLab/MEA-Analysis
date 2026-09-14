@@ -240,8 +240,11 @@ class MergeMixin:
                 try:
                     if merge_analyzer_folder.exists():
                         shutil.rmtree(merge_analyzer_folder)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.logger.warning(
+                        "Could not remove temporary merge analyzer folder %s: %s",
+                        merge_analyzer_folder, e,
+                    )
             return
 
         self.logger.info("Merge step disabled; continuing without unit merging")

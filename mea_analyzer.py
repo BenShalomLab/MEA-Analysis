@@ -33,8 +33,11 @@ class AnalyzerMixin:
 
         try:
             self.sorting = self.sorting.remove_empty_units()
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.warning(
+                "Could not drop empty units from loaded sorting (%s); "
+                "continuing with the sorting as loaded.", e,
+            )
         return self.sorting is not None
 
     def _load_existing_analyzer(self):

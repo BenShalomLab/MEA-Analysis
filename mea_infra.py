@@ -3,6 +3,8 @@ import re
 import sys
 import json
 import logging
+import platform
+import subprocess
 import configparser
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +13,65 @@ try:
     from mea_checkpoint import ProcessingStage, CHECKPOINT_SCHEMA_VERSION
 except ImportError:
     from MEA_Analysis.IPNAnalysis.mea_checkpoint import ProcessingStage, CHECKPOINT_SCHEMA_VERSION
+
+# Packages whose version changes the numbers this pipeline produces.
+_PROVENANCE_PACKAGES = ("spikeinterface", "kilosort", "numpy", "scipy", "torch")
+
+_PROVENANCE_CACHE = None
+
+
+def collect_provenance():
+    """Code version and key package versions, for stamping into outputs.
+
+    Without this there is no way to tell, months later, whether two wells were
+    processed by the same code: sorter parameters, detector defaults and
+    SpikeInterface metric definitions all change results. Cached per process;
+    never raises.
+    """
+    global _PROVENANCE_CACHE
+    if _PROVENANCE_CACHE is not None:
+        return _PROVENANCE_CACHE
+
+    provenance = {
+        "python": platform.python_version(),
+        "host": platform.node(),
+        "packages": {},
+    }
+
+    repo_dir = Path(__file__).resolve().parent
+    for key, args in (
+        ("git_commit", ["git", "rev-parse", "HEAD"]),
+        ("git_branch", ["git", "rev-parse", "--abbrev-ref", "HEAD"]),
+    ):
+        try:
+            provenance[key] = subprocess.run(
+                args, cwd=repo_dir, capture_output=True, text=True, timeout=10, check=True
+            ).stdout.strip()
+        except Exception:
+            provenance[key] = None
+
+    try:
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_dir, capture_output=True, text=True, timeout=10, check=True,
+        ).stdout.strip()
+        provenance["git_dirty"] = bool(dirty)
+    except Exception:
+        provenance["git_dirty"] = None
+
+    try:
+        from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+        for package in _PROVENANCE_PACKAGES:
+            try:
+                provenance["packages"][package] = _pkg_version(package)
+            except PackageNotFoundError:
+                provenance["packages"][package] = None
+    except Exception:
+        pass
+
+    _PROVENANCE_CACHE = provenance
+    return provenance
 
 
 def resolve_hdf5_plugin_path():
@@ -66,8 +127,11 @@ class InfraMixin:
         if self.cuda_visible_devices is not None:
             try:
                 os.environ["CUDA_VISIBLE_DEVICES"] = str(self.cuda_visible_devices)
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(
+                    "Could not set CUDA_VISIBLE_DEVICES=%s: %s",
+                    self.cuda_visible_devices, e,
+                )
         self._apply_hdf5_plugin_path_fallback()
 
     def _apply_hdf5_plugin_path_fallback(self):
@@ -131,7 +195,10 @@ class InfraMixin:
                 meta['date'] = parts[-5]
                 meta['chip_id'] = parts[-4]
                 meta['well'] = self.stream_id
-        except Exception: pass
+        except Exception as e:
+            # Path does not follow <project>/<date>/<chip>/<run>/Network/data.raw.h5;
+            # the .metadata file below may still fill these in.
+            print(f"[WARN] Could not infer metadata from path {self.file_path}: {e}")
 
         # Strategy B: .metadata file (Overrides regex)
         meta_file = self.file_path.parent / ".metadata"
@@ -144,7 +211,9 @@ class InfraMixin:
                     meta['project'] = cfg['properties'].get('project_title', meta.get('project'))
                 if 'runtime' in cfg:
                     meta['chip_id'] = cfg['runtime'].get('chipid', meta.get('chip_id'))
-            except: pass
+            except Exception as e:
+                # Keep whatever the path regex produced rather than failing the run.
+                print(f"[WARN] Could not read {meta_file}: {e}")
         return meta
 
     def _validate_output_subdir_after_well(self, value):
@@ -211,6 +280,7 @@ class InfraMixin:
         self.state['stage'] = stage.value
         self.state['checkpoint_schema_version'] = CHECKPOINT_SCHEMA_VERSION
         self.state['last_updated'] = str(datetime.now())
+        self.state['provenance'] = collect_provenance()
         self.state.update(kwargs)
         with open(self.checkpoint_file, 'w') as f:
             json.dump(self.state, f, indent=2)

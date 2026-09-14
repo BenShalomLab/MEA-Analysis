@@ -1,7 +1,7 @@
 import json
 import shutil
-from math import floor
 
+import numpy as np
 import spikeinterface.full as si
 import spikeinterface.preprocessing as spre
 
@@ -10,9 +10,104 @@ try:
 except ImportError:
     from MEA_Analysis.IPNAnalysis.mea_checkpoint import ProcessingStage
 
+# Seconds dropped from the end of every recording. Maxwell files can end on a
+# partially written chunk whose trailing samples are not valid signal.
+TRIM_TAIL_S = 1.0
+
+# Local common median reference geometry, in microns.
+# Inner radius excludes the channels that share the reference channel's own
+# spike footprint (a Maxwell soma footprint spans roughly 50 um), outer radius
+# bounds the neighbourhood used for the median.
+# These must NOT be equal: reference='local' selects an annulus
+# inner < d <= outer, so inner == outer selects nothing, every channel is left
+# unreferenced, and the step becomes a silent no-op.
+CMR_INNER_RADIUS_UM = 30.0
+CMR_OUTER_RADIUS_UM = 200.0
+
+# If fewer than this fraction of channels have at least one neighbour inside
+# the annulus, local referencing is not meaningful for this electrode layout
+# and global CMR is used instead.
+CMR_MIN_COVERAGE_FRAC = 0.5
+
 
 class PreprocessingMixin:
     """Phase 1: load recording file and run preprocessing pipeline."""
+
+    def _local_reference_coverage(self, rec, inner_um, outer_um):
+        """Fraction of channels with >=1 neighbour in the annulus, and the
+        median neighbour count. Returns None when locations are unavailable.
+
+        Guards against the failure mode where the annulus is empty (or nearly
+        so) for a sparse Maxwell electrode selection: SpikeInterface leaves
+        such channels unreferenced and only warns, so a misconfigured radius
+        silently disables the whole referencing step.
+        """
+        try:
+            locations = np.asarray(rec.get_channel_locations(), dtype=float)
+        except Exception as e:
+            self.logger.warning("Could not read channel locations for CMR check: %s", e)
+            return None
+
+        if locations.ndim != 2 or locations.shape[0] == 0:
+            return None
+
+        distances = np.linalg.norm(
+            locations[:, None, :] - locations[None, :, :], axis=-1
+        )
+        neighbour_counts = ((distances > inner_um) & (distances <= outer_um)).sum(axis=1)
+        return float(np.mean(neighbour_counts > 0)), float(np.median(neighbour_counts))
+
+    def _apply_common_reference(self, rec):
+        """Local median reference where the geometry supports it, else global."""
+        coverage = self._local_reference_coverage(
+            rec, CMR_INNER_RADIUS_UM, CMR_OUTER_RADIUS_UM
+        )
+
+        if coverage is None:
+            self.logger.warning(
+                "No channel locations available; using global CMR."
+            )
+            self.metadata['cmr_mode'] = 'global_no_locations'
+            return spre.common_reference(rec, reference='global', operator='median')
+
+        covered_frac, median_neighbours = coverage
+        self.logger.info(
+            "Local CMR annulus %.0f-%.0f um: %.0f%% of channels have a neighbour "
+            "(median %d neighbours per channel).",
+            CMR_INNER_RADIUS_UM, CMR_OUTER_RADIUS_UM,
+            covered_frac * 100, int(median_neighbours),
+        )
+
+        if covered_frac < CMR_MIN_COVERAGE_FRAC:
+            self.logger.warning(
+                "Only %.0f%% of channels have a neighbour in the local CMR annulus "
+                "(< %.0f%% required) — this electrode selection is too sparse for "
+                "local referencing; using global CMR instead.",
+                covered_frac * 100, CMR_MIN_COVERAGE_FRAC * 100,
+            )
+            self.metadata['cmr_mode'] = 'global_sparse_layout'
+            self.metadata['cmr_coverage_frac'] = covered_frac
+            return spre.common_reference(rec, reference='global', operator='median')
+
+        try:
+            referenced = spre.common_reference(
+                rec,
+                reference='local',
+                operator='median',
+                local_radius=(CMR_INNER_RADIUS_UM, CMR_OUTER_RADIUS_UM),
+            )
+        except Exception as e:
+            self.logger.warning("Local CMR failed (%s); using global CMR.", e)
+            self.metadata['cmr_mode'] = 'global_local_failed'
+            self.metadata['cmr_error'] = str(e)
+            return spre.common_reference(rec, reference='global', operator='median')
+
+        self.metadata['cmr_mode'] = 'local'
+        self.metadata['cmr_inner_radius_um'] = CMR_INNER_RADIUS_UM
+        self.metadata['cmr_outer_radius_um'] = CMR_OUTER_RADIUS_UM
+        self.metadata['cmr_coverage_frac'] = covered_frac
+        self.metadata['cmr_median_neighbours'] = median_neighbours
+        return referenced
 
     def _load_recording_file(self):
         fpath = str(self.file_path)
@@ -44,8 +139,12 @@ class PreprocessingMixin:
 
         if self.state['stage'] >= ProcessingStage.PREPROCESSING_COMPLETE.value and binary_folder.exists():
             self.logger.info("Resuming: Loading preprocessed data from binary cache.")
-            try: self.recording = si.load(binary_folder)
-            except: self.recording = si.load_extractor(binary_folder)
+            try:
+                self.recording = si.load(binary_folder)
+            except Exception as e:
+                self.logger.debug("si.load failed on %s (%s); trying load_extractor.",
+                                  binary_folder, e)
+                self.recording = si.load_extractor(binary_folder)
             return
         self._save_checkpoint(ProcessingStage.PREPROCESSING)
         self.logger.info("--- [Phase 1] Preprocessing ---")
@@ -54,11 +153,27 @@ class PreprocessingMixin:
 
         fs = rec.get_sampling_frequency()
         self.metadata['fs'] = fs
-        total_frames = rec.get_num_frames()
-        end_frame = floor(total_frames)
-        if end_frame > 0:
-            self.logger.info(f"Trimming recording: {total_frames} -> {end_frame} frames (removed last 1s).")
+        total_frames = int(rec.get_num_frames())
+
+        # Drop the final TRIM_TAIL_S seconds. Previously this computed
+        # floor(total_frames), which equals total_frames, so nothing was ever
+        # removed despite the log message claiming otherwise.
+        trim_frames = int(round(TRIM_TAIL_S * fs))
+        end_frame = total_frames - trim_frames
+        if trim_frames > 0 and end_frame > trim_frames:
+            self.logger.info(
+                "Trimming recording: %d -> %d frames (removed last %.1f s).",
+                total_frames, end_frame, TRIM_TAIL_S,
+            )
             rec = rec.frame_slice(start_frame=0, end_frame=end_frame)
+        else:
+            self.logger.warning(
+                "Recording too short to trim %.1f s (%d frames at %.0f Hz); keeping all frames.",
+                TRIM_TAIL_S, total_frames, fs,
+            )
+
+        self.metadata['trim_tail_s'] = TRIM_TAIL_S
+        self.metadata['duration_s'] = rec.get_num_frames() / fs
 
         if rec.get_dtype().kind == 'u':
             rec = spre.unsigned_to_signed(rec)
@@ -121,14 +236,7 @@ class PreprocessingMixin:
 
         self.metadata['bad_channel_ids'] = [str(c) for c in bad_channel_ids]
 
-        # NOTE: local_radius=(250, 250) creates an annulus — inner radius 250 µm excluded.
-        # If intent is all channels within 250 µm use (0, 250). Kept as-is to preserve
-        # existing behaviour pending confirmation.
-        try:
-            rec = spre.common_reference(rec, reference='local', operator='median', local_radius=(250, 250))
-        except:
-            self.logger.warning("Local CMR failed (missing locations?), using Global CMR.")
-            rec = spre.common_reference(rec, reference='global', operator='median')
+        rec = self._apply_common_reference(rec)
 
         rec.annotate(is_filtered=True)
 
@@ -151,7 +259,26 @@ class PreprocessingMixin:
 
         self.recording = si.load(binary_folder)
 
+        preprocessing_summary = {
+            "bad_channel_ids": [str(c) for c in bad_channel_ids],
+            "n_channels_input": int(n_total_channels),
+            "n_channels_kept": int(self.recording.get_num_channels()),
+            "bad_channel_fraction": (
+                len(bad_channel_ids) / n_total_channels if n_total_channels else 0.0
+            ),
+            "trim_tail_s": TRIM_TAIL_S,
+            "duration_s": self.metadata.get('duration_s'),
+            "sampling_frequency_hz": fs,
+            "highpass_hz": 300,
+            "cmr_mode": self.metadata.get('cmr_mode'),
+            "cmr_inner_radius_um": self.metadata.get('cmr_inner_radius_um'),
+            "cmr_outer_radius_um": self.metadata.get('cmr_outer_radius_um'),
+            "cmr_coverage_frac": self.metadata.get('cmr_coverage_frac'),
+        }
         with open(self.output_dir / "bad_channels.json", "w", encoding="utf-8") as f:
-            json.dump({"bad_channel_ids": [str(c) for c in bad_channel_ids]}, f, indent=2)
+            json.dump(preprocessing_summary, f, indent=2)
 
-        self._save_checkpoint(ProcessingStage.PREPROCESSING_COMPLETE)
+        self._save_checkpoint(
+            ProcessingStage.PREPROCESSING_COMPLETE,
+            preprocessing=preprocessing_summary,
+        )

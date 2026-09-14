@@ -152,6 +152,7 @@ def _default_option_kwargs() -> dict[str, Any]:
         "output_subdir_after_well": None,
         "burst_detector": "parameter_free",
         "gaussian_burst_kwargs": None,
+        "parameter_free_burst_kwargs": None,
     }
 
 
@@ -243,6 +244,10 @@ class MEAPipeline(
         # Only non-None values override compute_network_bursts()'s own defaults.
         gaussian_kwargs = self.option_kwargs.get("gaussian_burst_kwargs") or {}
         self.gaussian_burst_kwargs = {k: v for k, v in gaussian_kwargs.items() if v is not None}
+        parameter_free_kwargs = self.option_kwargs.get("parameter_free_burst_kwargs") or {}
+        self.parameter_free_burst_kwargs = {
+            k: v for k, v in parameter_free_kwargs.items() if v is not None
+        }
 
         # 1. Parse Metadata & Paths
         self.metadata = self._parse_metadata()
@@ -528,6 +533,12 @@ def main():
         help="Spike sorter to use (default: kilosort4)")
     sort_group.add_argument("--docker", type=str, default=None,
         help="Docker image name for containerized sorting")
+    sort_group.add_argument("--kilosort-params", type=str, default=None,
+        help="JSON string or file path with Kilosort4 parameter overrides,\n"
+             "merged over the built-in VRAM-tier defaults. Pin the\n"
+             "result-affecting parameters here when one dataset is sorted on\n"
+             "more than one GPU model, e.g.\n"
+             "'{\"dmin\": 17, \"cluster_downsampling\": 20, \"max_cluster_subset\": 25000}'")
     sort_group.add_argument("--skip-spikesorting", action="store_true",
         help="Run spike detection only, skip full sorting")
 
@@ -548,7 +559,19 @@ def main():
     burst_group.add_argument("--gaussian-min-peak-distance-s", type=float, default=None,
         help="Gaussian detector: minimum spacing between burst peaks in seconds (default: 1.0)")
     burst_group.add_argument("--gaussian-onset-offset-peak-frac", type=float, default=None,
-        help="Gaussian detector: burst edges at peak * (1 - this fraction) (default: 0.3)")
+        help="Gaussian detector: burst edges where the rate falls below\n"
+             "peak * this fraction; smaller means longer bursts (default: 0.3)")
+    burst_group.add_argument("--gaussian-min-height-sd", type=float, default=None,
+        help="Gaussian detector: peak height gate, in SDs of the smoothed rate\n"
+             "above its mean (default: 2.0). Pass 0 to disable the gate and\n"
+             "reproduce the MATLAB ThresholdMethod='Adaptive' behaviour.")
+    burst_group.add_argument("--pf-min-superburst-dur-s",
+        dest="parameter_free_min_superburst_dur_s", type=float, default=None,
+        help="parameter_free detector: minimum superburst duration in seconds (default: 2.5)")
+    burst_group.add_argument("--pf-min-superburst-components",
+        dest="parameter_free_min_superburst_components", type=int, default=None,
+        help="parameter_free detector: minimum component network bursts per\n"
+             "superburst (default: 2, i.e. a superburst is a cluster of bursts)")
 
     # --- Plotting ---
     plot_group = parser.add_argument_group("plotting")
@@ -673,6 +696,7 @@ def main():
                     "enabled": bool(args.auto_merge_units),
                     "template_diff_thresh": str(args.auto_merge_template_diff_thresh),
                 },
+                sorter_kwargs=resolved.get("kilosort_params") or None,
                 option_kwargs={
                     "force_rerun_analyzer": bool(args.rerun_analyzer),
                     "output_subdir_after_well": resolved.get("output_subdir_after_well"),
@@ -683,6 +707,12 @@ def main():
                         "min_prominence": resolved["gaussian_min_prominence"],
                         "min_peak_distance_s": resolved["gaussian_min_peak_distance_s"],
                         "onset_offset_peak_frac": resolved["gaussian_onset_offset_peak_frac"],
+                        # <= 0 disables the height gate (MATLAB parity).
+                        "min_height_sd": resolved["gaussian_min_height_sd"],
+                    },
+                    "parameter_free_burst_kwargs": {
+                        "min_superburst_dur_s": resolved["parameter_free_min_superburst_dur_s"],
+                        "min_superburst_components": resolved["parameter_free_min_superburst_components"],
                     },
                 },
                 reanalyze_bursts=bool(args.reanalyze_bursts),

@@ -20,6 +20,11 @@ except ImportError:
     from MEA_Analysis.IPNAnalysis.mea_checkpoint import ProcessingStage
 
 try:
+    from mea_infra import collect_provenance
+except ImportError:
+    from MEA_Analysis.IPNAnalysis.mea_infra import collect_provenance
+
+try:
     from parameter_free_burst_detector import compute_network_bursts as compute_network_bursts_parameter_free
     from gaussianNetworkBursts import compute_network_bursts as compute_network_bursts_gaussian
     import helper_functions as helper
@@ -71,6 +76,13 @@ class ReportsMixin:
             if no_curation:
                 self.logger.info("Skipping curation.")
                 clean_units = q_metrics.index.values
+                self.curation_summary = {
+                    "applied": False,
+                    "n_units_input": int(len(q_metrics)),
+                    "n_units_kept": int(len(q_metrics)),
+                    "n_units_rejected": 0,
+                    "rejected_by_reason": {},
+                }
             else:
                 self.logger.info("Applying curation.")
                 clean_metrics, rejection_log = self._apply_curation_logic(q_metrics, thresholds)
@@ -79,9 +91,13 @@ class ReportsMixin:
                 rejection_log.to_excel(self.output_dir / "rejection_log.xlsx")
                 t_metrics.loc[clean_units].to_excel(self.output_dir / "tm_curated.xlsx")
 
+            with open(self.output_dir / "curation_summary.json", "w", encoding="utf-8") as f:
+                json.dump(self.curation_summary, f, indent=2)
+
             if len(clean_units) == 0:
                 self.logger.warning("No units passed curation.")
-                self._save_checkpoint(ProcessingStage.REPORTS_COMPLETE, n_units=0)
+                self._save_checkpoint(ProcessingStage.REPORTS_COMPLETE, n_units=0,
+                                      curation=self.curation_summary)
                 return
 
             mask = np.isin(self.analyzer.unit_ids, clean_units)
@@ -98,7 +114,8 @@ class ReportsMixin:
                 self._patch_phy_binary_path(phy_folder)
 
             self._save_checkpoint(ProcessingStage.REPORTS_COMPLETE, n_units=len(clean_units),
-                                  failed_stage=None, error=None)
+                                  failed_stage=None, error=None,
+                                  curation=self.curation_summary)
         except Exception as e:
             err = {
                 "failed_stage": ProcessingStage.REPORTS.name,
@@ -112,27 +129,93 @@ class ReportsMixin:
             raise
 
     def _apply_curation_logic(self, metrics, user_thresholds):
+        """Threshold-based unit curation.
+
+        Also records, in self.curation_summary, how many units each rule
+        rejected. Curation is not neutral: a rule like presence_ratio removes
+        units that fire only inside bursts, which are exactly the units a
+        hypoactive genotype has most of. Without per-reason counts that bias
+        is invisible, so the counts are written per well and should be
+        compared across conditions before any group statistics are trusted.
+        """
         defaults = {'presence_ratio': 0.75, 'rp_contamination': 0.15, 'firing_rate': 0.05,
                     'firing_rate_max': 100.0, 'amplitude_median': -20, 'amplitude_cv_median': 0.5}
         if user_thresholds:
             defaults.update(user_thresholds)
 
+        # (label, metric column, predicate on the metric value -> reject?)
+        # amplitude_median is compared in absolute value: SpikeInterface has
+        # reported it both signed (negative, peak_sign='neg') and as a
+        # magnitude across versions, so comparing the raw signed value against
+        # a negative threshold silently inverts the rule on the other
+        # convention. The intent is "reject units whose spikes are too small".
+        rules = [
+            ("Low Presence", 'presence_ratio',
+             lambda v: v < defaults['presence_ratio']),
+            ("High Contam", 'rp_contamination',
+             lambda v: v > defaults['rp_contamination']),
+            ("Low FR", 'firing_rate',
+             lambda v: v < defaults['firing_rate']),
+            # Physiologically-implausible rate (>100 Hz sustained) usually means a
+            # noisy/faulty electrode rather than a real unit; Kilosort4 doesn't
+            # always cluster these out.
+            ("Implausibly High FR", 'firing_rate',
+             lambda v: v > defaults['firing_rate_max']),
+            ("Low Amp", 'amplitude_median',
+             lambda v: abs(v) < abs(defaults['amplitude_median'])),
+            ("Unstable Amp", 'amplitude_cv_median',
+             lambda v: v > defaults['amplitude_cv_median']),
+        ]
+
+        available = set(metrics.columns)
+        skipped_rules = sorted({col for _, col, _ in rules if col not in available})
+        if skipped_rules:
+            self.logger.warning(
+                "Curation: metric(s) %s not present in this analyzer's quality metrics; "
+                "the corresponding rule(s) were not applied.", skipped_rules,
+            )
+
         keep_mask = np.ones(len(metrics), dtype=bool)
         rejections = []
-        for idx, row in metrics.iterrows():
+        reason_counts = {}
+        n_missing_values = {}
+
+        for position, (unit_id, row) in enumerate(metrics.iterrows()):
             reasons = []
-            if row.get('presence_ratio', 1) < defaults['presence_ratio']: reasons.append("Low Presence")
-            if row.get('rp_contamination', 0) > defaults['rp_contamination']: reasons.append("High Contam")
-            if row.get('firing_rate', 0) < defaults['firing_rate']: reasons.append("Low FR")
-            # Physiologically-implausible rate (>100 Hz sustained) usually means a noisy/faulty
-            # electrode rather than a real unit; Kilosort4 doesn't always cluster these out.
-            if row.get('firing_rate', 0) > defaults['firing_rate_max']: reasons.append("Implausibly High FR")
-            if row.get('amplitude_median', -100) > defaults['amplitude_median']: reasons.append("Low Amp")
-            #TODO: add cv_median logic after checking if metric exists in current version of SI
+            for label, column, is_rejected in rules:
+                if column not in available:
+                    continue
+                value = row[column]
+                if value is None or (isinstance(value, float) and np.isnan(value)):
+                    n_missing_values[column] = n_missing_values.get(column, 0) + 1
+                    continue
+                if is_rejected(float(value)):
+                    reasons.append(label)
 
             if reasons:
-                keep_mask[metrics.index.get_loc(row.name)] = False
-                rejections.append({"unit_id": row.name, "reasons": "; ".join(reasons)})
+                keep_mask[position] = False
+                rejections.append({"unit_id": unit_id, "reasons": "; ".join(reasons)})
+                for reason in reasons:
+                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+
+        self.curation_summary = {
+            "applied": True,
+            "n_units_input": int(len(metrics)),
+            "n_units_kept": int(keep_mask.sum()),
+            "n_units_rejected": int((~keep_mask).sum()),
+            # A unit failing several rules is counted once per rule, so these
+            # sum to >= n_units_rejected.
+            "rejected_by_reason": reason_counts,
+            "thresholds": {k: defaults[k] for k in sorted(defaults)},
+            "rules_skipped_missing_metric": skipped_rules,
+            "units_with_missing_metric": n_missing_values,
+        }
+        self.logger.info(
+            "Curation: kept %d/%d units; rejections by reason: %s",
+            self.curation_summary["n_units_kept"],
+            self.curation_summary["n_units_input"],
+            reason_counts or "none",
+        )
 
         return metrics[keep_mask], pd.DataFrame(rejections)
 
@@ -192,6 +275,33 @@ class ReportsMixin:
 
                 pdf_doc.savefig(fig)
                 plt.close(fig)
+
+    def _resolve_recording_metadata(self):
+        """Return (recording, sampling_rate_hz, duration_s); entries may be None.
+
+        `--reanalyze-bursts` together with `--skip-spikesorting` never
+        populates self.recording, so fall back to opening the source file for
+        metadata only — no preprocessing and no binary cache.
+        """
+        recording = self.recording
+        if recording is None:
+            try:
+                recording = self._load_recording_file()
+            except Exception:
+                self.logger.warning(
+                    "Could not load recording for fs/duration metadata; burst rates "
+                    "will fall back to the spike-span duration.", exc_info=True,
+                )
+                return None, None, None
+
+        try:
+            fs = float(recording.get_sampling_frequency())
+            duration_s = float(recording.get_num_frames()) / fs
+        except Exception as e:
+            self.logger.warning("Could not read fs/duration from recording: %s", e)
+            return recording, None, None
+
+        return recording, fs, duration_s
 
     def _run_burst_analysis(self, ids_list=None, plot_mode='separate', plot_debug=False,
                             raster_sort='none', fixed_y=False):
@@ -262,9 +372,22 @@ class ReportsMixin:
                     detector_name, [k for k, v in BURST_DETECTORS.items() if v is not None],
                 )
                 return
+
+            # Recording duration is the denominator for every rate the detector
+            # reports, so it has to be resolved before detection rather than
+            # bolted onto the JSON afterwards. Without it the detectors fall
+            # back to the first-to-last-spike span and overstate the rates of
+            # any well that goes quiet partway through.
+            rec_for_meta, fs_meta, recording_duration_s = self._resolve_recording_metadata()
+
             detector_kwargs = {}
             if detector_name == "gaussian":
-                detector_kwargs = getattr(self, "gaussian_burst_kwargs", {}) or {}
+                detector_kwargs = dict(getattr(self, "gaussian_burst_kwargs", {}) or {})
+            else:
+                detector_kwargs = dict(getattr(self, "parameter_free_burst_kwargs", {}) or {})
+            if recording_duration_s:
+                detector_kwargs["duration_s"] = recording_duration_s
+
             network_data = detector_fn(SpikeTimes=spike_times, **detector_kwargs)
 
             if isinstance(network_data, dict) and "error" in network_data:
@@ -314,20 +437,14 @@ class ReportsMixin:
             network_data_clean = helper.recursive_clean(network_data)
             network_data_clean["n_units"] = len(spike_times)
 
-            rec_for_meta = self.recording
-            if rec_for_meta is None:
-                # --reanalyze-bursts + --skip-spikesorting never loads self.recording;
-                # fetch metadata only, no preprocessing/binary cache.
-                try:
-                    rec_for_meta = self._load_recording_file()
-                except Exception:
-                    self.logger.warning("Could not load recording for fs/duration metadata.", exc_info=True)
-                    rec_for_meta = None
-
-            if rec_for_meta is not None:
-                fs = rec_for_meta.get_sampling_frequency()
-                network_data_clean["fs"] = fs
-                network_data_clean["duration_s"] = rec_for_meta.get_num_frames() / fs
+            if fs_meta is not None:
+                network_data_clean["fs"] = fs_meta
+            if recording_duration_s is not None:
+                network_data_clean["duration_s"] = recording_duration_s
+            network_data_clean["detector"] = detector_name
+            network_data_clean["detector_params"] = helper.recursive_clean(detector_kwargs)
+            network_data_clean["curation"] = getattr(self, "curation_summary", None)
+            network_data_clean["provenance"] = collect_provenance()
             network_data_clean["project"] = self.project_name
             network_data_clean["date"] = str(self.date)
             network_data_clean["chip_id"] = self.chip_id

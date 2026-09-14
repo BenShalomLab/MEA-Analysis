@@ -11,18 +11,18 @@
 #   - Pool all spikes into a population firing-rate histogram, Gaussian-
 #     smooth it (Wagenaar et al. 2006; Chiappalone et al. 2005), normalized
 #     per active unit/electrode to match mxw.networkActivity.computeNetworkAct.
-#   - Peak detection mirrors MATLAB's default GUI threshold method,
-#     ThresholdMethod='Adaptive', AS ACTUALLY SHIPPED in
-#     computeNetworkStatsModified.m — that branch's intended mean+2*SD
-#     rolling-threshold logic is commented out/dead code there, so no
-#     height/amplitude gate is applied at all. Peaks are constrained by
-#     MinPeakProminence and MinPeakDistance only (findpeaks(...,
-#     peakParams{:}) with no 'MinPeakHeight'). NOT the same as the 'Fixed'
-#     (MinPeakHeight=Threshold) or 'RMS' (MinPeakHeight=Threshold*rms(...))
-#     branches of that same MATLAB function, which do apply a height gate.
+#   - Peak detection applies a mean + N*SD height gate (Chiappalone et al.
+#     2005; also the intended behaviour of ThresholdMethod='Adaptive' in
+#     computeNetworkStatsModified.m, where that branch's mean+2*SD rolling
+#     threshold is commented out and therefore never runs). Reproducing the
+#     MATLAB code as shipped — prominence and distance only, no height gate
+#     — means a silent well still yields "network bursts", because the
+#     prominence floor derived from that well's own SD shrinks with it.
+#     Set min_height_sd=None to restore the ungated MATLAB behaviour.
 #   - Burst onset/offset = walk outward from each peak until the rate drops
-#     below a fixed fraction of the peak value (percentage-of-peak edges,
-#     MATLAB's thresholdStartStop in gaussianFiringRateBurstDetector).
+#     below onset_offset_peak_frac * peak (percentage-of-peak edges, MATLAB's
+#     thresholdStartStop in gaussianFiringRateBurstDetector; Wagenaar et al.
+#     2006 use the same construction).
 #
 # Parameter names mirror the MATLAB call sites 1:1 so config values can be
 # copied across directly:
@@ -53,11 +53,13 @@ except ImportError:
 
 def compute_network_bursts(
     SpikeTimes=None,
+    duration_s=None,
     bin_size_s=0.01,
     gaussian_sigma_s=0.1,
     min_prominence=None,
     min_peak_distance_s=1.0,
     onset_offset_peak_frac=0.3,
+    min_height_sd=2.0,
 ):
     """Gaussian population-rate network burst detector.
 
@@ -65,6 +67,11 @@ def compute_network_bursts(
     ----------
     SpikeTimes : dict[unit_id, array-like]
         Spike times in seconds, per unit.
+    duration_s : float or None
+        Duration of the *recording* in seconds, used as the denominator for
+        all firing and burst rates. None falls back to the span between the
+        first and last spike, which inflates every rate in a well that is
+        silent for part of the recording.
     bin_size_s : float
         Histogram bin width (s). Mirrors MATLAB BinSize.
     gaussian_sigma_s : float
@@ -72,19 +79,24 @@ def compute_network_bursts(
     min_prominence : float or None
         Minimum peak prominence (Hz/unit), required for a candidate peak
         to count — mirrors MATLAB's 'MinPeakProminence'. None (default)
-        derives it from the signal itself as baseline_std (informational
-        only — see note on ThresholdMethod='Adaptive' above, there is no
-        height/amplitude threshold applied here, by design, to match
-        current MATLAB behavior); pass an explicit Hz/unit value to mirror
-        a specific MATLAB MinPeakProminence setting.
+        derives it from the signal itself as its standard deviation; pass an
+        explicit Hz/unit value to mirror a specific MATLAB
+        MinPeakProminence setting.
     min_peak_distance_s : float
         Minimum spacing between detected burst peaks (s). Mirrors MATLAB
         MinPeakDistance.
     onset_offset_peak_frac : float
         Burst edges are where the smoothed rate first drops below
-        peak_value * (1 - onset_offset_peak_frac), walking outward from
-        the peak. Mirrors MATLAB thresholdStartStop in
-        gaussianFiringRateBurstDetector.
+        peak_value * onset_offset_peak_frac, walking outward from the peak.
+        Mirrors MATLAB thresholdStartStop in
+        gaussianFiringRateBurstDetector: 0.3 means "edges at 30% of peak
+        height", so a smaller value gives longer bursts.
+    min_height_sd : float or None
+        Height gate for peak detection, in standard deviations of the
+        smoothed rate above its mean (Chiappalone et al. 2005 use mean + N*SD
+        with N of 2 or higher). None disables the gate, reproducing the
+        MATLAB code's shipped ThresholdMethod='Adaptive' behaviour, in which
+        a silent well still produces "network bursts" from noise ripples.
 
     Returns
     -------
@@ -115,9 +127,18 @@ def compute_network_bursts(
     all_spikes_sorted = np.sort(np.concatenate([np.asarray(s) for s in non_empty]))
     rec_start = float(all_spikes_sorted[0])
     rec_end = float(all_spikes_sorted[-1])
-    total_dur = rec_end - rec_start
-    if total_dur <= 0:
+
+    # Binning spans the active period; rates are divided by the recording
+    # duration when it is known (see duration_s in the docstring).
+    analysis_window_s = rec_end - rec_start
+    if analysis_window_s <= 0:
         return {"error": "no_spikes"}
+    if duration_s is not None and float(duration_s) > 0:
+        total_dur = float(duration_s)
+        duration_source = "recording"
+    else:
+        total_dur = analysis_window_s
+        duration_source = "spike_span"
 
     for u in units:
         t = np.asarray(SpikeTimes[u])
@@ -171,20 +192,28 @@ def compute_network_bursts(
     participation_fraction_signal = active_unit_counts / max(1, n_units)
 
     # ---------------------------------------------------------
-    # 3. Peak detection (on smoothed rate) — prominence + distance only,
-    # no height/amplitude gate. See module docstring: this mirrors MATLAB's
-    # ThresholdMethod='Adaptive' as actually shipped (its intended
-    # mean+2*SD rolling threshold is dead/commented-out code there).
-    # baseline_mean/std are kept in diagnostics for reference only — they
-    # are NOT used to gate peak detection.
+    # 3. Peak detection (on smoothed rate): height gate + prominence +
+    # distance. The height gate is mean + min_height_sd * SD of the smoothed
+    # rate (Chiappalone et al. 2005). Note both statistics are taken over the
+    # whole trace including the bursts, so they rise with burst load — this
+    # is the literature convention and is deliberately kept, but it means the
+    # threshold is not a pure baseline estimate.
     # ---------------------------------------------------------
     baseline_mean = float(np.mean(smoothed_rate_hz))
     baseline_std = float(np.std(smoothed_rate_hz))
     effective_min_prominence = float(min_prominence) if min_prominence is not None else baseline_std
     min_distance_bins = max(1, int(min_peak_distance_s / bin_size_s))
 
+    # None or a non-positive value disables the gate (MATLAB parity).
+    if min_height_sd is None or float(min_height_sd) <= 0:
+        min_height_sd = None
+        detection_threshold_hz = None
+    else:
+        detection_threshold_hz = baseline_mean + float(min_height_sd) * baseline_std
+
     peaks, _ = find_peaks(
         smoothed_rate_hz,
+        height=detection_threshold_hz,
         prominence=effective_min_prominence,
         distance=min_distance_bins,
     )
@@ -193,7 +222,12 @@ def compute_network_bursts(
     if len(peaks) > 0:
         for peak_idx in peaks:
             peak_val = smoothed_rate_hz[peak_idx]
-            edge_level = peak_val * (1 - onset_offset_peak_frac)
+            # Percentage-of-peak edges: walk out until the rate falls below
+            # this fraction OF the peak. (An earlier version used
+            # peak * (1 - frac), i.e. edges at 70% of peak for frac=0.3,
+            # which clipped every burst to its crest and under-reported
+            # burst duration several-fold.)
+            edge_level = peak_val * onset_offset_peak_frac
 
             i = peak_idx
             while i > 0 and smoothed_rate_hz[i] > edge_level:
@@ -237,17 +271,25 @@ def compute_network_bursts(
         "superbursts": {"events": [], "metrics": {}},
 
         "diagnostics": {
-            "method": "gaussian_population_rate_adaptive_no_height_gate",
+            "detector": "gaussian",
+            "method": (
+                "gaussian_population_rate_mean_plus_sd"
+                if min_height_sd is not None
+                else "gaussian_population_rate_no_height_gate"
+            ),
+            "recording_duration_s": total_dur,
+            "analysis_window_s": analysis_window_s,
+            "duration_source": duration_source,
             "bin_size_ms": bin_size_s * 1000.0,
             "gaussian_sigma_s": gaussian_sigma_s,
-            # Reference only — NOT used to gate peak detection. Mirrors
-            # MATLAB ThresholdMethod='Adaptive' as shipped: no height
-            # threshold, prominence + distance only (see module docstring).
             "baseline_mean_hz": baseline_mean,
             "baseline_std_hz": baseline_std,
+            "min_height_sd": min_height_sd,
+            "detection_threshold_hz": detection_threshold_hz,
             "min_prominence_hz": effective_min_prominence,
             "min_peak_distance_s": min_peak_distance_s,
             "onset_offset_peak_frac": onset_offset_peak_frac,
+            "edge_rule": "fraction_of_peak",
             "n_units": n_units,
             "burst_detection_valid": True,
         },

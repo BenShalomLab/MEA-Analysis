@@ -71,7 +71,9 @@ def _plot_clean_network_data_params():
     Keyword parameters of plot_clean_network that are sourced from plot_data
     (excludes the axis argument and plot-style kwargs).
     """
-    PLOT_STYLE = {"ylim", "use_twinx"}
+    # Presentation-only kwargs: they control axis text, not which signals are
+    # plotted, so a detector is not expected to supply them in plot_data.
+    PLOT_STYLE = {"ylim", "use_twinx", "primary_ylabel", "primary_label"}
     sig = inspect.signature(helper.plot_clean_network)
     return {
         name

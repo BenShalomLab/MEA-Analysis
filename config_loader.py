@@ -22,6 +22,11 @@ DEFAULTS = {
     "sorting": {
         "sorter":           "kilosort4",
         "docker_image":     None,
+        # Explicit Kilosort4 parameter overrides, merged over the built-in
+        # VRAM-tier defaults. Pin the result-affecting ones here (dmin,
+        # cluster_downsampling, max_cluster_subset, invert_sign) for any
+        # dataset processed on more than one GPU model.
+        "kilosort_params":  None,
     },
     "burst_detection": {
         "burst_detector":   "parameter_free",
@@ -30,6 +35,9 @@ DEFAULTS = {
         "gaussian_min_prominence":        None,
         "gaussian_min_peak_distance_s":   1.0,
         "gaussian_onset_offset_peak_frac": 0.3,
+        "gaussian_min_height_sd":         2.0,
+        "parameter_free_min_superburst_dur_s":      2.5,
+        "parameter_free_min_superburst_components": 2,
     },
     "merging": {
         "unitmatch_scored_dry_run": True,
@@ -115,6 +123,25 @@ def _resolve_thresholds(args, config):
 
 
 # ----------------------------------------------------------
+# Kilosort parameter overrides: config dict, then CLI JSON/path, merged
+# ----------------------------------------------------------
+def _resolve_kilosort_params(args, config):
+    params = {}
+    cfg_params = _cfg(config, "sorting", "kilosort_params")
+    if isinstance(cfg_params, dict):
+        params.update({k: v for k, v in cfg_params.items() if not k.startswith("_")})
+
+    cli_params = getattr(args, "kilosort_params", None)
+    if cli_params:
+        if os.path.exists(cli_params):
+            with open(cli_params) as f:
+                params.update(json.load(f))
+        else:
+            params.update(json.loads(cli_params))
+    return params
+
+
+# ----------------------------------------------------------
 # Bool store_true flags: only True if explicitly passed
 # False from argparse means "not passed" so return None
 # ----------------------------------------------------------
@@ -136,6 +163,7 @@ def resolve_args(args, config):
         # sorting
         "sorter":           _resolve(getattr(args, "sorter", None),          _cfg(config, "sorting", "sorter"),           DEFAULTS["sorting"]["sorter"]),
         "docker_image":     _resolve(getattr(args, "docker", None),          _cfg(config, "sorting", "docker_image"),     DEFAULTS["sorting"]["docker_image"]),
+        "kilosort_params":  _resolve_kilosort_params(args, config),
         # burst detection
         "burst_detector":   _resolve(getattr(args, "burst_detector", None),  _cfg(config, "burst_detection", "burst_detector"), DEFAULTS["burst_detection"]["burst_detector"]),
         "gaussian_bin_size_s":             _resolve(getattr(args, "gaussian_bin_size_s", None),             _cfg(config, "burst_detection", "gaussian_bin_size_s"),             DEFAULTS["burst_detection"]["gaussian_bin_size_s"]),
@@ -143,6 +171,9 @@ def resolve_args(args, config):
         "gaussian_min_prominence":         _resolve(getattr(args, "gaussian_min_prominence", None),         _cfg(config, "burst_detection", "gaussian_min_prominence"),         DEFAULTS["burst_detection"]["gaussian_min_prominence"]),
         "gaussian_min_peak_distance_s":    _resolve(getattr(args, "gaussian_min_peak_distance_s", None),    _cfg(config, "burst_detection", "gaussian_min_peak_distance_s"),    DEFAULTS["burst_detection"]["gaussian_min_peak_distance_s"]),
         "gaussian_onset_offset_peak_frac": _resolve(getattr(args, "gaussian_onset_offset_peak_frac", None), _cfg(config, "burst_detection", "gaussian_onset_offset_peak_frac"), DEFAULTS["burst_detection"]["gaussian_onset_offset_peak_frac"]),
+        "gaussian_min_height_sd":          _resolve(getattr(args, "gaussian_min_height_sd", None),          _cfg(config, "burst_detection", "gaussian_min_height_sd"),          DEFAULTS["burst_detection"]["gaussian_min_height_sd"]),
+        "parameter_free_min_superburst_dur_s":      _resolve(getattr(args, "parameter_free_min_superburst_dur_s", None),      _cfg(config, "burst_detection", "parameter_free_min_superburst_dur_s"),      DEFAULTS["burst_detection"]["parameter_free_min_superburst_dur_s"]),
+        "parameter_free_min_superburst_components": _resolve(getattr(args, "parameter_free_min_superburst_components", None), _cfg(config, "burst_detection", "parameter_free_min_superburst_components"), DEFAULTS["burst_detection"]["parameter_free_min_superburst_components"]),
         # merging (UnitMatch)
         "unitmatch_scored_dry_run":             _resolve(_bool(args, "unitmatch_scored_dry_run"),                       _cfg(config, "merging", "unitmatch_scored_dry_run"),                DEFAULTS["merging"]["unitmatch_scored_dry_run"]),
         "unitmatch_output_subdir_name":         _resolve(getattr(args, "unitmatch_output_subdir_name", None),           _cfg(config, "merging", "unitmatch_output_subdir_name"),            DEFAULTS["merging"]["unitmatch_output_subdir_name"]),
@@ -194,6 +225,9 @@ def build_extra_args(resolved, cli_args):
     # sorting
     if resolved["sorter"]:          extra.append(f"--sorter {resolved['sorter']}")
     if resolved["docker_image"]:    extra.append(f"--docker {resolved['docker_image']}")
+    if resolved.get("kilosort_params"):
+        # JSON never contains a single quote, so single-quoting is safe here.
+        extra.append(f"--kilosort-params '{json.dumps(resolved['kilosort_params'])}'")
 
     # burst detection
     if resolved["burst_detector"]:  extra.append(f"--burst-detector {resolved['burst_detector']}")
@@ -207,6 +241,12 @@ def build_extra_args(resolved, cli_args):
         extra.append(f"--gaussian-min-peak-distance-s {resolved['gaussian_min_peak_distance_s']}")
     if resolved.get("gaussian_onset_offset_peak_frac") is not None:
         extra.append(f"--gaussian-onset-offset-peak-frac {resolved['gaussian_onset_offset_peak_frac']}")
+    if resolved.get("gaussian_min_height_sd") is not None:
+        extra.append(f"--gaussian-min-height-sd {resolved['gaussian_min_height_sd']}")
+    if resolved.get("parameter_free_min_superburst_dur_s") is not None:
+        extra.append(f"--pf-min-superburst-dur-s {resolved['parameter_free_min_superburst_dur_s']}")
+    if resolved.get("parameter_free_min_superburst_components") is not None:
+        extra.append(f"--pf-min-superburst-components {int(resolved['parameter_free_min_superburst_components'])}")
 
     # plotting
     if resolved["plot_mode"]:       extra.append(f"--plot-mode {resolved['plot_mode']}")

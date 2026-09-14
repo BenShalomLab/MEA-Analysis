@@ -10,19 +10,23 @@
   },
 
   "sorting": {
-    "_comment": "sorter options: kilosort4, mountainsort5, tridesclous. docker_image only needed for containerized sorting.",
+    "_comment": "sorter options: kilosort4, mountainsort5, tridesclous. docker_image only needed for containerized sorting. kilosort_params overrides the built-in VRAM-tier defaults: those two tiers differ in dmin, cluster_downsampling and max_cluster_subset, which change the sorting result, so pin them here for any dataset processed on more than one GPU model. The values actually used are written to sorting_params.json in each well folder.",
     "sorter": "kilosort4",
-    "docker_image": null
+    "docker_image": null,
+    "kilosort_params": null
   },
 
   "burst_detection": {
-    "_comment": "burst_detector options: parameter_free (default, adaptive fragment/network-burst/superburst hierarchy) | gaussian (mirrors the lab MATLAB pipeline's ThresholdMethod='Adaptive' as actually shipped: no height/amplitude threshold, peaks gated by prominence + min distance only; network_bursts tier only, no merging). gaussian_* fields only apply when burst_detector is 'gaussian'; gaussian_min_prominence: null derives it from the signal (baseline SD, per-unit Hz), or set an explicit Hz/unit value to mirror MATLAB's MinPeakProminence.",
+    "_comment": "burst_detector: parameter_free (default, adaptive fragment/network-burst/superburst hierarchy) | gaussian (literature-standard Gaussian population-rate detector, network_bursts tier only, no merging). gaussian_* fields apply only to the gaussian detector, parameter_free_* only to the parameter_free one. gaussian_min_prominence: null derives it from the signal (its SD, per-unit Hz). gaussian_min_height_sd: peak height gate at mean + N*SD of the smoothed rate; set 0 to disable it and reproduce the MATLAB ThresholdMethod='Adaptive' code as shipped, which applies no height gate and therefore reports bursts even in silent wells. gaussian_onset_offset_peak_frac: burst edges where the rate falls below peak * this fraction, so smaller means longer bursts. parameter_free_min_superburst_components: 2 makes a superburst a cluster of network bursts (Wagenaar 2006); 1 would additionally label every single network burst longer than the duration floor a superburst.",
     "burst_detector": "parameter_free",
     "gaussian_bin_size_s": 0.01,
     "gaussian_sigma_s": 0.1,
     "gaussian_min_prominence": null,
     "gaussian_min_peak_distance_s": 1.0,
-    "gaussian_onset_offset_peak_frac": 0.3
+    "gaussian_onset_offset_peak_frac": 0.3,
+    "gaussian_min_height_sd": 2.0,
+    "parameter_free_min_superburst_dur_s": 2.5,
+    "parameter_free_min_superburst_components": 2
   },
 
   "filtering": {
@@ -43,7 +47,7 @@
     "_comment": "Set no_curation to true to skip unit filtering entirely.",
     "no_curation": false,
     "quality_thresholds": {
-      "_comment": "amplitude_median is negative (uV). Units with amplitude > this value are rejected.",
+      "_comment": "amplitude_median is compared in absolute value (uV): units whose median spike amplitude is smaller in magnitude than this are rejected, whichever sign convention the installed SpikeInterface reports. Per-rule rejection counts are written to curation_summary.json; compare them across genotypes before trusting group statistics, since presence_ratio in particular removes burst-only units and therefore hits hypoactive wells hardest.",
       "presence_ratio": 0.75,
       "rp_contamination": 0.15,
       "firing_rate": 0.05,

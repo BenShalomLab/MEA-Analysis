@@ -30,8 +30,14 @@ class SortingMixin:
         sorter_folder = self.output_dir / "sorter_output"
         if self.state['stage'] >= ProcessingStage.SORTING_COMPLETE.value:
             self.logger.info("Resuming: Loading existing sorting.")
-            try: self.sorting = si.read_sorter_folder(sorter_folder)
-            except: self.sorting = si.read_kilosort(sorter_folder)
+            try:
+                self.sorting = si.read_sorter_folder(sorter_folder)
+            except Exception as e:
+                self.logger.debug(
+                    "read_sorter_folder failed on %s (%s); trying read_kilosort.",
+                    sorter_folder, e,
+                )
+                self.sorting = si.read_kilosort(sorter_folder)
             return
         self._save_checkpoint(ProcessingStage.SORTING)
         self.logger.info(f"--- [Phase 2] Spike Sorting ({self.sorter}) ---")
@@ -64,14 +70,46 @@ class SortingMixin:
             'do_correction': False,
         }
 
-        ks_params = ks_params_high_vram if total_vram >= 14 else ks_params_low_vram
+        # WARNING: these two parameter sets do not differ only in memory
+        # footprint. cluster_downsampling and max_cluster_subset change which
+        # spikes are used to build the clustering graph, and dmin changes the
+        # template grid, so the same well sorted on a 12 GB and a 24 GB GPU
+        # yields different units. Runs are only comparable within one tier.
+        # Pin both tiers explicitly via config `sorting.kilosort_params`
+        # (or --kilosort-params) for any dataset that will be compared across
+        # machines; the resolved values are recorded in sorting_params.json.
+        vram_tier = "high_vram" if total_vram >= 14 else "low_vram"
+        ks_params = dict(ks_params_high_vram if vram_tier == "high_vram" else ks_params_low_vram)
+        if vram_tier == "low_vram":
+            self.logger.warning(
+                "Using the low-VRAM Kilosort4 parameter set (%.1f GB detected, < 14 GB). "
+                "cluster_downsampling/max_cluster_subset/dmin differ from the high-VRAM "
+                "set, so unit counts are NOT directly comparable with high-VRAM runs.",
+                total_vram,
+            )
 
-        if getattr(self, "sorter_kwargs", None):
+        sorter_overrides = getattr(self, "sorter_kwargs", None)
+        if sorter_overrides:
             try:
-                ks_params = dict(ks_params)
-                ks_params.update(dict(self.sorter_kwargs))
-            except Exception:
-                pass
+                ks_params.update(dict(sorter_overrides))
+                self.logger.info("Applied sorter parameter overrides: %s", dict(sorter_overrides))
+            except Exception as e:
+                self.logger.warning(
+                    "Ignoring malformed sorter_kwargs %r: %s", sorter_overrides, e
+                )
+
+        # Record what actually ran, next to the sorting it produced.
+        sorting_params_record = {
+            "sorter": self.sorter,
+            "vram_tier": vram_tier,
+            "total_vram_gb": total_vram,
+            "docker_image": self.docker_image,
+            "params": {k: v for k, v in ks_params.items()},
+            "overrides_applied": dict(sorter_overrides) if sorter_overrides else {},
+        }
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        with open(self.output_dir / "sorting_params.json", "w", encoding="utf-8") as f:
+            json.dump(sorting_params_record, f, indent=2, default=str)
 
         start = timer()
         try:
@@ -91,7 +129,13 @@ class SortingMixin:
             self.logger.info("Cleaning sorting (removing excess spikes)...")
             self.sorting = si.remove_excess_spikes(self.sorting, self.recording)
             self.sorting = self.sorting.remove_empty_units()
-            self._save_checkpoint(ProcessingStage.SORTING_COMPLETE, failed_stage=None, error=None)
+            self._save_checkpoint(
+                ProcessingStage.SORTING_COMPLETE,
+                failed_stage=None,
+                error=None,
+                sorting_params=sorting_params_record,
+                n_units_sorted=int(self.sorting.get_num_units()),
+            )
         except Exception as e:
             err = {
                 "failed_stage": ProcessingStage.SORTING.name,

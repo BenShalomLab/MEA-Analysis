@@ -59,18 +59,22 @@ This repo already has the part most tools lack: Maxwell IO, Kilosort4 sorting, c
 
 Rules: one task = one agent session, one PR, ≤ ~300 lines, one runnable check. Every new metric is a pure function on `SpikeTimes` dict (+ optional locations/templates) returning a flat dict that `mea_reports.py` merges into `network_results.json` and `collect_network_jsons.py` flattens. Detector schema in `burst_common.py` stays frozen. Deps listed as T-numbers.
 
-### Epic A — correctness fixes (do first)
+### Epic A — correctness fixes — DONE (2026-09-14)
 
-| ID | Task | Files | Check |
-|---|---|---|---|
-| A1 | Fix no-op trim: `end_frame = total_frames - int(fs)` or delete block | `mea_preprocessing.py` | log line matches frames removed |
-| A2 | Local CMR radius: `(30, 200)`; remove bare `except`, log fallback reason | `mea_preprocessing.py` | unit test on synthetic recording with locations |
-| A3 | Pass `duration_s` from recording into both detectors; use it for rates instead of first-to-last spike | `parameter_free_burst_detector.py`, `gaussianNetworkBursts.py`, `mea_reports.py` | test: sparse train, rate = n/duration |
-| A4 | Superburst `min_components=2` default; keep single long NBs as `nb_duration_p95` | `parameter_free_burst_detector.py`, `config_loader.py` | existing tests + one new |
-| A5 | Gaussian detector: add optional `min_height_sd` gate (mean + N·SD); default on, document MATLAB-parity flag | `gaussianNetworkBursts.py`, `config_loader.py` | silent-well synthetic gives 0 NBs |
-| A6 | Curation audit: write `n_rejected_by_reason` into JSON; apply `amplitude_cv_median`; add `isi_violations_ratio`, `snr` to log | `mea_reports.py` | keys present in JSON |
-| A7 | Stamp git SHA, detector name, KS4 param set into JSON and checkpoint | `mea_infra.py`, `mea_reports.py` | keys present |
-| A8 | Replace remaining bare `except:` with logged exceptions | all mixins | grep returns 0 |
+| ID | Task | Outcome |
+|---|---|---|
+| A1 | Fix no-op trim | `TRIM_TAIL_S = 1.0` actually removed, with a guard for short recordings; duration recorded in metadata |
+| A2 | Local CMR radius | `(30, 200)` µm plus `_local_reference_coverage()`, which falls back to global referencing when the layout is too sparse and records the mode in `bad_channels.json` |
+| A3 | Recording-duration rates | `duration_s` threaded from the recording into both detectors; detection still uses the active span, `duration_source` reported |
+| A4 | Superburst definition | `min_superburst_components=2`; long single bursts surface as `burst_duration_p95_s` / `burst_duration_max_s`; both IBI conventions reported |
+| A5 | Gaussian height gate | `min_height_sd=2.0` default, 0 restores MATLAB parity; edge rule corrected to `frac * peak`; `detection_threshold_hz` now populated |
+| A6 | Curation audit | per-rule rejection counts in `curation_summary.json` and the JSON/checkpoint; `amplitude_median` compared in absolute value; `amplitude_cv_median` applied |
+| A7 | Provenance | git commit/branch/dirty plus package versions on every checkpoint and `network_results.json`; resolved sorter parameters in `sorting_params.json` |
+| A8 | Exception hygiene | no bare `except:` left; silent `pass` handlers now log |
+
+Checks: `tests/test_epic_a_fixes.py` (23 tests) plus the existing suite. Run with the `mea` conda env: `python -m pytest tests/ -q`.
+
+Still open from the audit and deliberately not changed here: the Kilosort4 `invert_sign` question (needs a real-data A/B, now a one-flag change via `--kilosort-params`), the `presence_ratio` threshold (a scientific choice, now measurable through the rejection counts), and the collector path parsing (task C4).
 
 ### Epic B — metadata and design
 
