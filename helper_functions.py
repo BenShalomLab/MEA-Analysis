@@ -684,3 +684,69 @@ def mark_burst_hierarchy(
                 clip_on=False,
                 zorder=6,
             )
+
+def plot_sttc_heatmap(ax, matrix, threshold=None, title="Pairwise STTC"):
+    """Heatmap of a pairwise STTC matrix, ordered as given.
+
+    Colour is centred on zero so that anticorrelated pairs are visually
+    distinct from merely weak ones; the scale is clipped symmetrically at the
+    98th percentile of the absolute values so a handful of near-1 pairs do not
+    flatten the rest.
+    """
+    matrix = np.asarray(matrix, dtype=float)
+    finite = matrix[np.isfinite(matrix)]
+    limit = float(np.percentile(np.abs(finite), 98)) if finite.size else 1.0
+    limit = max(limit, 1e-3)
+
+    image = ax.imshow(
+        matrix, cmap="RdBu_r", vmin=-limit, vmax=limit,
+        interpolation="nearest", aspect="equal",
+    )
+    ax.set_title(title, fontsize=10)
+    ax.set_xlabel("Unit")
+    ax.set_ylabel("Unit")
+    colorbar = ax.figure.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    label = "STTC"
+    if threshold is not None:
+        label += f" (significant ≥ {threshold:.3f})"
+    colorbar.set_label(label, fontsize=9)
+    return ax
+
+
+def plot_unit_value_map(ax, locations, values, title="", label="",
+                        cmap="viridis", missing_color="#cccccc"):
+    """Unit positions on the array, coloured by a per-unit value.
+
+    `locations` and `values` are dicts keyed by unit id. Units without a value
+    are drawn in grey rather than dropped, so a sparse map is visibly sparse
+    instead of looking like a smaller culture.
+    """
+    with_value, without_value = [], []
+    for unit_id, position in locations.items():
+        value = values.get(unit_id)
+        if value is None or not np.isfinite(value):
+            without_value.append(position)
+        else:
+            with_value.append((position, value))
+
+    if without_value:
+        coords = np.asarray(without_value, dtype=float)
+        ax.scatter(coords[:, 0], coords[:, 1], s=18, c=missing_color,
+                   edgecolors="none", label="no value")
+
+    if with_value:
+        coords = np.asarray([p for p, _ in with_value], dtype=float)
+        colours = np.asarray([v for _, v in with_value], dtype=float)
+        points = ax.scatter(coords[:, 0], coords[:, 1], s=26, c=colours,
+                            cmap=cmap, edgecolors="none")
+        colorbar = ax.figure.colorbar(points, ax=ax, fraction=0.046, pad=0.04)
+        colorbar.set_label(label or title, fontsize=9)
+
+    ax.set_title(title, fontsize=10)
+    ax.set_xlabel("x (µm)")
+    ax.set_ylabel("y (µm)")
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.invert_yaxis()
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    return ax

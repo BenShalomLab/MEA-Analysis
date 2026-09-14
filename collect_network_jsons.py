@@ -199,6 +199,38 @@ def _flatten_spike_participation(block: dict | None) -> dict:
     return {f"sp_{key}": value for key, value in block.items()}
 
 
+def _flatten_connectivity(block: dict | None) -> dict:
+    """STTC and graph topology -> conn_<window>_* columns.
+
+    Every window is kept as its own set of columns: connectivity measured at
+    10 ms and at 25 ms answer different questions, and collapsing them would
+    hide a timescale effect inside a connectivity number.
+    """
+    if not isinstance(block, dict):
+        return {}
+
+    row: dict = {}
+    for label, summary in (block.get("windows") or {}).items():
+        prefix = f"conn_{label}"
+        for key in ("n_pairs", "mean", "median", "std", "p95",
+                    "significance_threshold", "fraction_significant_pairs"):
+            row[f"{prefix}_{key}"] = summary.get(key)
+        for key, value in (summary.get("graph") or {}).items():
+            row[f"{prefix}_graph_{key}"] = value
+
+    params = block.get("params") or {}
+    row["conn_n_units"] = params.get("n_units")
+    row["conn_n_units_subsampled_to"] = params.get("n_units_subsampled_to")
+    return row
+
+
+def _flatten_propagation(block: dict | None) -> dict:
+    """Burst propagation summary -> prop_* columns."""
+    if not isinstance(block, dict):
+        return {}
+    return {f"prop_{key}": value for key, value in (block.get("summary") or {}).items()}
+
+
 def _flatten_run_context(raw: dict) -> dict:
     row = {
         "detector": raw.get("detector") or (raw.get("diagnostics") or {}).get("detector"),
@@ -244,6 +276,8 @@ def extract_row(json_path: Path) -> dict:
     row.update(_flatten_run_context(raw))
     row.update(_flatten_unit_level(raw.get("unit_level")))
     row.update(_flatten_spike_participation(raw.get("spike_participation")))
+    row.update(_flatten_connectivity(raw.get("connectivity")))
+    row.update(_flatten_propagation(raw.get("propagation")))
 
     for prefix, (section_key, _ibi_key) in _SECTIONS.items():
         sec     = raw.get(section_key) or {}
@@ -315,8 +349,10 @@ def to_dataframes(rows: list[dict]) -> dict[str, pd.DataFrame]:
         if c.startswith("bf_"):   return (2, c)
         if c.startswith("nb_"):   return (3, c)
         if c.startswith("sb_"):   return (4, c)
-        if c.startswith("diag_"): return (5, c)
-        return (6, c)
+        if c.startswith("conn_"): return (5, c)
+        if c.startswith("prop_"): return (6, c)
+        if c.startswith("diag_"): return (7, c)
+        return (8, c)
 
     metric_cols = sorted(metric_cols, key=_col_sort_key)
     ordered = [c for c in id_cols if c in df.columns] + metric_cols

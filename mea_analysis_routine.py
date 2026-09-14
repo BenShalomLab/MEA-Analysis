@@ -157,6 +157,8 @@ def _default_option_kwargs() -> dict[str, Any]:
         "burst_detector": "parameter_free",
         "gaussian_burst_kwargs": None,
         "parameter_free_burst_kwargs": None,
+        "connectivity_enabled": True,
+        "connectivity_kwargs": None,
     }
 
 
@@ -248,6 +250,9 @@ class MEAPipeline(
         # Only non-None values override compute_network_bursts()'s own defaults.
         gaussian_kwargs = self.option_kwargs.get("gaussian_burst_kwargs") or {}
         self.gaussian_burst_kwargs = {k: v for k, v in gaussian_kwargs.items() if v is not None}
+        self.connectivity_enabled = bool(self.option_kwargs.get("connectivity_enabled", True))
+        connectivity_kwargs = self.option_kwargs.get("connectivity_kwargs") or {}
+        self.connectivity_kwargs = {k: v for k, v in connectivity_kwargs.items() if v is not None}
         parameter_free_kwargs = self.option_kwargs.get("parameter_free_burst_kwargs") or {}
         self.parameter_free_burst_kwargs = {
             k: v for k, v in parameter_free_kwargs.items() if v is not None
@@ -597,6 +602,13 @@ def main():
         help="parameter_free detector: minimum component network bursts per\n"
              "superburst (default: 2, i.e. a superburst is a cluster of bursts)")
 
+    # --- Connectivity ---
+    conn_group = parser.add_argument_group("connectivity")
+    conn_group.add_argument("--no-connectivity", action="store_true",
+        help="Skip pairwise STTC and network topology (cost is quadratic in unit count)")
+    conn_group.add_argument("--connectivity-max-units", type=int, default=None,
+        help="Cap on units entering the STTC matrix; above it a random\nsubsample is used and reported (default: 400)")
+
     # --- Plotting ---
     plot_group = parser.add_argument_group("plotting")
     plot_group.add_argument("--plot-mode", choices=["separate", "merged"], default=None,
@@ -734,6 +746,14 @@ def main():
                         "onset_offset_peak_frac": resolved["gaussian_onset_offset_peak_frac"],
                         # <= 0 disables the height gate (MATLAB parity).
                         "min_height_sd": resolved["gaussian_min_height_sd"],
+                    },
+                    "connectivity_enabled": bool(resolved["connectivity_enabled"]),
+                    "connectivity_kwargs": {
+                        "max_units": resolved["connectivity_max_units"],
+                        "windows_s": tuple(resolved["connectivity_windows_s"]),
+                        "n_null_pairs": resolved["connectivity_n_null_pairs"],
+                        "n_null_shifts": resolved["connectivity_n_null_shifts"],
+                        "percentile": resolved["connectivity_percentile"],
                     },
                     "parameter_free_burst_kwargs": {
                         "min_superburst_dur_s": resolved["parameter_free_min_superburst_dur_s"],

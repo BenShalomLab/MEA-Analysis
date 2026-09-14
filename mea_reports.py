@@ -33,6 +33,17 @@ except ImportError:
         compute_unit_burst_features = None
 
 try:
+    from synchrony import compute_synchrony
+    from propagation import compute_propagation
+except ImportError:
+    try:
+        from MEA_Analysis.IPNAnalysis.synchrony import compute_synchrony
+        from MEA_Analysis.IPNAnalysis.propagation import compute_propagation
+    except ImportError:
+        compute_synchrony = None
+        compute_propagation = None
+
+try:
     from parameter_free_burst_detector import compute_network_bursts as compute_network_bursts_parameter_free
     from gaussianNetworkBursts import compute_network_bursts as compute_network_bursts_gaussian
     import helper_functions as helper
@@ -337,6 +348,134 @@ class ReportsMixin:
         )
         return result
 
+    def _plot_connectivity_summary(self, matrices, connectivity, per_unit_propagation, unit_ids):
+        """STTC heatmap next to a map of which units lead bursts.
+
+        Never fatal: a plotting failure must not cost a well its numbers.
+        """
+        if not matrices and not per_unit_propagation:
+            return
+
+        locations = self._unit_location_map(unit_ids)
+        leader_scores = {
+            unit_id: values.get("prop_leader_score")
+            for unit_id, values in (per_unit_propagation or {}).items()
+        }
+
+        panels = int(bool(matrices)) + int(bool(locations and leader_scores))
+        if panels == 0:
+            return
+
+        try:
+            fig, axes = plt.subplots(1, panels, figsize=(7 * panels, 6))
+            axes = np.atleast_1d(axes)
+            index = 0
+
+            if matrices:
+                # Widest window available: the one most comparable with the
+                # electrode-level literature.
+                summaries = connectivity.get("windows") or {}
+                label = max(
+                    matrices,
+                    key=lambda name: summaries.get(name, {}).get("window_s") or 0.0,
+                )
+                window = summaries.get(label, {})
+                helper.plot_sttc_heatmap(
+                    axes[index], matrices[label],
+                    threshold=window.get("significance_threshold"),
+                    title=f"Pairwise STTC ({label} window)",
+                )
+                index += 1
+
+            if locations and leader_scores:
+                helper.plot_unit_value_map(
+                    axes[index], locations, leader_scores,
+                    title="Burst leader score",
+                    label="1 = fires first",
+                    cmap="magma",
+                )
+
+            plt.tight_layout()
+            fig.savefig(self.output_dir / "connectivity_summary.svg")
+            fig.savefig(self.output_dir / "connectivity_summary.png", dpi=200)
+            plt.close(fig)
+            self.logger.info("Saved connectivity_summary.svg/.png")
+        except Exception:
+            self.logger.warning("Connectivity plot failed.", exc_info=True)
+
+    def _unit_location_map(self, unit_ids):
+        """unit id -> (x, y) in microns, for the units being analysed."""
+        analyzer = getattr(self, "analyzer", None)
+        if analyzer is None:
+            return {}
+        try:
+            locations = analyzer.get_extension("unit_locations").get_data()
+        except Exception as e:
+            self.logger.debug("Unit locations unavailable (%s); propagation speed skipped.", e)
+            return {}
+
+        wanted = {str(u) for u in unit_ids}
+        return {
+            unit_id: (float(location[0]), float(location[1]))
+            for unit_id, location in zip(analyzer.unit_ids, locations)
+            if str(unit_id) in wanted
+        }
+
+    def _compute_connectivity(self, spike_times, duration_s):
+        """Pairwise STTC and graph topology, or {} when unavailable/disabled."""
+        if not getattr(self, "connectivity_enabled", True):
+            self.logger.info("Connectivity analysis disabled by configuration.")
+            return {}
+        if compute_synchrony is None:
+            self.logger.warning("synchrony module unavailable; connectivity skipped.")
+            return {}
+
+        kwargs = dict(getattr(self, "connectivity_kwargs", {}) or {})
+        try:
+            result = compute_synchrony(spike_times, duration_s=duration_s, **kwargs)
+        except Exception:
+            self.logger.warning("Connectivity analysis failed.", exc_info=True)
+            return {}
+
+        for label, summary in (result.get("windows") or {}).items():
+            graph = summary.get("graph", {})
+            self.logger.info(
+                "STTC %s: mean=%.3f, %.0f%% of pairs above threshold %.3f; "
+                "graph density=%.3f, modularity=%s",
+                label, summary.get("mean") or float("nan"),
+                100 * (summary.get("fraction_significant_pairs") or 0.0),
+                summary.get("significance_threshold") or float("nan"),
+                graph.get("density") or float("nan"), graph.get("modularity"),
+            )
+        return result
+
+    def _compute_propagation(self, spike_times, network_burst_events):
+        """Burst propagation, or {} when it cannot be computed."""
+        if compute_propagation is None:
+            self.logger.warning("propagation module unavailable; skipped.")
+            return {}
+        if not network_burst_events:
+            return {}
+
+        try:
+            result = compute_propagation(
+                spike_times, network_burst_events,
+                unit_locations=self._unit_location_map(spike_times.keys()),
+            )
+        except Exception:
+            self.logger.warning("Burst propagation analysis failed.", exc_info=True)
+            return {}
+
+        summary = result.get("summary", {})
+        self.logger.info(
+            "Propagation: %s/%s bursts analysed, latency spread %.1f ms, "
+            "median speed %s um/ms",
+            summary.get("n_bursts_analysed"), summary.get("n_bursts_total"),
+            summary.get("latency_spread_mean_ms") or float("nan"),
+            summary.get("median_speed_um_per_ms"),
+        )
+        return result
+
     def _resolve_recording_metadata(self):
         """Return (recording, sampling_rate_hz, duration_s); entries may be None.
 
@@ -494,6 +633,31 @@ class ReportsMixin:
             unit_level = self._compute_unit_level_features(spike_times, recording_duration_s)
             per_unit_bursts = unit_level.pop("units", {}) if unit_level else {}
 
+            # Which units fire together, and in what order they join a burst.
+            # Burst statistics alone cannot tell a network that lost
+            # connections from one that merely fires less.
+            connectivity = self._compute_connectivity(spike_times, recording_duration_s)
+            sttc_matrices = connectivity.pop("matrices", {}) if connectivity else {}
+            if sttc_matrices:
+                np.savez_compressed(
+                    self.output_dir / "sttc_matrices.npz",
+                    unit_ids=np.asarray(connectivity.get("unit_ids", []), dtype=object),
+                    **{f"sttc_{label}": matrix for label, matrix in sttc_matrices.items()},
+                )
+                self.logger.info("Saved sttc_matrices.npz")
+
+            propagation = self._compute_propagation(
+                spike_times,
+                network_data.get("network_bursts", {}).get("events", []),
+            )
+            per_unit_propagation = propagation.pop("units", {}) if propagation else {}
+            for unit_id, values in per_unit_propagation.items():
+                per_unit_bursts.setdefault(unit_id, {}).update(values)
+
+            self._plot_connectivity_summary(
+                sttc_matrices, connectivity, per_unit_propagation, spike_times.keys()
+            )
+
             df_units = self._build_unit_stats_frame(unit_stats, per_unit_bursts)
             if df_units is not None:
                 df_units.to_csv(self.output_dir / "unit_stats.csv")
@@ -512,6 +676,10 @@ class ReportsMixin:
             network_data_clean["detector_params"] = helper.recursive_clean(detector_kwargs)
             if unit_level:
                 network_data_clean["unit_level"] = helper.recursive_clean(unit_level)
+            if connectivity:
+                network_data_clean["connectivity"] = helper.recursive_clean(connectivity)
+            if propagation:
+                network_data_clean["propagation"] = helper.recursive_clean(propagation)
             network_data_clean["curation"] = getattr(self, "curation_summary", None)
             network_data_clean["provenance"] = collect_provenance()
             # Genotype/line/DIV etc. Without this block the results identify the

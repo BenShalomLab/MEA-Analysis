@@ -42,6 +42,20 @@ DEFAULTS = {
         "parameter_free_min_superburst_dur_s":      2.5,
         "parameter_free_min_superburst_components": 2,
     },
+    "connectivity": {
+        # Pairwise STTC plus graph topology. Cost is quadratic in the unit
+        # count, hence max_units; above it the matrix is computed on a random
+        # subsample and the result says so. Measured on ~2000 spikes per unit
+        # over a 5 minute recording: about 10 s per well at 200 units and
+        # about 45 s at 400, for both windows together. Set enabled to false
+        # (or pass --no-connectivity) to skip it entirely.
+        "enabled":        True,
+        "max_units":      400,
+        "windows_s":      [0.010, 0.025],
+        "n_null_pairs":   500,
+        "n_null_shifts":  20,
+        "percentile":     95.0,
+    },
     "merging": {
         "unitmatch_scored_dry_run": True,
         "unitmatch_output_subdir_name": "unitmatch_outputs",
@@ -178,6 +192,16 @@ def resolve_args(args, config):
         "gaussian_min_height_sd":          _resolve(getattr(args, "gaussian_min_height_sd", None),          _cfg(config, "burst_detection", "gaussian_min_height_sd"),          DEFAULTS["burst_detection"]["gaussian_min_height_sd"]),
         "parameter_free_min_superburst_dur_s":      _resolve(getattr(args, "parameter_free_min_superburst_dur_s", None),      _cfg(config, "burst_detection", "parameter_free_min_superburst_dur_s"),      DEFAULTS["burst_detection"]["parameter_free_min_superburst_dur_s"]),
         "parameter_free_min_superburst_components": _resolve(getattr(args, "parameter_free_min_superburst_components", None), _cfg(config, "burst_detection", "parameter_free_min_superburst_components"), DEFAULTS["burst_detection"]["parameter_free_min_superburst_components"]),
+        # connectivity
+        "connectivity_enabled": (
+            False if getattr(args, "no_connectivity", False)
+            else _resolve(None, _cfg(config, "connectivity", "enabled"), DEFAULTS["connectivity"]["enabled"])
+        ),
+        "connectivity_max_units":     _resolve(getattr(args, "connectivity_max_units", None), _cfg(config, "connectivity", "max_units"),     DEFAULTS["connectivity"]["max_units"]),
+        "connectivity_windows_s":     _resolve(None,                                          _cfg(config, "connectivity", "windows_s"),     DEFAULTS["connectivity"]["windows_s"]),
+        "connectivity_n_null_pairs":  _resolve(None,                                          _cfg(config, "connectivity", "n_null_pairs"),  DEFAULTS["connectivity"]["n_null_pairs"]),
+        "connectivity_n_null_shifts": _resolve(None,                                          _cfg(config, "connectivity", "n_null_shifts"), DEFAULTS["connectivity"]["n_null_shifts"]),
+        "connectivity_percentile":    _resolve(None,                                          _cfg(config, "connectivity", "percentile"),    DEFAULTS["connectivity"]["percentile"]),
         # merging (UnitMatch)
         "unitmatch_scored_dry_run":             _resolve(_bool(args, "unitmatch_scored_dry_run"),                       _cfg(config, "merging", "unitmatch_scored_dry_run"),                DEFAULTS["merging"]["unitmatch_scored_dry_run"]),
         "unitmatch_output_subdir_name":         _resolve(getattr(args, "unitmatch_output_subdir_name", None),           _cfg(config, "merging", "unitmatch_output_subdir_name"),            DEFAULTS["merging"]["unitmatch_output_subdir_name"]),
@@ -253,6 +277,12 @@ def build_extra_args(resolved, cli_args):
         extra.append(f"--pf-min-superburst-dur-s {resolved['parameter_free_min_superburst_dur_s']}")
     if resolved.get("parameter_free_min_superburst_components") is not None:
         extra.append(f"--pf-min-superburst-components {int(resolved['parameter_free_min_superburst_components'])}")
+
+    # connectivity
+    if not resolved.get("connectivity_enabled", True):
+        extra.append("--no-connectivity")
+    if resolved.get("connectivity_max_units") is not None:
+        extra.append(f"--connectivity-max-units {int(resolved['connectivity_max_units'])}")
 
     # plotting
     if resolved["plot_mode"]:       extra.append(f"--plot-mode {resolved['plot_mode']}")

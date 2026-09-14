@@ -188,6 +188,13 @@ def main():
     sort_group.add_argument("--unitmatch-report-max-heatmap-units", type=int, default=None,
         help="Maximum units rendered in UnitMatch similarity heatmap (default: 200)")
 
+    # --- Connectivity (passed to each well) ---
+    conn_group = parser.add_argument_group("connectivity (passed to each well)")
+    conn_group.add_argument("--no-connectivity", action="store_true",
+        help="Skip pairwise STTC and network topology (cost is quadratic in unit count)")
+    conn_group.add_argument("--connectivity-max-units", type=int, default=None,
+        help="Cap on units entering the STTC matrix; above it a random\nsubsample is used and reported (default: 400)")
+
     # --- Plotting (passed to each well) ---
     plot_group = parser.add_argument_group("plotting (passed to each well)")
     plot_group.add_argument("--plot-mode", choices=["separate", "merged"], default=None,

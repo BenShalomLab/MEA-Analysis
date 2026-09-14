@@ -2,6 +2,8 @@
 
 Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code does now, what the reference implementation or paper does, verdict, fix. Verdict key: **OK** sound; **BUG** wrong; **DRIFT** differs from stated reference; **VERIFY** cannot confirm without running on data; **GAP** missing.
 
+> **Status.** Epic D has landed: pairwise STTC with a surrogate significance threshold, graph topology normalised against random graphs, and network burst propagation with leader scores and wave speed. Columns reach the well table as `conn_<window>_*` and `prop_*`.
+>
 > **Status.** Epic C has landed: per-unit burst detection (`unit_bursts.py`, MaxInterval + logISI), burst rise/decay times, spike participation and percent random spikes, and a burst duty cycle. Columns reach the well table as `ul_*` and `sp_*`.
 >
 > **Status.** Epic B (B1, B2) has landed: a `samples.csv` carries genotype, line, prep type, batch and DIV into every result and into the collector, and the collector's run-id column is fixed. See `docs/samples_schema.md`.

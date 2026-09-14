@@ -46,9 +46,9 @@ This repo already has the part most tools lack: Maxwell IO, Kilosort4 sorting, c
 |---|---|---|---|
 | IO / sorting | Maxwell + KS4, checkpoints, SLURM | same (nicespike, CASCADE) | none |
 | Unit QC | presence, rp_contam, FR, amp | + ISI violations, SNR, soma/dendrite split, rejection-vs-genotype audit | small |
-| Per-unit burst | computed, not exported; fixed-ISI helper unused | MI + logISI, agreement | medium |
+| Per-unit burst | **done (C)** MaxInterval + logISI with agreement, exported per unit | MI + logISI, agreement | none |
 | Network burst | 3-tier adaptive + Gaussian baseline | Chiappalone / Wagenaar / shape metrics | add rise/decay/area-norm, fix duration base |
-| Synchrony / graph | none | STTC + null, degree, clustering, path length, modularity, hubs, NMF | large |
+| Synchrony / graph | **done (D)** STTC at 10/25 ms + surrogate threshold, degree, clustering, path length, modularity, hubs, small-world sigma, burst propagation | STTC + null, degree, clustering, path length, modularity, hubs, NMF | NMF activity patterns and effective rank still missing |
 | Cell type / E-I | template metrics written, unused | waveform clustering, per-class metrics | medium |
 | Trajectory | none | DIV curves, unit tracking (UnitMatch across days), α | medium |
 | LFP / oscillations | discarded | organoid standard | large, optional |
@@ -101,15 +101,21 @@ Checks: `tests/test_samples.py` (24 tests), `tests/test_collect_network_jsons.py
 
 Checks: `tests/test_unit_bursts.py` (24 tests), `tests/test_burst_shape.py` (13 tests).
 
-### Epic D — synchrony and connectivity
+### Epic D — synchrony and connectivity — DONE (2026-09-14)
 
-| ID | Task | Files | Check | Deps |
-|---|---|---|---|---|
-| D1 | `synchrony.py`: STTC matrix (dt 10 and 25 ms), numpy, O(n²) with early exit; mean, median, fraction significant vs 100 spike-time-shuffled nulls | new | matches Elephant on 5 pairs | — |
-| D2 | Graph metrics on thresholded STTC via `networkx`: density, mean degree, clustering, path length, modularity (Louvain), small-world σ, hub fraction; size-normalised vs random graphs | `synchrony.py` | test on ring vs random | D1 |
-| D3 | NB propagation: per-unit onset latency inside each NB, leader/follower score, propagation speed from `unit_locations` | `propagation.py` | synthetic wave | A3 |
-| D4 | Wire D1–D3 into reports + collector; save STTC matrix `.npz` | `mea_reports.py`, `collect_network_jsons.py` | JSON keys | D1–D3 |
-| D5 | Plots: STTC heatmap, graph layout on probe map, latency map | `helper_functions.py` | files written | D4 |
+| ID | Task | Outcome |
+|---|---|---|
+| D1 | `synchrony.py` STTC | Spike time tiling coefficient at 10 ms and 25 ms, with tiling fractions precomputed once per unit. Significance threshold from circularly shifted surrogates, pooled across sampled pairs rather than per pair, which is the approximation that keeps the cost affordable at a few hundred units; the pooling is documented in the output and in the config |
+| D2 | Graph topology | Density, mean degree, degree CV, hub fraction, clustering (binary and Onnela weighted), characteristic path length, global efficiency, components, Louvain modularity, and clustering and path length normalised against random graphs of the same size and edge count, plus small-world sigma |
+| D3 | `propagation.py` | Per-unit latency within each network burst measured from the first unit to fire, a leader score, and a propagation speed from regressing distance on latency with an R² gate. Recovers a synthetic 100 µm/ms wave to within 5% and refuses to fit randomly ordered firing |
+| D4 | Wiring | `connectivity` and `propagation` blocks in `network_results.json`, `sttc_matrices.npz` per well, per-unit `prop_*` columns in `unit_stats.csv`, and `conn_<window>_*` / `prop_*` columns in the collector |
+| D5 | Plots | `connectivity_summary.svg/.png`: STTC heatmap beside a map of burst leader scores on the array |
+
+Verified against Elephant was not possible (not installed), so the STTC is checked against the Cutts & Eglen definition computed by hand plus its analytic limits: identical trains give 1, a shift inside the window still gives 1, a shift past it gives 0, and independent Poisson trains at 20 Hz and 2 Hz give 0, confirming rate independence.
+
+Cost: quadratic in unit count. Roughly 10 s per well at 200 units and 45 s at 400, for both windows together, on ~2000 spikes per unit over 5 minutes. Graph metrics were moved from networkx to numpy matrix products for this reason, which made that stage about 6 times faster and stopped it dominating at 400 units. `connectivity.max_units`, `--connectivity-max-units` and `--no-connectivity` control the cost.
+
+Checks: `tests/test_synchrony.py` (25 tests), `tests/test_propagation.py` (14 tests).
 
 ### Epic E — cell type
 

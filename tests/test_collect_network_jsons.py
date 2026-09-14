@@ -49,6 +49,28 @@ def _write_result(root, *, project="CDKL5", date="2025-02-12", chip="16657",
             },
             "params": {"maxinterval": {"min_spikes": 5}},
         },
+        "connectivity": {
+            "windows": {
+                "10ms": {
+                    "window_s": 0.01, "n_pairs": 861, "mean": 0.21, "median": 0.18,
+                    "std": 0.11, "p95": 0.44, "significance_threshold": 0.05,
+                    "fraction_significant_pairs": 0.62,
+                    "graph": {"n_nodes": 42, "n_edges": 534, "density": 0.62,
+                              "modularity": 0.31, "n_modules": 3,
+                              "small_world_sigma": 1.8},
+                },
+                "25ms": {
+                    "window_s": 0.025, "n_pairs": 861, "mean": 0.28,
+                    "significance_threshold": 0.08,
+                    "graph": {"density": 0.71, "modularity": 0.22},
+                },
+            },
+            "params": {"n_units": 42, "n_units_subsampled_to": None},
+        },
+        "propagation": {
+            "summary": {"n_bursts_analysed": 2, "latency_spread_mean_ms": 12.5,
+                        "median_speed_um_per_ms": 88.0, "leader_score_std": 0.29},
+        },
         "sample": sample if sample is not None else {
             "matched": True, "genotype": "KO", "line": "Cdkl5_KO_3",
             "prep_type": "dissociated_mouse", "batch": "B12", "div": 28,
@@ -126,6 +148,24 @@ def test_spike_participation_becomes_sp_columns(tmp_path):
     row = extract_row(_write_result(tmp_path))
     assert row["sp_percent_random_spikes"] == pytest.approx(30.0)
     assert row["sp_fraction_spikes_in_network_bursts"] == pytest.approx(0.7)
+
+
+def test_each_sttc_window_gets_its_own_columns(tmp_path):
+    """Collapsing the two windows would hide a timescale effect inside a
+    connectivity number."""
+    row = extract_row(_write_result(tmp_path))
+    assert row["conn_10ms_mean"] == pytest.approx(0.21)
+    assert row["conn_25ms_mean"] == pytest.approx(0.28)
+    assert row["conn_10ms_graph_modularity"] == pytest.approx(0.31)
+    assert row["conn_25ms_graph_density"] == pytest.approx(0.71)
+    assert row["conn_10ms_fraction_significant_pairs"] == pytest.approx(0.62)
+    assert row["conn_n_units"] == 42
+
+
+def test_propagation_summary_becomes_prop_columns(tmp_path):
+    row = extract_row(_write_result(tmp_path))
+    assert row["prop_median_speed_um_per_ms"] == pytest.approx(88.0)
+    assert row["prop_leader_score_std"] == pytest.approx(0.29)
 
 
 def test_unreadable_json_produces_an_error_row_not_a_crash(tmp_path):

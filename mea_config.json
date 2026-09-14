@@ -30,6 +30,16 @@
     "parameter_free_min_superburst_components": 2
   },
 
+  "connectivity": {
+    "_comment": "Pairwise spike time tiling coefficient (Cutts & Eglen 2014) and graph topology on the thresholded matrix. Two windows are reported because connectivity is timescale dependent. The significance threshold comes from circularly shifted surrogates, pooled across sampled pairs rather than per pair; treat fraction_significant_pairs as comparative between wells analysed identically, not as an absolute count of connections. Cost is quadratic in unit count: roughly 10 s per well at 200 units and 45 s at 400, measured on ~2000 spikes per unit over 5 minutes. Above max_units the matrix uses a random subsample, reported in the output. Set enabled to false or pass --no-connectivity to skip.",
+    "enabled": true,
+    "max_units": 400,
+    "windows_s": [0.010, 0.025],
+    "n_null_pairs": 500,
+    "n_null_shifts": 20,
+    "percentile": 95.0
+  },
+
   "filtering": {
     "_comment": "Driver only. reference_file = Excel with 'Run #' and 'Assay' columns.",
     "reference_file": null,
