@@ -33,6 +33,7 @@ if str(root_dir) not in sys.path:
 # Import your custom modules
 try:
     from config_loader import load_config, resolve_args, build_extra_args
+    from samples import load_samples
 except ImportError as e:
     print(f"CRITICAL ERROR: Could not import helper modules. {e}")
     print(f"Current sys.path: {sys.path}")
@@ -113,6 +114,9 @@ def main():
         help="Checkpoint directory (default: <output-dir>/checkpoints)")
     io_group.add_argument("--output-subdir-after-well", type=str, default=None,
         help="Optional single subdirectory appended under each resolved well output directory")
+    io_group.add_argument("--samples-file", type=str, default=None,
+        help="CSV/TSV/XLSX describing each well (genotype, line, prep_type,\n"
+             "batch, plating_date), passed to every well.\nSee docs/samples_schema.md.")
     io_group.add_argument("--export-to-phy", action="store_true",
         help="Export results to Phy format")
     io_group.add_argument("--clean-up", action="store_true",
@@ -267,6 +271,21 @@ def main():
     # ------------------------------------------------------
     extra_arg_string = build_extra_args(resolved, args)
     logger.debug(f"Constructed extra argument string for subprocesses: {extra_arg_string}")
+
+    # Check the sample table once here rather than discovering it is missing
+    # separately in every one of several hundred well subprocesses.
+    if resolved.get("samples_file"):
+        sample_rows, sample_error = load_samples(resolved["samples_file"])
+        if sample_error:
+            logger.error("Sample metadata will be missing from every well: %s", sample_error)
+        else:
+            logger.info("Loaded %d sample row(s) from %s",
+                        len(sample_rows), resolved["samples_file"])
+    else:
+        logger.warning(
+            "No samples file configured (io.samples_file / --samples-file); results "
+            "will carry no genotype, line or DIV, so they cannot be grouped for analysis."
+        )
 
     logger.info(f"start time : {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
     #ticker

@@ -76,13 +76,17 @@ Checks: `tests/test_epic_a_fixes.py` (23 tests) plus the existing suite. Run wit
 
 Still open from the audit and deliberately not changed here: the Kilosort4 `invert_sign` question (needs a real-data A/B, now a one-flag change via `--kilosort-params`), the `presence_ratio` threshold (a scientific choice, now measurable through the rejection counts), and the collector path parsing (task C4).
 
-### Epic B — metadata and design
+### Epic B — metadata and design — B1, B2 DONE (2026-09-14)
 
-| ID | Task | Files | Check |
-|---|---|---|---|
-| B1 | `samples.csv` schema: chip, well, project, line, genotype, prep_type (mouse/ipsc/organoid), batch, plating_date, density, media, treatment | `docs/samples_schema.md`, example file | schema doc + example |
-| B2 | Driver loads `samples.csv` (config `io.samples_file`), merges into JSON `sample` block; path parse stays fallback; compute DIV from plating_date + recording date | `run_pipeline_driver.py`, `config_loader.py`, `mea_reports.py` | JSON has `sample.genotype`, `sample.div` |
-| B3 | `prep_type` presets for detector defaults (organoid: bin ceiling 250 ms, sigma up, min NB dur) | `config_loader.py`, detectors | preset name in diagnostics |
+| ID | Task | Outcome |
+|---|---|---|
+| B1 | `samples.csv` schema | `docs/samples_schema.md` plus `Configfiles/samples_example.csv`. CSV, TSV or XLSX; key columns project/date/chip/run/well with blank cells as wildcards; metadata columns line, genotype, prep_type, batch, plating_date, div, density, media, treatment; unknown columns carried through |
+| B2 | Sample lookup wired through | `samples.py` resolves one row per well, most specific match wins. `io.samples_file` / `--samples-file` on driver and routine. The record lands in `network_results.json` under `sample`, in the checkpoint, and as `sample_*` columns in the collector. DIV derived from `plating_date` or taken from an explicit `div` column, with `div_source` recorded |
+| B3 | `prep_type` presets for detector defaults | **Deferred**, as in the ordering below. `prep_type` is now carried per well, so this is a small follow-up, but the organoid numbers (bin ceiling, sigma, minimum burst duration) should be chosen against real organoid recordings rather than guessed |
+
+Also fixed here, because it corrupts the same columns B2 adds: the collector read the run id one level above the well, which is the assay folder, so every row's `run` was the literal string `Network`. Ids recorded inside the JSON now take precedence over directory names, and the path fallback reads the right level. Curation counts, detector name and git commit also became columns.
+
+Checks: `tests/test_samples.py` (24 tests), `tests/test_collect_network_jsons.py` (7 tests).
 
 ### Epic C — unit-level features
 

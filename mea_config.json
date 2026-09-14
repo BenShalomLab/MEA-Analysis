@@ -2,9 +2,10 @@
   "_comment": "MEA Pipeline Config. CLI flags always override these values. Remove _comment keys before use.",
 
   "io": {
-    "_comment": "Set output_dir for all results. checkpoint_dir defaults to <output_dir>/checkpoints if not set.",
+    "_comment": "Set output_dir for all results. checkpoint_dir defaults to <output_dir>/checkpoints if not set. samples_file is a CSV/TSV/XLSX saying what was cultured in each well (genotype, line, prep_type, batch, plating_date); without it results carry no grouping variables and cannot be compared across conditions. See docs/samples_schema.md and Configfiles/samples_example.csv.",
     "output_dir": null,
     "checkpoint_dir": null,
+    "samples_file": null,
     "export_to_phy": false,
     "clean_up": false
   },

@@ -2,6 +2,8 @@
 
 Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code does now, what the reference implementation or paper does, verdict, fix. Verdict key: **OK** sound; **BUG** wrong; **DRIFT** differs from stated reference; **VERIFY** cannot confirm without running on data; **GAP** missing.
 
+> **Status.** Epic B (B1, B2) has landed: a `samples.csv` carries genotype, line, prep type, batch and DIV into every result and into the collector, and the collector's run-id column is fixed. See `docs/samples_schema.md`.
+>
 > **Status.** Epic A (A1-A8) has landed: the trim, the local common reference, recording-duration rates, the superburst definition, the Gaussian height gate and edge rule, the curation rules and their audit trail, provenance stamping, and exception handling. Rows fixed by it are marked **[fixed A*]**. Everything else below still stands. `tests/test_epic_a_fixes.py` pins each fixed behaviour.
 
 ## 1. Preprocessing (`mea_preprocessing.py`)
@@ -107,7 +109,7 @@ Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code
 |---|---|---|---|
 | `stats([])` → zeros | biases means | DRIFT | NaN |
 | `level_metrics` IBI = diff(starts) | see above | DRIFT | both |
-| `collect_network_jsons._parse_path_metadata` | expects `…/<chip>/Network/<run>/<well>`; actual output tree is `<project>/<date>/<chip>/<run>/<well>` (`relative_pattern` = parts[-6:-1] of input path) | **BUG** project/date/chip columns shifted | read ids from JSON (`project`, `date`, `chip_id`, `run_id`, `well` already written) not path |
+| `collect_network_jsons._parse_path_metadata` | read the run id one level above the well, which is the assay folder (`Network`), so every row's `run` column was the literal string `Network`; project/date/chip were correct | **BUG** **[fixed B2]** | ids now read from the JSON (`project`, `date`, `chip_id`, `run_id`, `well`), with the path fallback corrected to `parts[-3]` |
 | unit_stats.csv | not collected | GAP | C4 |
 | `_EVT_DISTRIBUTION_FIELDS` percentiles | fine | OK | — |
 
@@ -148,7 +150,7 @@ Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code
 1. ~~CMR annulus no-op (1.5)~~ **[fixed A2]** — radius is now (30, 200) µm with a coverage check that falls back to global referencing and logs the fraction of channels that have neighbours. `invert_sign` (2.1) is **still open**: it needs one well sorted both ways on real data. `--kilosort-params '{"invert_sign": false}'` now makes that a one-flag comparison.
 2. ~~Gaussian edge inversion (7.3) and no height gate (7.2)~~ **[fixed A5]** — edges are at `frac * peak`, and a mean + 2·SD height gate is on by default (`gaussian_min_height_sd: 0` restores MATLAB parity). Burst durations from this detector will be longer than in any earlier run.
 3. ~~Duration base (6.1), superburst definition (6.11), zeros-for-empty (8.1)~~ **[fixed A3, A4]** — rates divide by the recording duration, a superburst needs ≥2 component bursts, and empty metrics serialise as null with `burst_count: 0`.
-4. Collector path parse (8.3): mislabels project/date/chip in every CSV. **Still open** (task C4).
+4. ~~Collector path parse (8.3)~~ **[fixed B2]** — the `run` column held `Network` for every row. Ids now come from the JSON; sample, curation and provenance fields became columns too.
 5. ~~VRAM-dependent KS4 params (2.10)~~ **[partly fixed A7]** — the resolved parameters are written to `sorting_params.json` and the checkpoint, and the low-VRAM tier now logs a warning that its results are not comparable. Pinning one parameter set across machines is a config choice (`sorting.kilosort_params`), deliberately left to the user.
 6. ~~amplitude sign (5.5)~~ **[fixed A6]** — compared in absolute value, and `amplitude_cv_median` is applied instead of being a TODO. presence_ratio (5.1) is **unchanged by design**: the threshold is a scientific choice, so instead every well writes `curation_summary.json` with per-rule rejection counts. Compare those across genotypes before trusting group statistics.
 7. y-max race, raster_sort location_y, dead helpers: hygiene. **Still open.**

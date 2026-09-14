@@ -445,6 +445,9 @@ class ReportsMixin:
             network_data_clean["detector_params"] = helper.recursive_clean(detector_kwargs)
             network_data_clean["curation"] = getattr(self, "curation_summary", None)
             network_data_clean["provenance"] = collect_provenance()
+            # Genotype/line/DIV etc. Without this block the results identify the
+            # well but not the experiment, and no group comparison is possible.
+            network_data_clean["sample"] = getattr(self, "sample", None)
             network_data_clean["project"] = self.project_name
             network_data_clean["date"] = str(self.date)
             network_data_clean["chip_id"] = self.chip_id

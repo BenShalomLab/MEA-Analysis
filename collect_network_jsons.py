@@ -118,19 +118,70 @@ def _flatten_events_distributions(events: list[dict], prefix: str) -> dict:
 # ── Path metadata ─────────────────────────────────────────────────────────────
 
 def _parse_path_metadata(well_dir: Path) -> dict:
-    """Infer project/date/chip/run/well from output directory path.
+    """Infer project/date/chip/run/well from the output directory path.
 
-    Expected structure:
-      <output_root>/<project>/<date>/<chip>/Network/<run>/well000/
+    Fallback only: extract_row prefers the ids recorded inside the JSON, which
+    come from the recording's own metadata rather than from directory names.
+
+    The layout mirrors the input tree, which ends in an assay folder:
+      <output_root>/<project>/<date>/<chip>/<run>/Network/well000/
+    so the run id is two levels above the well, not one. Reading it one level
+    up yielded the literal string "Network" for every row.
     """
     parts = well_dir.parts
     return {
         "project": parts[-6] if len(parts) >= 6 else None,
         "date":    parts[-5] if len(parts) >= 5 else None,
         "chip":    parts[-4] if len(parts) >= 4 else None,
-        "run":     parts[-2],
+        "run":     parts[-3] if len(parts) >= 3 else None,
         "well":    parts[-1],
     }
+
+
+# Ids written into the JSON by the pipeline, and the column each maps to.
+_JSON_ID_KEYS = {
+    "project": "project",
+    "date":    "date",
+    "chip":    "chip_id",
+    "run":     "run_id",
+    "well":    "well",
+}
+
+# Scalars lifted out of the JSON so a well can be filtered or grouped without
+# reopening it: what was cultured, how it was analysed, and what curation did.
+_SAMPLE_FIELDS = (
+    "genotype", "line", "prep_type", "batch", "div", "div_source",
+    "plating_date", "density_cells_per_mm2", "media", "treatment",
+    "treatment_concentration", "matched",
+)
+
+
+def _flatten_sample(sample: dict | None) -> dict:
+    if not isinstance(sample, dict):
+        return {"sample_matched": False}
+    row = {f"sample_{field}": sample.get(field) for field in _SAMPLE_FIELDS}
+    row["sample_matched"] = bool(sample.get("matched"))
+    return row
+
+
+def _flatten_run_context(raw: dict) -> dict:
+    row = {
+        "detector": raw.get("detector") or (raw.get("diagnostics") or {}).get("detector"),
+        "duration_s": raw.get("duration_s"),
+        "fs": raw.get("fs"),
+    }
+    curation = raw.get("curation")
+    if isinstance(curation, dict):
+        row["curation_applied"] = curation.get("applied")
+        row["curation_n_units_input"] = curation.get("n_units_input")
+        row["curation_n_units_rejected"] = curation.get("n_units_rejected")
+        for reason, count in (curation.get("rejected_by_reason") or {}).items():
+            row[f"curation_rejected_{reason.lower().replace(' ', '_')}"] = count
+    provenance = raw.get("provenance")
+    if isinstance(provenance, dict):
+        row["git_commit"] = provenance.get("git_commit")
+        row["git_dirty"] = provenance.get("git_dirty")
+    return row
 
 
 # ── Core extraction ───────────────────────────────────────────────────────────
@@ -147,7 +198,15 @@ def extract_row(json_path: Path) -> dict:
         row["error"] = str(exc)
         return row
 
+    # Ids recorded by the pipeline win over ids guessed from directory names.
+    for column, json_key in _JSON_ID_KEYS.items():
+        value = raw.get(json_key)
+        if value not in (None, ""):
+            row[column] = value
+
     row["n_units"] = raw.get("n_units")
+    row.update(_flatten_sample(raw.get("sample")))
+    row.update(_flatten_run_context(raw))
 
     for prefix, (section_key, _ibi_key) in _SECTIONS.items():
         sec     = raw.get(section_key) or {}
@@ -203,7 +262,11 @@ def to_dataframes(rows: list[dict]) -> dict[str, pd.DataFrame]:
         return {}
     df = pd.DataFrame(rows)
 
-    id_cols = ["project", "date", "chip", "run", "well", "n_units"]
+    id_cols = ["project", "date", "chip", "run", "well"]
+    # Experimental metadata sits with the ids, not among the metrics: it is
+    # what the analysis groups by.
+    id_cols += [c for c in df.columns if c.startswith("sample_")]
+    id_cols += ["n_units"]
     if "data_dir" in df.columns:
         id_cols.append("data_dir")
     id_cols.append("output_dir")

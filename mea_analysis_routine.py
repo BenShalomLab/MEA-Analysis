@@ -73,6 +73,7 @@ try:
         from .mea_waveform import WaveformMixin
         from .mea_reports import ReportsMixin
         from .mea_resume import _normalize_resume_from_stage, _apply_resume_from_stage
+        from .samples import resolve_sample
     else:
         from config_loader import load_config, resolve_args
         from mea_checkpoint import ProcessingStage, CHECKPOINT_SCHEMA_VERSION
@@ -84,6 +85,7 @@ try:
         from mea_waveform import WaveformMixin
         from mea_reports import ReportsMixin
         from mea_resume import _normalize_resume_from_stage, _apply_resume_from_stage
+        from samples import resolve_sample
 except ImportError:
     try:
         from MEA_Analysis.IPNAnalysis.config_loader import load_config, resolve_args
@@ -96,6 +98,7 @@ except ImportError:
         from MEA_Analysis.IPNAnalysis.mea_waveform import WaveformMixin
         from MEA_Analysis.IPNAnalysis.mea_reports import ReportsMixin
         from MEA_Analysis.IPNAnalysis.mea_resume import _normalize_resume_from_stage, _apply_resume_from_stage
+        from MEA_Analysis.IPNAnalysis.samples import resolve_sample
     except ImportError as e:
         raise ImportError(
             "Could not import MEA_Analysis.IPNAnalysis helper modules. "
@@ -150,6 +153,7 @@ def _default_option_kwargs() -> dict[str, Any]:
         "skip_preprocessing": False,
         "cuda_visible_devices": None,
         "output_subdir_after_well": None,
+        "samples_file": None,
         "burst_detector": "parameter_free",
         "gaussian_burst_kwargs": None,
         "parameter_free_burst_kwargs": None,
@@ -289,6 +293,22 @@ class MEAPipeline(
                 self.extra_checkpoint_file = extra_root / ckpt_fname
 
         self.state = self._load_checkpoint()
+
+        # 4. Experimental metadata. The directory layout gives project/date/
+        # chip/run/well; genotype, line, prep type, batch and DIV can only come
+        # from a table the lab maintains. Resolved once here so every artifact
+        # this run writes carries the same sample record.
+        self.samples_file = self.option_kwargs.get("samples_file")
+        self.sample = resolve_sample(
+            self.samples_file,
+            project=self.project_name,
+            date=self.date,
+            chip=self.chip_id,
+            run=self.run_id,
+            well=self.well,
+            logger=self.logger,
+        )
+        self.state['sample'] = self.sample
 
         self._apply_runtime_controls()
         self._log_runtime_controls()
@@ -520,6 +540,10 @@ def main():
         help="Output directory for results (default: <repo>/AnalyzedData)")
     io_group.add_argument("--checkpoint-dir", type=str, default=None,
         help="Checkpoint directory (default: <output-dir>/checkpoints)")
+    io_group.add_argument("--samples-file", type=str, default=None,
+        help="CSV/TSV/XLSX describing each well (genotype, line, prep_type,\n"
+             "batch, plating_date). Matched on project/date/chip/run/well and\n"
+             "written into network_results.json. See docs/samples_schema.md.")
     io_group.add_argument("--output-subdir-after-well", type=str, default=None,
         help="Optional single subdirectory appended under the resolved well output directory")
     io_group.add_argument("--export-to-phy", action="store_true",
@@ -700,6 +724,7 @@ def main():
                 option_kwargs={
                     "force_rerun_analyzer": bool(args.rerun_analyzer),
                     "output_subdir_after_well": resolved.get("output_subdir_after_well"),
+                    "samples_file": resolved.get("samples_file"),
                     "burst_detector": resolved["burst_detector"],
                     "gaussian_burst_kwargs": {
                         "bin_size_s": resolved["gaussian_bin_size_s"],

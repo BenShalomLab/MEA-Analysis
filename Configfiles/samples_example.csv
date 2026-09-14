@@ -1,0 +1,7 @@
+project,chip,well,line,genotype,prep_type,batch,plating_date,density_cells_per_mm2,media,treatment,notes
+CDKL5_cortex,16657,,C57BL6_WT,WT,dissociated_mouse,B12,2025-01-15,1200,BrainPhys,vehicle,
+CDKL5_cortex,16657,well003,Cdkl5_KO_3,KO,dissociated_mouse,B12,2025-01-15,1200,BrainPhys,vehicle,edge well
+CDKL5_cortex,16658,,Cdkl5_KO_3,KO,dissociated_mouse,B12,2025-01-15,1200,BrainPhys,vehicle,
+SHANK3_ipsc,17201,,SHANK3_iso_ctrl,control,ipsc,D7,2024-11-04,900,BrainPhys+astro,vehicle,
+SHANK3_ipsc,17202,,SHANK3_het,SHANK3+/-,ipsc,D7,2024-11-04,900,BrainPhys+astro,vehicle,
+ORG_pilot,17410,,H9,WT,organoid,ORG5,2024-06-02,,BrainPhys,vehicle,sliced organoid

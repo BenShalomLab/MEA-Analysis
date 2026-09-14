@@ -16,6 +16,9 @@ DEFAULTS = {
         "output_dir":       None,
         "checkpoint_dir":   None,
         "output_subdir_after_well": None,
+        # CSV/TSV/XLSX describing what was cultured in each well: genotype,
+        # line, prep_type, batch, plating_date. See docs/samples_schema.md.
+        "samples_file":     None,
         "export_to_phy":    False,
         "clean_up":         False,
     },
@@ -158,6 +161,7 @@ def resolve_args(args, config):
         "output_dir":                   _resolve(getattr(args, "output_dir", None),                 _cfg(config, "io", "output_dir"),               DEFAULTS["io"]["output_dir"]),
         "checkpoint_dir":               _resolve(getattr(args, "checkpoint_dir", None),             _cfg(config, "io", "checkpoint_dir"),           DEFAULTS["io"]["checkpoint_dir"]),
         "output_subdir_after_well":     _resolve(getattr(args, "output_subdir_after_well", None),   _cfg(config, "io", "output_subdir_after_well"), DEFAULTS["io"]["output_subdir_after_well"]),
+        "samples_file":                 _resolve(getattr(args, "samples_file", None),               _cfg(config, "io", "samples_file"),             DEFAULTS["io"]["samples_file"]),
         "export_to_phy":    _resolve(_bool(args, "export_to_phy"),           _cfg(config, "io", "export_to_phy"),         DEFAULTS["io"]["export_to_phy"]),
         "clean_up":         _resolve(_bool(args, "clean_up"),                _cfg(config, "io", "clean_up"),              DEFAULTS["io"]["clean_up"]),
         # sorting
@@ -219,6 +223,8 @@ def build_extra_args(resolved, cli_args):
     if resolved["checkpoint_dir"]:  extra.append(f"--checkpoint-dir '{resolved['checkpoint_dir']}'")
     if resolved["output_subdir_after_well"]:
         extra.append(f"--output-subdir-after-well '{resolved['output_subdir_after_well']}'")
+    if resolved.get("samples_file"):
+        extra.append(f"--samples-file '{resolved['samples_file']}'")
     if resolved["export_to_phy"]:   extra.append("--export-to-phy")
     if resolved["clean_up"]:        extra.append("--clean-up")
 
