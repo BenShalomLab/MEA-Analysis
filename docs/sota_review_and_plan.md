@@ -52,7 +52,7 @@ This repo already has the part most tools lack: Maxwell IO, Kilosort4 sorting, c
 | Cell type / E-I | **done (E)** gated 2-component mixture on waveform shape, non-somatic excluded, per-class metrics | waveform clustering, per-class metrics | ground truth for the proxy (chemogenetic or defined mixtures) |
 | Trajectory | none | DIV curves, unit tracking (UnitMatch across days), α | medium |
 | LFP / oscillations | discarded | organoid standard | large, optional |
-| Stats / report | ad-hoc notebooks | LMM, BH, PCA/UMAP, HTML | large, mandatory |
+| Stats / report | **done (G)** MixedLM with batch random effect, BH, Hedges' g, variance partition, PCA, RF importance, HTML | LMM, BH, PCA/UMAP, HTML | none |
 | Validation | synthetic tests for NB | ground-truth + regression sets | small |
 
 ## 4. Task plan
@@ -138,14 +138,20 @@ Checks: `tests/test_celltype.py` (20 tests).
 | F1 | UnitMatch across recordings of same chip/well (not intra-recording oversplits): CLI `track_units.py` producing `unit_tracking.csv` | `UnitMatch/`, new script | 2 recordings synthetic | B2 |
 | F2 | Trajectory features per chip/well: DIV of first NB, slope of NB rate, α vs DIV, plateau DIV | `trajectory.py` | csv | C4, C6 |
 
-### Epic G — statistics and report
+### Epic G — statistics and report — DONE (2026-09-14)
 
-| ID | Task | Files | Check | Deps |
-|---|---|---|---|---|
-| G1 | `qc_wells.py`: exclusion flags (n_units < 10, active frac, MFR, NBR, bad-channel frac) with counts per genotype | new | flags on collector CSV | C4 |
-| G2 | `stats_report.py`: statsmodels MixedLM per feature, genotype fixed, batch/line random, DIV covariate; BH; Hedges g with CI; variance partitioning (batch vs line vs well) | new | runs on synthetic CSV | G1 |
-| G3 | PCA/UMAP on z-scored feature vector, coloured by genotype and DIV; RF classifier with permutation importance (DeePhys style) | `stats_report.py` | figures | G2 |
-| G4 | HTML report per project (jinja2 + matplotlib): feature table, box/strip per DIV, LMM table, PCA, QC exclusions | `stats_report.py`, template | HTML opens | G2, G3 |
+| ID | Task | Outcome |
+|---|---|---|
+| G1 | `qc_wells.py` | Gates on unit count, firing rate, burst rate, network burst rate and bad-channel fraction, with the Mossink et al. 2021 thresholds. Exclusions are counted per group and an unbalanced exclusion rate is flagged, because it biases every comparison that follows. A missing metric skips its rule rather than failing the well, and the number of rules actually applied is recorded |
+| G2 | `stats_report.py` models | Linear mixed model per feature with a random intercept for batch, the grouping variable fixed and DIV as a covariate; falls back to OLS with a single batch and says so. Benjamini-Hochberg across features, Hedges' g with 95% intervals, and variance partitioning as the intraclass correlation per nuisance factor |
+| G3 | Multivariate | PCA of the standardised feature matrix coloured by group, and random forest permutation importance with cross-validated accuracy |
+| G4 | HTML report | Single self-contained file with figures embedded as base64: QC exclusions, the corrected comparison table, per-feature strip plots showing every well, the variance partition and the multivariate panels |
+
+Two design details worth knowing. Statsmodels warns constantly on small unbalanced designs; those warnings are captured and reported as a per-feature `converged` flag instead of burying the results. And a nuisance factor collinear with the grouping variable is skipped in the variance partition, since its variance share would be the genotype effect wearing a nuisance factor's name, which is easy to misread as the result being explained away.
+
+Verified on a synthetic experiment of 48 wells across 3 batches with a real effect on two features: both were recovered as significant after correction with Hedges' g of 1.97 and 0.99, and the three null features were not.
+
+Checks: `tests/test_stats_report.py` (26 tests). Adds `statsmodels` to requirements.
 
 ### Epic H — organoid LFP (optional)
 

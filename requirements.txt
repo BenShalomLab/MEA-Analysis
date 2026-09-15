@@ -206,6 +206,8 @@ scikit-learn==1.6.1
 
 scipy==1.15.3
 
+statsmodels==0.14.6
+
 seaborn==0.13.2
 
 sentry-sdk==2.48.0

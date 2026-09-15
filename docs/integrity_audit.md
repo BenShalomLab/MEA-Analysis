@@ -2,6 +2,8 @@
 
 Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code does now, what the reference implementation or paper does, verdict, fix. Verdict key: **OK** sound; **BUG** wrong; **DRIFT** differs from stated reference; **VERIFY** cannot confirm without running on data; **GAP** missing.
 
+> **Status.** Epic G has landed: well quality gates with per-group exclusion counts, a linear mixed model per feature with batch as a random effect, Benjamini-Hochberg correction, Hedges' g, variance partitioning, PCA and random forest importance, and a single-file HTML report. Run `stats_report.py --table <collector csv>`.
+>
 > **Status.** Epic E has landed: waveform classes (fast- vs regular-spiking) behind bimodality and BIC gates, non-somatic templates excluded, per-class metrics in the JSON and `ct_*` columns in the collector. The waveform PDF channel label is fixed.
 >
 > **Status.** Epic D has landed: pairwise STTC with a surrogate significance threshold, graph topology normalised against random graphs, and network burst propagation with leader scores and wave speed. Columns reach the well table as `conn_<window>_*` and `prop_*`.
