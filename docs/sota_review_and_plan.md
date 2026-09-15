@@ -49,7 +49,7 @@ This repo already has the part most tools lack: Maxwell IO, Kilosort4 sorting, c
 | Per-unit burst | **done (C)** MaxInterval + logISI with agreement, exported per unit | MI + logISI, agreement | none |
 | Network burst | 3-tier adaptive + Gaussian baseline | Chiappalone / Wagenaar / shape metrics | add rise/decay/area-norm, fix duration base |
 | Synchrony / graph | **done (D)** STTC at 10/25 ms + surrogate threshold, degree, clustering, path length, modularity, hubs, small-world sigma, burst propagation | STTC + null, degree, clustering, path length, modularity, hubs, NMF | NMF activity patterns and effective rank still missing |
-| Cell type / E-I | template metrics written, unused | waveform clustering, per-class metrics | medium |
+| Cell type / E-I | **done (E)** gated 2-component mixture on waveform shape, non-somatic excluded, per-class metrics | waveform clustering, per-class metrics | ground truth for the proxy (chemogenetic or defined mixtures) |
 | Trajectory | none | DIV curves, unit tracking (UnitMatch across days), α | medium |
 | LFP / oscillations | discarded | organoid standard | large, optional |
 | Stats / report | ad-hoc notebooks | LMM, BH, PCA/UMAP, HTML | large, mandatory |
@@ -117,13 +117,19 @@ Cost: quadratic in unit count. Roughly 10 s per well at 200 units and 45 s at 40
 
 Checks: `tests/test_synchrony.py` (25 tests), `tests/test_propagation.py` (14 tests).
 
-### Epic E — cell type
+### Epic E — cell type — DONE (2026-09-14)
 
-| ID | Task | Files | Check | Deps |
-|---|---|---|---|---|
-| E1 | `celltype.py`: read `template_metrics` (peak_to_valley, half_width, repolarization_slope, recovery_slope); soma/dendrite split by polarity (Wolff 2025); 2-component GMM on log(ptv), half_width; labels FS / RS / unclassified with bimodality check | new | synthetic bimodal | — |
-| E2 | Per-class C1/C5 metrics and E/I ratio in JSON; `unit_stats.csv` gains `cell_class` | `mea_reports.py` | keys | E1, C2 |
-| E3 | Waveform PDF: colour by class, fix channel-id title | `mea_reports.py` | visual | E1 |
+| ID | Task | Outcome |
+|---|---|---|
+| E1 | `celltype.py` | Two-component Gaussian mixture on trough-to-peak duration and half width, behind two gates: Sarle's bimodality coefficient above 0.555 and a BIC improvement of at least 10 over a one-component fit. Non-somatic templates (positive peak dominant, Wolff et al. 2025) are excluded before fitting. Handles both SpikeInterface spellings of the duration metric and both unit conventions |
+| E2 | Per-class metrics | `cell_types` block in the JSON with counts, fast-spiking fraction, the regular-to-fast ratio, and per-class summaries of firing rate, burst rate, burst duration, fraction of spikes in bursts and leader score; `cell_class` and its probability per unit in `unit_stats.csv`; `ct_*` columns in the collector |
+| E3 | Waveform PDF | Mean waveforms coloured by class, and the channel label fixed: it showed the per-unit sparse column index, so two units on the same electrode appeared to be on different ones |
+
+Naming is deliberate. These are waveform classes, not validated cell types, so nothing is labelled excitatory or inhibitory. The narrow/broad split is a proxy whose correspondence to inhibitory identity is imperfect and has only recently begun to be checked against ground truth in culture (Hornauer et al. 2026, chemogenetic labelling and defined mixtures). The ratio most people will read as E/I is exported as `regular_to_fast_ratio`.
+
+The classifier refuses to split when the distribution is not bimodal, which is common in young iPSC cultures. A mixture model always returns two clusters, so without that gate the pipeline would manufacture a cell-type difference between wells out of noise. `ct_classified` distinguishes "not bimodal" from "no fast-spiking units".
+
+Checks: `tests/test_celltype.py` (20 tests).
 
 ### Epic F — trajectory
 

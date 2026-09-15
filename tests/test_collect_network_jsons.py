@@ -71,6 +71,18 @@ def _write_result(root, *, project="CDKL5", date="2025-02-12", chip="16657",
             "summary": {"n_bursts_analysed": 2, "latency_spread_mean_ms": 12.5,
                         "median_speed_um_per_ms": 88.0, "leader_score_std": 0.29},
         },
+        "cell_types": {
+            "classified": True, "bimodal": True,
+            "n_fast_spiking": 12, "n_regular_spiking": 28, "n_non_somatic": 2,
+            "fast_spiking_fraction": 0.3, "regular_to_fast_ratio": 2.333,
+            "bimodality_coefficient": 0.68,
+            "by_class": {
+                "fast_spiking": {"n_units": 12,
+                                 "mean_firing_rate_hz": {"n": 12, "mean": 8.1, "median": 7.4}},
+                "regular_spiking": {"n_units": 28,
+                                    "mean_firing_rate_hz": {"n": 28, "mean": 1.9, "median": 1.6}},
+            },
+        },
         "sample": sample if sample is not None else {
             "matched": True, "genotype": "KO", "line": "Cdkl5_KO_3",
             "prep_type": "dissociated_mouse", "batch": "B12", "div": 28,
@@ -166,6 +178,29 @@ def test_propagation_summary_becomes_prop_columns(tmp_path):
     row = extract_row(_write_result(tmp_path))
     assert row["prop_median_speed_um_per_ms"] == pytest.approx(88.0)
     assert row["prop_leader_score_std"] == pytest.approx(0.29)
+
+
+def test_cell_type_counts_and_per_class_features_become_ct_columns(tmp_path):
+    row = extract_row(_write_result(tmp_path))
+    assert row["ct_n_fast_spiking"] == 12
+    assert row["ct_fast_spiking_fraction"] == pytest.approx(0.3)
+    assert row["ct_regular_to_fast_ratio"] == pytest.approx(2.333)
+    assert row["ct_fast_spiking_mean_firing_rate_hz_mean"] == pytest.approx(8.1)
+    assert row["ct_regular_spiking_mean_firing_rate_hz_median"] == pytest.approx(1.6)
+
+
+def test_a_well_that_could_not_be_classified_is_distinguishable(tmp_path):
+    """Not classified is not the same as having no fast-spiking units."""
+    path = _write_result(tmp_path)
+    payload = json.loads(path.read_text())
+    payload["cell_types"] = {"classified": False,
+                             "reason": "waveform_distribution_not_bimodal"}
+    path.write_text(json.dumps(payload))
+
+    row = extract_row(path)
+    assert row["ct_classified"] is False
+    assert row["ct_reason"] == "waveform_distribution_not_bimodal"
+    assert "ct_n_fast_spiking" not in row
 
 
 def test_unreadable_json_produces_an_error_row_not_a_crash(tmp_path):

@@ -2,6 +2,8 @@
 
 Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code does now, what the reference implementation or paper does, verdict, fix. Verdict key: **OK** sound; **BUG** wrong; **DRIFT** differs from stated reference; **VERIFY** cannot confirm without running on data; **GAP** missing.
 
+> **Status.** Epic E has landed: waveform classes (fast- vs regular-spiking) behind bimodality and BIC gates, non-somatic templates excluded, per-class metrics in the JSON and `ct_*` columns in the collector. The waveform PDF channel label is fixed.
+>
 > **Status.** Epic D has landed: pairwise STTC with a surrogate significance threshold, graph topology normalised against random graphs, and network burst propagation with leader scores and wave speed. Columns reach the well table as `conn_<window>_*` and `prop_*`.
 >
 > **Status.** Epic C has landed: per-unit burst detection (`unit_bursts.py`, MaxInterval + logISI), burst rise/decay times, spike participation and percent random spikes, and a burst duty cycle. Columns reach the well table as `ul_*` and `sp_*`.
@@ -57,7 +59,7 @@ Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code
 | unit_locations | `monopolar_triangulation` | needs ≥ 4–6 channels for stable fit | VERIFY | after sparsity fix; else `center_of_mass` |
 | waveforms | 1 ms before / 2 ms after | DeePhys 1/2; fine | OK | — |
 | quality_metrics | SI defaults: num_spikes, firing_rate, presence_ratio, snr, isi_violation, rp_violation, sliding_rp_violation, amplitude_cutoff, amplitude_median, amplitude_cv, synchrony, firing_range, drift, sd_ratio, noise_cutoff | Curation uses 4 of these | OK | export all (already in xlsx) |
-| template_metrics | computed, written to xlsx, never used | DeePhys 8 waveform features | GAP | E1 |
+| template_metrics | **[fixed E1]** now drive waveform classification | DeePhys 8 waveform features | — | — |
 | Extensions absent | no `correlograms`, `isi_histograms`, `spike_locations` | DeePhys uses CCH graph | GAP | add `correlograms` (needed for D-series alt) |
 
 ## 5. Curation (`mea_reports._apply_curation_logic`)
@@ -123,7 +125,7 @@ Date 2026-09-14. Companion to `sota_review_and_plan.md`. Each row: what the code
 |---|---|---|---|
 | Curation before burst analysis | yes | OK | — |
 | `spike_times.npy` saved after curation | yes; used by `--reanalyze-bursts` and raw template extraction | OK | — |
-| Waveform PDF `best_ch = argmin` over sparse channel index; title shows index | misleading id | minor | map to channel id |
+| Waveform PDF channel title | **[fixed E3]** the sparse column index is mapped through the analyzer sparsity to the real channel id, and traces are coloured by waveform class | — |
 | `plot_probe_locations` | ok | OK | — |
 | Raster sort `location_y` advertised in CLI, not implemented (`_sort_units_for_raster` handles none/firing_rate/unit_id) | BUG | implement with `unit_locations` |
 | y-max summary JSON written by every subprocess (race across parallel SLURM jobs) | BUG under parallel batch | write per-well file, aggregate later |

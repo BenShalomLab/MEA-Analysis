@@ -231,6 +231,37 @@ def _flatten_propagation(block: dict | None) -> dict:
     return {f"prop_{key}": value for key, value in (block.get("summary") or {}).items()}
 
 
+def _flatten_cell_types(block: dict | None) -> dict:
+    """Waveform class counts and per-class features -> ct_* columns.
+
+    These are waveform classes, not validated cell types; see celltype.py.
+    `ct_classified` records whether the split was applied at all, so a well
+    where the distribution was not bimodal is distinguishable from one with
+    no fast-spiking units.
+    """
+    if not isinstance(block, dict):
+        return {}
+
+    row: dict = {}
+    for key in ("classified", "bimodal", "reason", "n_fast_spiking",
+                "n_regular_spiking", "n_non_somatic", "n_unclassified",
+                "fast_spiking_fraction", "regular_to_fast_ratio",
+                "bimodality_coefficient", "bic_improvement",
+                "fast_spiking_trough_to_peak_ms",
+                "regular_spiking_trough_to_peak_ms"):
+        if key in block:
+            row[f"ct_{key}"] = block[key]
+
+    for cell_class, entry in (block.get("by_class") or {}).items():
+        for field, value in entry.items():
+            if isinstance(value, dict):
+                for statistic in ("mean", "median", "n"):
+                    row[f"ct_{cell_class}_{field}_{statistic}"] = value.get(statistic)
+            else:
+                row[f"ct_{cell_class}_{field}"] = value
+    return row
+
+
 def _flatten_run_context(raw: dict) -> dict:
     row = {
         "detector": raw.get("detector") or (raw.get("diagnostics") or {}).get("detector"),
@@ -278,6 +309,7 @@ def extract_row(json_path: Path) -> dict:
     row.update(_flatten_spike_participation(raw.get("spike_participation")))
     row.update(_flatten_connectivity(raw.get("connectivity")))
     row.update(_flatten_propagation(raw.get("propagation")))
+    row.update(_flatten_cell_types(raw.get("cell_types")))
 
     for prefix, (section_key, _ibi_key) in _SECTIONS.items():
         sec     = raw.get(section_key) or {}
@@ -349,10 +381,11 @@ def to_dataframes(rows: list[dict]) -> dict[str, pd.DataFrame]:
         if c.startswith("bf_"):   return (2, c)
         if c.startswith("nb_"):   return (3, c)
         if c.startswith("sb_"):   return (4, c)
-        if c.startswith("conn_"): return (5, c)
-        if c.startswith("prop_"): return (6, c)
-        if c.startswith("diag_"): return (7, c)
-        return (8, c)
+        if c.startswith("ct_"):   return (5, c)
+        if c.startswith("conn_"): return (6, c)
+        if c.startswith("prop_"): return (7, c)
+        if c.startswith("diag_"): return (8, c)
+        return (9, c)
 
     metric_cols = sorted(metric_cols, key=_col_sort_key)
     ordered = [c for c in id_cols if c in df.columns] + metric_cols

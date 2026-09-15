@@ -44,6 +44,26 @@ except ImportError:
         compute_propagation = None
 
 try:
+    from celltype import classify_cell_types, summarise_by_class
+except ImportError:
+    try:
+        from MEA_Analysis.IPNAnalysis.celltype import classify_cell_types, summarise_by_class
+    except ImportError:
+        classify_cell_types = None
+        summarise_by_class = None
+
+# Per-unit features worth reporting separately for each waveform class: a
+# change confined to one population is invisible in the pooled mean.
+PER_CLASS_FEATURE_FIELDS = (
+    "mean_firing_rate_hz",
+    "mi_burst_rate_hz",
+    "mi_burst_duration_mean_s",
+    "mi_fraction_spikes_in_bursts",
+    "mi_intraburst_rate_hz",
+    "prop_leader_score",
+)
+
+try:
     from parameter_free_burst_detector import compute_network_bursts as compute_network_bursts_parameter_free
     from gaussianNetworkBursts import compute_network_bursts as compute_network_bursts_gaussian
     import helper_functions as helper
@@ -118,6 +138,10 @@ class ReportsMixin:
                 self._save_checkpoint(ProcessingStage.REPORTS_COMPLETE, n_units=0,
                                       curation=self.curation_summary)
                 return
+
+            # Waveform classes, before the plots so the waveform grid can show
+            # them and before burst analysis so per-class metrics are possible.
+            self.cell_types = self._classify_cell_types(clean_units, t_metrics)
 
             mask = np.isin(self.analyzer.unit_ids, clean_units)
             self._plot_probe_locations(clean_units, locations[mask], f"locations_{len(clean_units)}_units.pdf")
@@ -246,12 +270,39 @@ class ReportsMixin:
         fig.savefig(self.output_dir / filename)
         plt.close(fig)
 
+    def _waveform_channel_label(self, unit_id, channel_index):
+        """Recording channel id behind a unit's sparse waveform column.
+
+        Waveforms are stored per unit on that unit's own sparse channel set,
+        so the column index is meaningless as a channel name and differs
+        between units. Titling the plot with it made two units on the same
+        electrode look like they were on different ones.
+        """
+        analyzer = getattr(self, "analyzer", None)
+        try:
+            sparsity = getattr(analyzer, "sparsity", None)
+            if sparsity is not None:
+                return sparsity.unit_id_to_channel_ids[unit_id][channel_index]
+            return analyzer.channel_ids[channel_index]
+        except Exception:
+            return f"idx{channel_index}"
+
+    # Colour by waveform class so the grid shows whether the narrow-spiking
+    # units really are the narrow ones.
+    CLASS_COLOURS = {
+        "fast_spiking": "#d63031",
+        "regular_spiking": "#0984e3",
+        "non_somatic": "#b2bec3",
+        "unclassified": "#2d3436",
+    }
+
     def _plot_waveforms_grid(self, unit_ids):
         pdf_path = self.output_dir / "waveforms_grid.pdf"
         self.logger.info(f"Generating PDF: {pdf_path}")
 
         wf_ext = self.analyzer.get_extension("waveforms")
         fs = self.recording.get_sampling_frequency()
+        classes = (getattr(self, "cell_types", None) or {}).get("units", {})
 
         with pdf.PdfPages(pdf_path) as pdf_doc:
             units_per_page = 12
@@ -274,9 +325,16 @@ class ReportsMixin:
                     else:
                         spikes_to_plot = wf[:, :, best_ch]
 
+                    cell_class = (classes.get(uid) or {}).get("cell_class", "unclassified")
+                    colour = self.CLASS_COLOURS.get(cell_class, "#2d3436")
+
                     ax.plot(time_ms, spikes_to_plot.T, c='gray', lw=0.5, alpha=0.3)
-                    ax.plot(time_ms, mean_wf[:, best_ch], c='red', lw=1.5)
-                    ax.set_title(f"Unit {uid} | Ch {best_ch}", fontsize=10)
+                    ax.plot(time_ms, mean_wf[:, best_ch], c=colour, lw=1.5)
+                    channel_label = self._waveform_channel_label(uid, best_ch)
+                    title = f"Unit {uid} | Ch {channel_label}"
+                    if cell_class != "unclassified":
+                        title += f"\n{cell_class.replace('_', ' ')}"
+                    ax.set_title(title, fontsize=9)
 
                     try:
                         add_scalebar(ax,
@@ -402,6 +460,70 @@ class ReportsMixin:
             self.logger.info("Saved connectivity_summary.svg/.png")
         except Exception:
             self.logger.warning("Connectivity plot failed.", exc_info=True)
+
+    def _extremum_channel_templates(self, unit_ids):
+        """unit id -> its mean waveform on the channel with the largest peak."""
+        analyzer = getattr(self, "analyzer", None)
+        if analyzer is None:
+            return {}
+        try:
+            templates = analyzer.get_extension("templates").get_data()
+        except Exception as e:
+            self.logger.debug("Templates unavailable (%s); polarity check skipped.", e)
+            return {}
+
+        wanted = {str(u) for u in unit_ids}
+        result = {}
+        for unit_id, template in zip(analyzer.unit_ids, templates):
+            if str(unit_id) not in wanted:
+                continue
+            template = np.asarray(template, dtype=float)
+            if template.ndim != 2 or template.size == 0:
+                continue
+            extremum = int(np.argmax(np.max(np.abs(template), axis=0)))
+            result[unit_id] = template[:, extremum]
+        return result
+
+    def _classify_cell_types(self, unit_ids, template_metrics):
+        """Putative fast- vs regular-spiking classes, or {} when not possible.
+
+        Never fatal, and never forced: when the waveform distribution is not
+        bimodal the classifier declines to split, which is the honest outcome
+        for cultures that have not differentiated a narrow-spiking population.
+        """
+        if classify_cell_types is None:
+            self.logger.warning("celltype module unavailable; classification skipped.")
+            return {}
+
+        try:
+            metrics = template_metrics.loc[list(unit_ids)]
+        except Exception:
+            metrics = template_metrics
+
+        try:
+            result = classify_cell_types(
+                metrics, templates=self._extremum_channel_templates(unit_ids)
+            )
+        except Exception:
+            self.logger.warning("Cell-type classification failed.", exc_info=True)
+            return {}
+
+        summary = result.get("summary", {})
+        if summary.get("classified"):
+            self.logger.info(
+                "Waveform classes: %d fast-spiking, %d regular-spiking, %d non-somatic "
+                "(bimodality coefficient %.3f, BIC improvement %.1f)",
+                summary.get("n_fast_spiking", 0), summary.get("n_regular_spiking", 0),
+                summary.get("n_non_somatic", 0),
+                summary.get("bimodality_coefficient") or float("nan"),
+                summary.get("bic_improvement") or float("nan"),
+            )
+        else:
+            self.logger.info(
+                "Waveform classes not assigned (%s); units stay unclassified.",
+                summary.get("reason"),
+            )
+        return result
 
     def _unit_location_map(self, unit_ids):
         """unit id -> (x, y) in microns, for the units being analysed."""
@@ -658,6 +780,18 @@ class ReportsMixin:
                 sttc_matrices, connectivity, per_unit_propagation, spike_times.keys()
             )
 
+            # Waveform class per unit, and the per-unit features split by class.
+            cell_types = getattr(self, "cell_types", None) or {}
+            per_unit_classes = cell_types.get("units", {})
+            for unit_id, values in per_unit_classes.items():
+                per_unit_bursts.setdefault(unit_id, {}).update(values)
+
+            cell_type_block = dict(cell_types.get("summary", {})) if cell_types else {}
+            if per_unit_classes and summarise_by_class is not None:
+                cell_type_block["by_class"] = summarise_by_class(
+                    per_unit_classes, per_unit_bursts, PER_CLASS_FEATURE_FIELDS
+                )
+
             df_units = self._build_unit_stats_frame(unit_stats, per_unit_bursts)
             if df_units is not None:
                 df_units.to_csv(self.output_dir / "unit_stats.csv")
@@ -680,6 +814,8 @@ class ReportsMixin:
                 network_data_clean["connectivity"] = helper.recursive_clean(connectivity)
             if propagation:
                 network_data_clean["propagation"] = helper.recursive_clean(propagation)
+            if cell_type_block:
+                network_data_clean["cell_types"] = helper.recursive_clean(cell_type_block)
             network_data_clean["curation"] = getattr(self, "curation_summary", None)
             network_data_clean["provenance"] = collect_provenance()
             # Genotype/line/DIV etc. Without this block the results identify the
