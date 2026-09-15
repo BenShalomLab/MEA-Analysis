@@ -50,7 +50,7 @@ This repo already has the part most tools lack: Maxwell IO, Kilosort4 sorting, c
 | Network burst | 3-tier adaptive + Gaussian baseline | Chiappalone / Wagenaar / shape metrics | add rise/decay/area-norm, fix duration base |
 | Synchrony / graph | **done (D)** STTC at 10/25 ms + surrogate threshold, degree, clustering, path length, modularity, hubs, small-world sigma, burst propagation | STTC + null, degree, clustering, path length, modularity, hubs, NMF | NMF activity patterns and effective rank still missing |
 | Cell type / E-I | **done (E)** gated 2-component mixture on waveform shape, non-somatic excluded, per-class metrics | waveform clustering, per-class metrics | ground truth for the proxy (chemogenetic or defined mixtures) |
-| Trajectory | none | DIV curves, unit tracking (UnitMatch across days), α | medium |
+| Trajectory | **done (F)** waveform tracking across recordings, DIV slope/onset/plateau/AUC per well | DIV curves, unit tracking (UnitMatch across days), α | calibrated match probabilities |
 | LFP / oscillations | discarded | organoid standard | large, optional |
 | Stats / report | **done (G)** MixedLM with batch random effect, BH, Hedges' g, variance partition, PCA, RF importance, HTML | LMM, BH, PCA/UMAP, HTML | none |
 | Validation | synthetic tests for NB | ground-truth + regression sets | small |
@@ -131,12 +131,18 @@ The classifier refuses to split when the distribution is not bimodal, which is c
 
 Checks: `tests/test_celltype.py` (20 tests).
 
-### Epic F — trajectory
+### Epic F — trajectory — DONE (2026-09-14)
 
-| ID | Task | Files | Check | Deps |
-|---|---|---|---|---|
-| F1 | UnitMatch across recordings of same chip/well (not intra-recording oversplits): CLI `track_units.py` producing `unit_tracking.csv` | `UnitMatch/`, new script | 2 recordings synthetic | B2 |
-| F2 | Trajectory features per chip/well: DIV of first NB, slope of NB rate, α vs DIV, plateau DIV | `trajectory.py` | csv | C4, C6 |
+| ID | Task | Outcome |
+|---|---|---|
+| F1 | `track_units.py` | Matches units across recordings of one well on mean waveform shape, gated by distance on the array and assigned one-to-one by optimal matching. CLI takes well directories in recording order and writes `unit_tracking.csv` plus a summary. Recovered 16 of 16 persisting units across three synthetic recordings, correctly starting new tracks for units that appeared later |
+| F2 | `trajectory.py` | Per well and feature: slope against DIV with its R², the age at which activity first appears, the age at which it stops rising, and area under the curve normalised by the span. `trajectory_feature_table` reshapes these into the well-by-feature form `stats_report.py` consumes, so a trajectory becomes just another per-well measurement to compare between genotypes |
+
+**Deviation from the plan on F1.** It called for using UnitMatch. The repository's UnitMatch integration imports a clone from a hardcoded absolute path (`/home/adamm/dev/pkgs/UnitMatch/UnitMatchPy`) that exists on one machine, and it is wired for merging over-split units inside a single recording, which is a different problem. Rather than depend on an unavailable backend, `track_units.py` implements the same idea directly: match on waveform, because functional properties are what changes between recordings and so cannot establish identity. It is simpler than UnitMatch's probabilistic model, producing a similarity rather than a calibrated match probability, so the threshold is a visible choice rather than a posterior.
+
+Validated on a synthetic delayed genotype: a seven-day shift in a sigmoid activity curve was recovered as 6.8 days at onset and 6.9 days at plateau, while the two genotypes overlap at individual timepoints.
+
+Checks: `tests/test_trajectory.py` (22 tests).
 
 ### Epic G — statistics and report — DONE (2026-09-14)
 
