@@ -4,9 +4,9 @@ from scipy.signal import find_peaks
 from scipy.stats import skew, kurtosis as sp_kurtosis
 
 try:
-    from burst_common import stats, level_metrics as _level_metrics
+    from burst_common import stats, level_metrics as _level_metrics, SCHEMA_VERSION
 except ImportError:
-    from MEA_Analysis.IPNAnalysis.burst_common import stats, level_metrics as _level_metrics
+    from MEA_Analysis.IPNAnalysis.burst_common import stats, level_metrics as _level_metrics, SCHEMA_VERSION
 
 
 def compute_network_bursts(
@@ -369,13 +369,34 @@ def compute_network_bursts(
             "start_time_s":                   float(start_time_s),
             "end_time_s":                     float(end_time_s),
             "burst_duration_s":               float(burst_duration_s),
+            # Per-bin co-activity at the peak. "peak_synchrony" is the accurate
+            # name; "peak_participation_fraction" is kept because it is the key
+            # existing notebooks and collected tables read. Neither is the
+            # per-burst `participation_fraction` below — see docs/metrics.md.
+            "peak_synchrony":                 float(peak_val),
             "peak_participation_fraction":    float(peak_val),
             "peak_time_s":                    float(t_centers[p]),
+            # Integral of the per-unit population rate: mean spikes per unit.
             "burst_area":                     float(np.sum(population_firing_rate_signal[start_idx:end_idx + 1]) * bin_size),
             "participation_fraction":         float(participation_fraction),
             "spike_count":                    spike_count,
+            # Yield-normalised counterpart of spike_count, so wells with
+            # different unit yields are comparable.
+            "spikes_per_burst_per_unit":      float(spike_count / max(1, n_units)),
+            # Spikes per participating unit per second inside the burst. Used
+            # as a detection gate above and reported because it is the
+            # intensity measure that is free of both duration and yield.
+            "burst_density_hz":               float(burst_density),
             "peak_bin_synchrony":             peak_bin_synchrony,
-            "peak_population_firing_rate_hz": float(np.max(population_firing_rate_hz[start_idx:end_idx + 1]))
+            # Per unit, from the same smoothed signal as burst_area, so every
+            # reported intensity is in the same convention as MaxWell's
+            # mxw.networkActivity.computeNetworkAct and as the Gaussian
+            # detector's field of this name.
+            "peak_population_firing_rate_hz": float(np.max(population_firing_rate_signal[start_idx:end_idx + 1])),
+            # Array-wide sum, NOT divided by n_units. This is what the field
+            # above used to hold; it is kept under an explicit name because it
+            # rises with unit yield and must not be compared across wells.
+            "peak_population_firing_rate_total_hz": float(np.max(population_firing_rate_hz[start_idx:end_idx + 1])),
         })
 
     # ---------------------------------------------------------
@@ -416,24 +437,47 @@ def compute_network_bursts(
     # ---------------------------------------------------------
     def finalize(evs, s, e):
 
-        best = max(evs, key=lambda x: x["peak_participation_fraction"])
+        best = max(evs, key=lambda x: x["peak_synchrony"])
 
         participating_units = sum(
             1 for u in units
             if np.any((SpikeTimes[u] >= s) & (SpikeTimes[u] < e))
         )
 
+        # Re-integrate over the whole merged window [s, e] instead of summing
+        # the components. Summing skipped the gaps between components while
+        # burst_duration_s and participation_fraction span them, so
+        # spike_count / burst_duration_s was not the burst's firing rate.
+        # The merged window's bounds are component bounds, which are bin
+        # edges, so these indices are exact.
+        i0 = int(np.clip(np.searchsorted(bins, s, side="left"), 0, n_bins - 1))
+        i1 = int(np.clip(np.searchsorted(bins, e, side="left") - 1, i0, n_bins - 1))
+
+        burst_duration_s = e - s
+        spike_count = int(np.sum(spike_counts_total[i0:i1 + 1]))
+        denom = burst_duration_s * max(1, participating_units)
+
         return {
             "start_time_s":                   s,
             "end_time_s":                     e,
-            "burst_duration_s":               e - s,
-            "peak_participation_fraction":    best["peak_participation_fraction"],
+            "burst_duration_s":               burst_duration_s,
+            "peak_synchrony":                 best["peak_synchrony"],
+            "peak_participation_fraction":    best["peak_synchrony"],
             "peak_time_s":                    best["peak_time_s"],
-            "burst_area":                     sum(ev["burst_area"] for ev in evs),
-            "component_count":                sum(ev.get("component_count", 1) for ev in evs),
-            "spike_count":                    sum(ev["spike_count"] for ev in evs),
+            "burst_area":                     float(np.sum(population_firing_rate_signal[i0:i1 + 1]) * bin_size),
+            # Fragments contained, transitively: at the superburst tier this
+            # counts fragments, while n_components counts the network bursts
+            # merged. The old name "component_count" was read as the latter.
+            "n_fragments":                    sum(ev.get("n_fragments", 1) for ev in evs),
+            "spike_count":                    spike_count,
+            "spikes_per_burst_per_unit":      float(spike_count / max(1, n_units)),
+            "burst_density_hz":               float(spike_count / denom) if denom > 0 else 0.0,
             "participation_fraction":         participating_units / n_units,
-            "peak_population_firing_rate_hz": max(ev["peak_population_firing_rate_hz"] for ev in evs),
+            # Highest single-bin co-activity anywhere in the merged window,
+            # from the raw counts. Previously dropped at this tier.
+            "peak_bin_synchrony":             float(np.max(active_unit_counts[i0:i1 + 1]) / max(1, n_units)),
+            "peak_population_firing_rate_hz": float(np.max(population_firing_rate_signal[i0:i1 + 1])),
+            "peak_population_firing_rate_total_hz": float(np.max(population_firing_rate_hz[i0:i1 + 1])),
             "n_components":                   len(evs)
         }
 
@@ -581,6 +625,7 @@ def compute_network_bursts(
         },
 
         "diagnostics": {
+            "schema_version":               SCHEMA_VERSION,
             "detector":                     "parameter_free",
             "recording_duration_s":         total_dur,
             "analysis_window_s":            analysis_window_s,
@@ -611,12 +656,17 @@ def compute_network_bursts(
 
         "unit_stats": unit_stats,
 
+        # plot_data is splatted into helper.plot_clean_network as **kwargs, so
+        # these keys must match its signature exactly — no aliases. The trace
+        # named participation_fraction_signal is per-bin co-activity
+        # (synchrony), not the per-burst participation_fraction, and
+        # population_firing_rate_hz here is per unit. See docs/metrics.md.
         "plot_data": {
             "time_s":                          t_centers,
             "participation_fraction_signal":   participation_fraction_signal,
             "population_firing_rate_hz":       population_firing_rate_signal,
             "nb_peak_times_s":                 np.array([b["peak_time_s"] for b in network_bursts]),
-            "nb_peak_participation_fraction":  np.array([b["peak_participation_fraction"] for b in network_bursts]),
+            "nb_peak_participation_fraction":  np.array([b["peak_synchrony"] for b in network_bursts]),
             "sb_start_times_s":                np.array([b["start_time_s"] for b in superbursts]),
             "sb_end_times_s":                  np.array([b["end_time_s"] for b in superbursts]),
             "participation_baseline":          participation_baseline,

@@ -11,6 +11,28 @@
 import numpy as np
 
 
+# Version of the network_results.json metric schema. Stamped into every result
+# so a file can be read without guessing which code produced it.
+#
+#   1  pre-Epic-A. Rates divided by the spike span, not the recording;
+#      stats([]) returned zeros rather than nulls; superbursts required only
+#      one component; the Gaussian detector's rate was not divided by n_units
+#      and its burst edges used the inverse of the intended fraction of peak.
+#   2  Epic A. Those six defects corrected. Added burst_duration_p95_s /
+#      _max_s and the offset-to-onset <ibi>_gap_s convention, plus the
+#      detector / duration_source diagnostics.
+#   3  Intensity made yield-normalised and internally consistent:
+#      peak_population_firing_rate_hz is now per unit (the array-wide sum
+#      moved to peak_population_firing_rate_total_hz); merged tiers
+#      re-integrate over the whole burst window instead of summing
+#      components; spikes_per_burst_per_unit, burst_density_hz,
+#      peak_synchrony and peak_bin_synchrony are reported at every tier;
+#      component_count renamed n_fragments.
+#
+# Units for every key are in docs/metrics.md and metrics.yaml.
+SCHEMA_VERSION = 3
+
+
 def stats(x):
     """Mean/std/CV of a 1D array-like.
 
@@ -91,8 +113,16 @@ def level_metrics(events, total_dur, ibi_key="ibi_s"):
         "burst_area",
         "participation_fraction",
         "spike_count",
+        # Yield-normalised intensity. spike_count and
+        # peak_population_firing_rate_total_hz both rise with the number of
+        # sorted units, so these three are the ones to compare across wells.
+        "spikes_per_burst_per_unit",
+        "burst_density_hz",
         "peak_population_firing_rate_hz",
+        "peak_population_firing_rate_total_hz",
+        "peak_synchrony",
         "peak_participation_fraction",
+        "peak_bin_synchrony",
     )
     for field in optional_fields:
         if all(field in ev for ev in events):

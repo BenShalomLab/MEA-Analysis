@@ -4,9 +4,14 @@
 Uses the canonical schema produced by parameter_free_burst_detector.py:
   - burst_fragments / network_bursts / superbursts
   - metrics keys: burst_count, burst_rate_hz, burst_duration_s,
-                  ifbi_s / ibi_s / isbi_s, burst_area,
-                  participation_fraction, spike_count_per_burst,
-                  peak_population_firing_rate_hz, peak_participation_fraction
+                  burst_duration_p95_s / _max_s,
+                  ifbi_s / ibi_s / isbi_s and their _gap_s counterparts,
+                  burst_area, participation_fraction, spike_count_per_burst,
+                  spikes_per_burst_per_unit, burst_density_hz,
+                  peak_population_firing_rate_hz (per unit),
+                  peak_population_firing_rate_total_hz (array-wide),
+                  peak_synchrony, peak_bin_synchrony,
+                  peak_participation_fraction (alias of peak_synchrony)
   - diagnostics keys: bin_size_ms, reference_isi_s, participation_baseline,
                       detection_threshold, fragment_merge_gap_s, nb_merge_gap_s,
                       participation_bc, threshold_source, min_units_for_burst, …
@@ -62,8 +67,11 @@ _EVT_DISTRIBUTION_FIELDS = {
     "burst_duration_s",
     "participation_fraction",
     "spike_count",
+    "spikes_per_burst_per_unit",
+    "burst_density_hz",
     "peak_population_firing_rate_hz",
-    "peak_participation_fraction",
+    "peak_synchrony",
+    "peak_bin_synchrony",
     "burst_area",
 }
 
@@ -118,19 +126,34 @@ def _flatten_events_distributions(events: list[dict], prefix: str) -> dict:
 # ── Path metadata ─────────────────────────────────────────────────────────────
 
 def _parse_path_metadata(well_dir: Path) -> dict:
-    """Infer project/date/chip/run/well from output directory path.
+    """Infer project/date/chip/run/well from the output directory path.
 
-    Expected structure:
-      <output_root>/<project>/<date>/<chip>/Network/<run>/well000/
+    Fallback only: extract_row prefers the ids recorded inside the JSON, which
+    come from the recording's own metadata rather than from directory names.
+
+    The layout mirrors the input tree, which ends in an assay folder:
+      <output_root>/<project>/<date>/<chip>/<run>/Network/well000/
+    so the run id is two levels above the well, not one. Reading it one level
+    up yielded the literal string "Network" for every row.
     """
     parts = well_dir.parts
     return {
         "project": parts[-6] if len(parts) >= 6 else None,
         "date":    parts[-5] if len(parts) >= 5 else None,
         "chip":    parts[-4] if len(parts) >= 4 else None,
-        "run":     parts[-2],
+        "run":     parts[-3] if len(parts) >= 3 else None,
         "well":    parts[-1],
     }
+
+
+# Ids written into the JSON by the pipeline, and the column each maps to.
+_JSON_ID_KEYS = {
+    "project": "project",
+    "date":    "date",
+    "chip":    "chip_id",
+    "run":     "run_id",
+    "well":    "well",
+}
 
 
 # ── Core extraction ───────────────────────────────────────────────────────────
@@ -147,7 +170,15 @@ def extract_row(json_path: Path) -> dict:
         row["error"] = str(exc)
         return row
 
+    # Ids recorded by the pipeline win over the ones guessed from the path.
+    for column, json_key in _JSON_ID_KEYS.items():
+        value = raw.get(json_key)
+        if value not in (None, ""):
+            row[column] = value
+
     row["n_units"] = raw.get("n_units")
+    row["schema_version"] = ((raw.get("diagnostics") or {}).get("schema_version"))
+    row["detector"] = raw.get("detector") or ((raw.get("diagnostics") or {}).get("detector"))
 
     for prefix, (section_key, _ibi_key) in _SECTIONS.items():
         sec     = raw.get(section_key) or {}

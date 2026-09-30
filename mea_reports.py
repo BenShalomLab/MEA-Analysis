@@ -25,12 +25,14 @@ except ImportError:
     from MEA_Analysis.IPNAnalysis.mea_infra import collect_provenance
 
 try:
+    from burst_common import SCHEMA_VERSION as burst_schema_version
     from parameter_free_burst_detector import compute_network_bursts as compute_network_bursts_parameter_free
     from gaussianNetworkBursts import compute_network_bursts as compute_network_bursts_gaussian
     import helper_functions as helper
     from scalebury import add_scalebar
 except ImportError:
     try:
+        from MEA_Analysis.IPNAnalysis.burst_common import SCHEMA_VERSION as burst_schema_version
         from MEA_Analysis.IPNAnalysis.parameter_free_burst_detector import compute_network_bursts as compute_network_bursts_parameter_free
         from MEA_Analysis.IPNAnalysis.gaussianNetworkBursts import compute_network_bursts as compute_network_bursts_gaussian
         from MEA_Analysis.IPNAnalysis import helper_functions as helper
@@ -441,6 +443,7 @@ class ReportsMixin:
                 network_data_clean["fs"] = fs_meta
             if recording_duration_s is not None:
                 network_data_clean["duration_s"] = recording_duration_s
+            network_data_clean["schema_version"] = burst_schema_version
             network_data_clean["detector"] = detector_name
             network_data_clean["detector_params"] = helper.recursive_clean(detector_kwargs)
             network_data_clean["curation"] = getattr(self, "curation_summary", None)
