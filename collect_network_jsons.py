@@ -56,9 +56,9 @@ _DIAG_KEYS = [
     "burst_detection_valid",
     "detection_threshold", "threshold_source",
     "min_coactive_fraction", "min_units_for_burst",
-    "fragment_merge_gap_s", "fragment_merge_gap_source",
-    "nb_merge_gap_s", "nb_merge_gap_source",
-    "superburst_min_dur_s", "superburst_min_components", "superburst_merge_gap_s",
+    "fragment_merge_rule", "fragment_max_gap_s",
+    "nb_ibi_bimodality", "superburst_gap_s", "superburst_gap_source",
+    "superburst_min_dur_s", "superburst_min_components",
     "duration_source", "recording_duration_s", "analysis_window_s",
     "sigma_coactivity_bins", "sigma_firing_rate_bins",
 ]

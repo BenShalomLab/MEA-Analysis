@@ -1,5 +1,5 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "description": "Machine-readable dictionary for every key in network_results.json: units, formula, the published name and abbreviation, biological meaning and caveats. Rendered to docs/metrics.md by scripts/build_metrics_doc.py. tests/test_metrics_dictionary.py fails if a detector emits a key that is missing here.",
   "vocabularies": {
     "Mossink et al. 2021 Stem Cell Reports": "MFR, PRS, BR, BD, BSR, IBI, NBR, NBD, NIBI, CV_NIBI, RT, DT",
@@ -563,40 +563,6 @@
       "definition": "Absolute co-active unit floor behind min_coactive_fraction.",
       "since_schema": 1
     },
-    "fragment_merge_gap_s": {
-      "scope": "diagnostics",
-      "units": "s",
-      "formula": "percentile(intra-burst ISIs of bursty units, 95), else 3 * reference_isi_s",
-      "definition": "Largest gap across which two fragments may join into one network burst.",
-      "literature": "Bakkum et al. 2013",
-      "since_schema": 1
-    },
-    "fragment_merge_gap_source": {
-      "scope": "diagnostics",
-      "units": "string",
-      "definition": "intra_burst_isi_p95 or fallback_3x_isi.",
-      "since_schema": 1
-    },
-    "nb_merge_gap_s": {
-      "scope": "diagnostics",
-      "units": "s",
-      "formula": "antimode of log10(inter-fragment intervals), else max(network_merge_gap_min, 0.3)",
-      "definition": "Largest gap across which network bursts may join into a superburst.",
-      "literature": "0.3 s floor from Tsodyks & Markram 1997 PNAS (vesicle recovery)",
-      "since_schema": 1
-    },
-    "nb_merge_gap_source": {
-      "scope": "diagnostics",
-      "units": "string",
-      "definition": "inter_fragment_antimode or fallback_floor.",
-      "since_schema": 1
-    },
-    "superburst_merge_gap_s": {
-      "scope": "diagnostics",
-      "units": "s",
-      "definition": "Duplicate of nb_merge_gap_s, kept for call-site compatibility.",
-      "since_schema": 1
-    },
     "superburst_min_dur_s": {
       "scope": "diagnostics",
       "units": "s",
@@ -748,6 +714,45 @@
       "units": "s",
       "definition": "Superburst offsets; empty for the Gaussian detector.",
       "since_schema": 1
+    },
+    "fragment_merge_rule": {
+      "scope": "diagnostics",
+      "units": "string",
+      "definition": "How fragments were merged into network bursts: 'continuity' (default), 'gap' (proximity only, the comparison condition matching published detectors) or 'none'.",
+      "since_schema": 5
+    },
+    "fragment_max_gap_s": {
+      "scope": "diagnostics",
+      "units": "s",
+      "definition": "Optional safety cap on how far apart two fragments may be and still merge. None by default: the continuity rule needs no gap, because fragments end at a fraction of their own peak and the question is only whether the trough between them crossed the detection threshold.",
+      "since_schema": 5,
+      "caveat": "Earlier versions gated this tier on the 95th percentile of within-burst SPIKE intervals from single units, 2-16 ms, against sub-burst pauses of 80-500 ms. No two fragments were ever that close, so the tier merged nothing and n_fragments was 1 for every event."
+    },
+    "nb_ibi_bimodality": {
+      "scope": "diagnostics",
+      "units": "dimensionless",
+      "formula": "Sarle bimodality coefficient of log10(network burst onset-to-onset intervals)",
+      "definition": "Whether this well's network bursts are clustered in time. Above 0.555 means two interval populations, i.e. within-cluster and between-cluster, and superbursts exist.",
+      "literature": "Sarle 1990; superburst definition from Wagenaar et al. 2006",
+      "since_schema": 5,
+      "definition_biology": "A regularly bursting culture is unimodal and has no superburst structure; a culture that bursts in trains is bimodal."
+    },
+    "superburst_gap_s": {
+      "scope": "diagnostics",
+      "units": "s",
+      "formula": "10 ** otsu_threshold(log10(network burst IBIs)), when nb_ibi_bimodality > 0.555",
+      "definition": "Largest interval across which network bursts are grouped into a superburst, derived from the network bursts' own interval distribution. None when the distribution is unimodal, in which case no superbursts are reported.",
+      "literature": "Otsu 1979; Otsu thresholding of MEA activity per Verboven et al. 2025",
+      "since_schema": 5,
+      "renamed_from": "nb_merge_gap_s",
+      "caveat": "Earlier versions derived this from INTER-FRAGMENT intervals, i.e. tier-1 statistics setting a tier-2 threshold, and fell back to a hardcoded 0.75 s when no valley was found, which manufactured superbursts in regularly bursting cultures."
+    },
+    "superburst_gap_source": {
+      "scope": "diagnostics",
+      "units": "string",
+      "definition": "nb_ibi_otsu, nb_ibi_not_bimodal (no superbursts reported), too_few_network_bursts, or user_override.",
+      "since_schema": 5,
+      "renamed_from": "nb_merge_gap_source"
     }
   },
   "stats_fields": {

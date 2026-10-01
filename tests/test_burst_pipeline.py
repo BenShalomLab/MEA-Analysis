@@ -160,7 +160,11 @@ def test_detector_diagnostics_are_scalar_valued():
     diag = result.get("diagnostics", {})
     assert isinstance(diag, dict) and diag, "diagnostics is missing or empty"
     for k, v in diag.items():
-        assert isinstance(v, (int, float, str, bool)), (
+        # None is a legitimate value (JSON null): a threshold that was not
+        # derived because the data did not support it, e.g. a superburst gap in
+        # a culture whose network-burst intervals are unimodal. What must never
+        # appear is an array or other container, which breaks JSON export.
+        assert isinstance(v, (int, float, str, bool, type(None))), (
             f"diagnostics['{k}'] is not a scalar: {type(v)}"
         )
 

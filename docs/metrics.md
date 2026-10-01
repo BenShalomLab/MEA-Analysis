@@ -2,7 +2,7 @@
 
 # Metric dictionary
 
-Schema version **4**. `metrics.json` holds the same content in machine-readable form.
+Schema version **5**. `metrics.json` holds the same content in machine-readable form.
 
 Machine-readable dictionary for every key in network_results.json: units, formula, the published name and abbreviation, biological meaning and caveats. Rendered to docs/metrics.md by scripts/build_metrics_doc.py. tests/test_metrics_dictionary.py fails if a detector emits a key that is missing here.
 
@@ -134,11 +134,6 @@ What the detector adapted to. Six of these change per well, so they must be audi
 | `threshold_source` | string |  | baseline_mad, or pNN.N naming the percentile used instead. |  |  | 1 |  |
 | `min_coactive_fraction` | fraction of units |  | Raw single-bin co-activity a fragment had to reach to be kept. Renamed from `min_peak_synchrony_adaptive`. | `max(min_peak_synchrony, max(3, 0.10*n_units) / n_units)` |  | 1 |  |
 | `min_units_for_burst` | count |  | Absolute co-active unit floor behind min_coactive_fraction. | `max(3, int(0.10 * n_units))` |  | 1 |  |
-| `fragment_merge_gap_s` | s |  | Largest gap across which two fragments may join into one network burst. | `percentile(intra-burst ISIs of bursty units, 95), else 3 * reference_isi_s` | Bakkum et al. 2013 | 1 |  |
-| `fragment_merge_gap_source` | string |  | intra_burst_isi_p95 or fallback_3x_isi. |  |  | 1 |  |
-| `nb_merge_gap_s` | s |  | Largest gap across which network bursts may join into a superburst. | `antimode of log10(inter-fragment intervals), else max(network_merge_gap_min, 0.3)` | 0.3 s floor from Tsodyks & Markram 1997 PNAS (vesicle recovery) | 1 |  |
-| `nb_merge_gap_source` | string |  | inter_fragment_antimode or fallback_floor. |  |  | 1 |  |
-| `superburst_merge_gap_s` | s |  | Duplicate of nb_merge_gap_s, kept for call-site compatibility. |  |  | 1 |  |
 | `superburst_min_dur_s` | s |  | Minimum superburst duration, default 2.5 s. |  | Wagenaar et al. 2006 | 1 |  |
 | `superburst_min_components` | count |  | Minimum network bursts in a superburst, default 2. |  | Wagenaar et al. 2006 define a superburst as a cluster | 2 | Effectively 1 before schema 2, so every network burst longer than superburst_min_dur_s was also reported as a superburst. Superburst counts from schema 1 files are not comparable. |
 | `sigma_coactivity_bins` | bins |  | Gaussian smoothing width applied to the co-activity signal, 1-2 bins. Renamed from `sigma_participation_bins`. |  |  | 1 |  |
@@ -153,6 +148,11 @@ What the detector adapted to. Six of these change per well, so they must be audi
 | `min_peak_distance_s` *(gaussian only)* | s |  | Refractory distance between accepted peaks. |  |  | 1 |  |
 | `onset_offset_peak_frac` *(gaussian only)* | fraction of peak |  | Burst edges sit where the smoothed rate falls to this fraction of the peak. |  | MATLAB thresholdStartStop | 1 | Before schema 2 the code used peak*(1-frac) instead of peak*frac, making durations roughly three times too short. |
 | `edge_rule` *(gaussian only)* | string |  | fraction_of_peak. Records which edge convention produced the durations. |  |  | 2 |  |
+| `fragment_merge_rule` | string |  | How fragments were merged into network bursts: 'continuity' (default), 'gap' (proximity only, the comparison condition matching published detectors) or 'none'. |  |  | 5 |  |
+| `fragment_max_gap_s` | s |  | Optional safety cap on how far apart two fragments may be and still merge. None by default: the continuity rule needs no gap, because fragments end at a fraction of their own peak and the question is only whether the trough between them crossed the detection threshold. |  |  | 5 | Earlier versions gated this tier on the 95th percentile of within-burst SPIKE intervals from single units, 2-16 ms, against sub-burst pauses of 80-500 ms. No two fragments were ever that close, so the tier merged nothing and n_fragments was 1 for every event. |
+| `nb_ibi_bimodality` | dimensionless |  | Whether this well's network bursts are clustered in time. Above 0.555 means two interval populations, i.e. within-cluster and between-cluster, and superbursts exist. A regularly bursting culture is unimodal and has no superburst structure; a culture that bursts in trains is bimodal. | `Sarle bimodality coefficient of log10(network burst onset-to-onset intervals)` | Sarle 1990; superburst definition from Wagenaar et al. 2006 | 5 |  |
+| `superburst_gap_s` | s |  | Largest interval across which network bursts are grouped into a superburst, derived from the network bursts' own interval distribution. None when the distribution is unimodal, in which case no superbursts are reported. Renamed from `nb_merge_gap_s`. | `10 ** otsu_threshold(log10(network burst IBIs)), when nb_ibi_bimodality > 0.555` | Otsu 1979; Otsu thresholding of MEA activity per Verboven et al. 2025 | 5 | Earlier versions derived this from INTER-FRAGMENT intervals, i.e. tier-1 statistics setting a tier-2 threshold, and fell back to a hardcoded 0.75 s when no valley was found, which manufactured superbursts in regularly bursting cultures. |
+| `superburst_gap_source` | string |  | nb_ibi_otsu, nb_ibi_not_bimodal (no superbursts reported), too_few_network_bursts, or user_override. Renamed from `nb_merge_gap_source`. |  |  | 5 |  |
 
 ## Plotting payload (`plot_data`, saved as `network_plot_data.npz`)
 
@@ -213,4 +213,6 @@ Read `diagnostics.schema_version` before comparing files. Its absence means sche
 | `sigma_participation_bins` | `sigma_coactivity_bins` | 1 |
 | `participation_fraction_signal` | `coactive_fraction_signal` | 4 |
 | `nb_peak_participation_fraction` | `nb_peak_coactive_fraction` | 4 |
+| `nb_merge_gap_s` | `superburst_gap_s` | 5 |
+| `nb_merge_gap_source` | `superburst_gap_source` | 5 |
 

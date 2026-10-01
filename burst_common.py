@@ -47,9 +47,24 @@ import numpy as np
 #      (PRS). participation_fraction keeps its name: it is the published term
 #      for breadth of recruitment.
 #
+#   5  Merging restructured so each tier's criterion comes from its own
+#      level. Fragment -> network burst is now gated on continuity of the
+#      population co-activity alone, with no gap: the previous gap came from
+#      within-burst SPIKE intervals of single units (2-16 ms) while sub-burst
+#      pauses are 80-500 ms, so that tier merged nothing and n_fragments was
+#      always 1. Network burst -> superburst is now derived from the network
+#      bursts' OWN inter-burst intervals, split by Otsu's method and gated on
+#      their bimodality, rather than from inter-fragment intervals with a
+#      hardcoded 0.75 s fallback; a culture whose intervals are unimodal is
+#      reported as having no superbursts instead of manufactured ones.
+#      Diagnostics renamed accordingly: nb_merge_gap_s -> superburst_gap_s,
+#      nb_merge_gap_source -> superburst_gap_source; fragment_merge_gap_s and
+#      superburst_merge_gap_s removed; fragment_merge_rule,
+#      fragment_max_gap_s and nb_ibi_bimodality added.
+#
 # Units, formula and literature for every key are in metrics.json, rendered
 # to docs/metrics.md.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def stats(x):

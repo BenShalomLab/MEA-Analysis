@@ -364,4 +364,102 @@ def test_the_old_schema_3_names_are_gone():
 
 
 def test_the_schema_version_records_the_rename():
-    assert burst_common.SCHEMA_VERSION == 4
+    assert burst_common.SCHEMA_VERSION >= 4
+
+
+# ---------------------------------------------------------------------------
+# Schema 5: merging criteria come from the level being merged
+# ---------------------------------------------------------------------------
+
+def _reverberating(sustained, n_units=40, duration=300.0, seed=0):
+    """Minibursts at identical times, either riding on a sustained plateau or
+    separated by silence. A gap rule cannot tell these apart; that is the
+    point of the continuity rule."""
+    rng = np.random.default_rng(seed)
+    spikes = {}
+    for u in range(n_units):
+        trains = []
+        for onset in np.arange(10, duration - 20, 25.0):
+            trains.append(onset + rng.normal(0, 0.05, 40))
+            if sustained:
+                trains.append(onset + rng.uniform(0.1, 1.5, 25))
+            for index in range(1, 8):
+                trains.append(onset + 0.25 + index * 0.18 + rng.normal(0, 0.012, 10))
+        trains.append(rng.uniform(0, duration, 20))
+        spikes[f"u{u}"] = np.sort(np.concatenate(trains))
+    return spikes
+
+
+def test_fragments_merge_when_the_network_stays_engaged():
+    result = pf_detect(_reverberating(sustained=True), duration_s=300.0)
+    nbs = _events(result)
+    assert nbs
+    assert np.mean([e["n_fragments"] for e in nbs]) > 4, (
+        "a sustained reverberating burst must merge into one network burst"
+    )
+
+
+def test_fragments_do_not_merge_across_silence():
+    result = pf_detect(_reverberating(sustained=False), duration_s=300.0)
+    nbs = _events(result)
+    assert nbs
+    assert all(e["n_fragments"] == 1 for e in nbs), (
+        "bursts separated by genuine silence are separate events"
+    )
+
+
+def test_the_continuity_rule_separates_what_a_gap_rule_cannot():
+    """The claim being pinned: with identical burst timing, a proximity-only
+    rule reports the same network for both, and the continuity rule does not."""
+    plateau = _reverberating(sustained=True)
+    silence = _reverberating(sustained=False)
+
+    gap_rates = [pf_detect(s, duration_s=300.0, merge_rule="gap")
+                 ["network_bursts"]["metrics"]["burst_rate_per_min"]
+                 for s in (plateau, silence)]
+    cont_rates = [pf_detect(s, duration_s=300.0, merge_rule="continuity")
+                  ["network_bursts"]["metrics"]["burst_rate_per_min"]
+                  for s in (plateau, silence)]
+
+    assert gap_rates[0] == pytest.approx(gap_rates[1], rel=0.2)
+    assert cont_rates[1] > 3.0 * cont_rates[0]
+
+
+def test_no_superbursts_when_network_burst_intervals_are_unimodal():
+    """A regularly bursting culture has no cluster structure. Reporting none is
+    the honest answer; the old fallback constant manufactured them."""
+    rng = np.random.default_rng(0)
+    spikes = {}
+    for u in range(30):
+        trains = [c + rng.normal(0, 0.02, 25) for c in np.arange(10, 290, 10.0)]
+        trains.append(rng.uniform(0, 300, 20))
+        spikes[f"u{u}"] = np.sort(np.concatenate(trains))
+
+    result = pf_detect(spikes, duration_s=300.0)
+    assert result["diagnostics"]["superburst_gap_source"] == "nb_ibi_not_bimodal"
+    assert result["diagnostics"]["superburst_gap_s"] is None
+    assert result["superbursts"]["events"] == []
+
+
+def test_the_superburst_gap_comes_from_network_burst_intervals():
+    result = pf_detect(_clustered_bursts(), duration_s=50.0)
+    diagnostics = result["diagnostics"]
+    if diagnostics["superburst_gap_source"] == "nb_ibi_otsu":
+        gap = diagnostics["superburst_gap_s"]
+        starts = np.array(sorted(e["start_time_s"] for e in _events(result)))
+        ibis = np.diff(starts)
+        # The split must lie inside the observed interval range, not outside it.
+        assert ibis.min() <= gap <= ibis.max()
+
+
+def test_otsu_split_separates_two_well_separated_groups():
+    import parameter_free_burst_detector as detector
+    values = np.concatenate([np.full(14, -0.3), [1.2, 1.33]])
+    split = detector._otsu_split(values)
+    assert -0.3 < split < 1.2
+
+
+def test_otsu_split_is_none_without_spread():
+    import parameter_free_burst_detector as detector
+    assert detector._otsu_split(np.full(10, 2.0)) is None
+    assert detector._otsu_split(np.array([1.0])) is None

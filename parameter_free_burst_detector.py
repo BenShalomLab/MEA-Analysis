@@ -13,11 +13,54 @@ except ImportError:
         spike_participation, intraburst_isi_mean as _intraburst_isi_mean)
 
 
+# Minimum number of network burst intervals needed before testing their
+# distribution for the two modes that define superburst structure. Below this
+# the histogram is noise and the test would find spurious antimodes.
+MIN_IBIS_FOR_SUPERBURST_TEST = 8
+
+# Gap used by merge_rule="gap", the comparison condition that merges on
+# proximity alone. 2 s matches Parodi et al. 2026. Only reachable when the
+# caller asks for that rule; the default rule uses no gap at all.
+GAP_ONLY_DEFAULT_S = 2.0
+
+# Sarle's bimodality coefficient above this is taken as two modes (SAS
+# convention; also used for the per-unit log-ISI test above).
+BIMODALITY_THRESHOLD = 0.555
+
+
+def _otsu_split(values):
+    """Threshold maximising between-class variance of a 1-D sample (Otsu 1979).
+
+    Used to split the log network-burst intervals into "within a cluster" and
+    "between clusters". Preferred over finding a valley in a histogram, which
+    needs a bin count and a prominence in raw counts and so fails on skewed
+    samples: fourteen intervals at 0.5 s against two at 20 s is unmistakably
+    two groups, but leaves no histogram valley prominent enough to detect.
+
+    Returns None when there is no spread to split.
+    """
+    x = np.sort(np.asarray(values, dtype=float))
+    if x.size < 2 or x[0] == x[-1]:
+        return None
+    cumulative = np.cumsum(x)
+    total = cumulative[-1]
+    n = x.size
+    k = np.arange(1, n)
+    weight_low = k / n
+    mean_low = cumulative[:-1] / k
+    mean_high = (total - cumulative[:-1]) / (n - k)
+    between = weight_low * (1.0 - weight_low) * (mean_low - mean_high) ** 2
+    best = int(np.argmax(between))
+    return float((x[best] + x[best + 1]) / 2.0)
+
+
 def compute_network_bursts(
     SpikeTimes=None,
     duration_s=None,
     extent_frac=0.30,
-    network_merge_gap_min=0.75,
+    network_merge_gap_min=None,
+    fragment_max_gap_s=None,
+    merge_rule="continuity",
     threshold_mad_scale=0.75,
     min_fragment_participation=0.0,
     min_burst_density_Hz=0.0,
@@ -192,45 +235,6 @@ def compute_network_bursts(
 
     coactive_fraction_signal = gaussian_filter1d(coactive_fraction_raw, sigma_coactivity_bins)
     population_firing_rate_signal = gaussian_filter1d(rate_signal_raw, sigma_firing_rate_bins)
-
-    # ---------------------------------------------------------
-    # 3b. Adaptive merge gaps
-    #
-    # fragment_merge_gap_s: 95th percentile of intra-burst ISIs from bursty
-    #   units — empirical ceiling of within-burst pauses (Bakkum et al. 2013).
-    #   Population log-ISI antimode NOT used — at high firing rates the
-    #   distribution is unimodal and antimode finds sub-ms refractory
-    #   artifacts rather than the intra/inter-burst boundary.
-    #
-    # nb_merge_gap_s: anti-mode of inter-fragment interval distribution,
-    #   computed after fragment extraction (section 6b). Falls back to STD
-    #   recovery floor of 0.3s (Tsodyks & Markram 1997: 300-1500ms).
-    # ---------------------------------------------------------
-
-    intra_burst_isis = []
-    for u in units:
-        if not unit_stats[u].get("is_bursty_by_isi_statistics"):
-            continue
-        t = np.unique(np.sort(SpikeTimes[u]))
-        isi = np.diff(t)
-        isi = isi[isi > 0]
-        if len(isi) < 10:
-            continue
-        log_isi = np.log10(isi)
-        h, e = np.histogram(log_isi, bins=50)
-        c    = (e[:-1] + e[1:]) / 2
-        hs   = gaussian_filter1d(h.astype(float), sigma=2)
-        v, _ = find_peaks(-hs, prominence=1)
-        if len(v) > 0:
-            antimode_s = float(10 ** c[v[0]])
-            intra_burst_isis.extend(isi[isi < antimode_s].tolist())
-
-    if len(intra_burst_isis) > 20:
-        fragment_merge_gap_s      = float(np.percentile(intra_burst_isis, 95))
-        fragment_merge_gap_source = "intra_burst_isi_p95"
-    else:
-        fragment_merge_gap_s      = 3 * reference_isi_s
-        fragment_merge_gap_source = "fallback_3x_isi"
 
     # ---------------------------------------------------------
     # 4. Detection thresholds
@@ -409,39 +413,6 @@ def compute_network_bursts(
         })
 
     # ---------------------------------------------------------
-    # 6b. nb_merge_gap_s — derived from inter-fragment interval distribution
-    #
-    # Anti-mode of log(inter-fragment intervals) separates short within-
-    # superburst gaps (~1s, driven by STD/facilitation cycling) from long
-    # true IBIs (tens of seconds, driven by Nap current recharge and AHP).
-    # Floor of 0.3s = low end of cortical vesicle recovery range
-    # (Tsodyks & Markram 1997). network_merge_gap_min preserved as
-    # user-overridable floor for call-site compatibility.
-    # ---------------------------------------------------------
-    if len(burst_fragments) > 3:
-        _frag_starts = np.array(sorted(f["start_time_s"] for f in burst_fragments))
-        _ifis        = np.diff(_frag_starts)
-        _ifis        = _ifis[_ifis > 0]
-        if len(_ifis) > 5:
-            _log_ifis         = np.log10(_ifis)
-            _hist_i, _edges_i = np.histogram(_log_ifis, bins=min(50, len(_log_ifis) // 2))
-            _centers_i        = (_edges_i[:-1] + _edges_i[1:]) / 2
-            _smooth_i         = gaussian_filter1d(_hist_i.astype(float), sigma=2)
-            _valleys_i, _     = find_peaks(-_smooth_i, prominence=2)
-            if len(_valleys_i) > 0:
-                nb_merge_gap_s      = float(10 ** _centers_i[_valleys_i[0]])
-                nb_merge_gap_source = "inter_fragment_antimode"
-            else:
-                nb_merge_gap_s      = max(network_merge_gap_min, 0.3)
-                nb_merge_gap_source = "fallback_floor"
-        else:
-            nb_merge_gap_s      = max(network_merge_gap_min, 0.3)
-            nb_merge_gap_source = "fallback_floor"
-    else:
-        nb_merge_gap_s      = max(network_merge_gap_min, 0.3)
-        nb_merge_gap_source = "fallback_floor"
-
-    # ---------------------------------------------------------
     # 7. Merge logic
     # ---------------------------------------------------------
     def finalize(evs, s, e):
@@ -504,11 +475,27 @@ def compute_network_bursts(
             return None
         return float(np.min(valley_vals))
 
-    def merge_strict(events, gap, floor_val, min_dur=0):
-        """
-        Fragment -> network burst merge.
-        Valley floor gates merging: valley must stay above floor_val,
-        meaning activity never fully ceased between fragments.
+    def merge_by_continuity(events, floor_val, max_gap_s=None, min_dur=0,
+                            merge_rule="continuity"):
+        """Fragment -> network burst merge, on continuity of network activity.
+
+        Two fragments belong to one network burst when the network never fell
+        quiet between them. Fragments end where the co-activity signal drops to
+        `extent_frac` of their own peak, which is above `floor_val`, so a dip
+        that stays above the detection threshold is a within-burst trough and a
+        dip that crosses it is a real silence.
+
+        There is deliberately no gap parameter. The criterion is a property of
+        the population signal at the level being merged. Earlier versions
+        gated on the 95th percentile of within-burst *spike* intervals from
+        individual units, which is one to two orders of magnitude shorter than
+        the pause between sub-bursts (milliseconds against tens to hundreds of
+        milliseconds), so no two fragments were ever close enough to merge and
+        this tier did nothing.
+
+        `max_gap_s` is an optional safety cap for the pathological case of a
+        well whose baseline sits above the detection threshold for minutes; it
+        is None by default and is recorded in the diagnostics when used.
         """
         if not events:
             return []
@@ -526,13 +513,25 @@ def compute_network_bursts(
             valley_min      = get_valley_min(curr[-1], nxt, coactive_fraction_signal, t_centers)
 
             if valley_min is None:
-                valley_ok = (valley_duration <= bin_size)
+                # Fragments touching to within one bin: no trough to measure.
+                continuous = (valley_duration <= bin_size)
             else:
-                valley_ok = (valley_min >= floor_val)
+                continuous = (valley_min >= floor_val)
 
-            merge_condition = (valley_duration <= gap) and valley_ok
+            within_cap = (max_gap_s is None) or (valley_duration <= max_gap_s)
 
-            if merge_condition:
+            if merge_rule == "none":
+                should_merge = False
+            elif merge_rule == "gap":
+                # Comparison condition: proximity alone, ignoring whether the
+                # network fell silent. This is what the published detectors do
+                # (Parodi et al. 2026, 2 s; Xue et al. 2022, 75 ms).
+                should_merge = within_cap and valley_duration <= (
+                    max_gap_s if max_gap_s is not None else GAP_ONLY_DEFAULT_S)
+            else:
+                should_merge = continuous and within_cap
+
+            if should_merge:
                 curr.append(nxt)
                 e = max(e, nxt["end_time_s"])
             else:
@@ -601,18 +600,70 @@ def compute_network_bursts(
             and m["n_components"] >= min_components
         ]
 
-    network_bursts = merge_strict(
+    network_bursts = merge_by_continuity(
         burst_fragments,
-        fragment_merge_gap_s,
-        detection_threshold
+        floor_val=detection_threshold,
+        max_gap_s=fragment_max_gap_s,
+        merge_rule=merge_rule,
     )
 
-    superbursts = merge_superbursts(
-        network_bursts,
-        gap=nb_merge_gap_s,
-        min_dur=min_superburst_dur_s,
-        min_components=min_superburst_components,
-    )
+    # ---------------------------------------------------------
+    # 7b. Superburst gap, from the network bursts' own interval distribution
+    #
+    # A superburst is a cluster of network bursts, so the timescale that
+    # separates "within a cluster" from "between clusters" lives in the
+    # network burst inter-burst intervals — not in the inter-fragment
+    # intervals of the tier below, which is what earlier versions used.
+    #
+    # If that distribution has two modes, the antimode between them is the
+    # grouping timescale and the data has told us there is cluster structure.
+    # If it has one mode, the network bursts are not clustered and there are
+    # no superbursts to find; reporting none is the honest answer, and better
+    # than a constant fallback that manufactures superbursts in a regularly
+    # bursting culture.
+    # ---------------------------------------------------------
+    nb_starts = np.array(sorted(b["start_time_s"] for b in network_bursts))
+    nb_ibis = np.diff(nb_starts) if nb_starts.size > 1 else np.asarray([])
+    nb_ibis = nb_ibis[nb_ibis > 0]
+
+    nb_ibi_bimodality = None
+    superburst_gap_s = None
+    superburst_gap_source = "too_few_network_bursts"
+
+    if nb_ibis.size >= MIN_IBIS_FOR_SUPERBURST_TEST:
+        log_ibis = np.log10(nb_ibis)
+        n_ibi = log_ibis.size
+        if n_ibi >= 4:
+            _g1 = skew(log_ibis)
+            _g2 = sp_kurtosis(log_ibis, fisher=True)
+            nb_ibi_bimodality = float(
+                (_g1**2 + 1) / (_g2 + 3 * ((n_ibi - 1)**2 / ((n_ibi - 2) * (n_ibi - 3))))
+            )
+
+        split = _otsu_split(log_ibis)
+
+        if (nb_ibi_bimodality is not None
+                and nb_ibi_bimodality > BIMODALITY_THRESHOLD
+                and split is not None):
+            superburst_gap_s = float(10 ** split)
+            superburst_gap_source = "nb_ibi_otsu"
+        else:
+            superburst_gap_source = "nb_ibi_not_bimodal"
+
+    # A user-supplied gap overrides the test, for call-site compatibility.
+    if network_merge_gap_min is not None and superburst_gap_s is None:
+        superburst_gap_s = float(network_merge_gap_min)
+        superburst_gap_source = "user_override"
+
+    if superburst_gap_s is None:
+        superbursts = []
+    else:
+        superbursts = merge_superbursts(
+            network_bursts,
+            gap=superburst_gap_s,
+            min_dur=min_superburst_dur_s,
+            min_components=min_superburst_components,
+        )
 
     # ---------------------------------------------------------
     # 8. Metrics
@@ -659,15 +710,18 @@ def compute_network_bursts(
             "burst_detection_valid":        True,
             "threshold_source":             threshold_source,
             "detection_threshold":          detection_threshold,
-            "min_coactive_fraction":  min_coactive_fraction,
+            "min_coactive_fraction":        min_coactive_fraction,
             "min_units_for_burst":          min_units_for_burst,
-            "fragment_merge_gap_s":         fragment_merge_gap_s,
-            "fragment_merge_gap_source":    fragment_merge_gap_source,
-            "nb_merge_gap_s":               nb_merge_gap_s,
-            "nb_merge_gap_source":          nb_merge_gap_source,
+            # Fragment -> network burst: continuity of the population signal,
+            # no gap threshold. The cap is None unless a caller sets one.
+            "fragment_merge_rule":          merge_rule,
+            "fragment_max_gap_s":           fragment_max_gap_s,
+            # Network burst -> superburst: from the network bursts' own IBIs.
+            "nb_ibi_bimodality":            nb_ibi_bimodality,
+            "superburst_gap_s":             superburst_gap_s,
+            "superburst_gap_source":        superburst_gap_source,
             "superburst_min_dur_s":         min_superburst_dur_s,
             "superburst_min_components":    min_superburst_components,
-            "superburst_merge_gap_s":       nb_merge_gap_s,
             "n_units":                      n_units,
             "n_bursty_units_by_isi_statistics":               sum(1 for s in unit_stats.values() if s.get("is_bursty_by_isi_statistics")),
             "sigma_coactivity_bins":     sigma_coactivity_bins,
