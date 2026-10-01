@@ -77,8 +77,8 @@ def test_peak_firing_rate_is_per_unit_not_an_array_wide_sum():
     assert events
 
     for event in events:
-        per_unit = event["peak_population_firing_rate_hz"]
-        total = event["peak_population_firing_rate_total_hz"]
+        per_unit = event["burst_peak_hz_per_unit"]
+        total = event["burst_peak_hz_array"]
         assert per_unit < total
         # The per-unit signal is smoothed and the total is not, so the ratio is
         # not exactly n_units, but it must be the right order of magnitude.
@@ -90,8 +90,8 @@ def test_both_detectors_report_the_peak_rate_in_the_same_units():
     key, so any table pooling wells from both was meaningless."""
     spikes = _bursting_network(n_units=12)
 
-    pf_peaks = [e["peak_population_firing_rate_hz"] for e in _events(pf_detect(spikes, duration_s=50.0))]
-    gauss_peaks = [e["peak_population_firing_rate_hz"]
+    pf_peaks = [e["burst_peak_hz_per_unit"] for e in _events(pf_detect(spikes, duration_s=50.0))]
+    gauss_peaks = [e["burst_peak_hz_per_unit"]
                    for e in _events(gauss_detect(spikes, duration_s=50.0))]
     assert pf_peaks and gauss_peaks
 
@@ -104,7 +104,7 @@ def test_both_detectors_report_the_peak_rate_in_the_same_units():
 def test_the_array_wide_total_is_still_available():
     for detect in (pf_detect, gauss_detect):
         events = _events(detect(_bursting_network(), duration_s=50.0))
-        assert all("peak_population_firing_rate_total_hz" in e for e in events)
+        assert all("burst_peak_hz_array" in e for e in events)
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ def test_spikes_per_burst_is_reported_per_unit_as_well_as_raw():
     n_units = result["diagnostics"]["n_units"]
     for event in _events(result):
         assert event["spikes_per_burst_per_unit"] == pytest.approx(
-            event["spike_count"] / n_units
+            event["spikes_per_burst"] / n_units
         )
 
 
@@ -126,8 +126,8 @@ def test_the_raw_count_scales_with_yield_and_the_normalised_one_does_not():
     small = pf_detect(_bursting_network(n_units=10, seed=0), duration_s=50.0)
     large = pf_detect(_bursting_network(n_units=30, seed=0), duration_s=50.0)
 
-    small_raw = np.mean([e["spike_count"] for e in _events(small)])
-    large_raw = np.mean([e["spike_count"] for e in _events(large)])
+    small_raw = np.mean([e["spikes_per_burst"] for e in _events(small)])
+    large_raw = np.mean([e["spikes_per_burst"] for e in _events(large)])
     small_norm = np.mean([e["spikes_per_burst_per_unit"] for e in _events(small)])
     large_norm = np.mean([e["spikes_per_burst_per_unit"] for e in _events(large)])
 
@@ -139,7 +139,7 @@ def test_burst_density_is_reported_rather_than_discarded():
     """Spikes per participating unit per second inside the burst: computed to
     gate detection, then thrown away before the fix."""
     for event in _events(pf_detect(_bursting_network(), duration_s=50.0)):
-        assert event["burst_density_hz"] > 0.0
+        assert event["intraburst_rate_hz"] > 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ def test_burst_density_is_reported_rather_than_discarded():
 
 def test_merged_spike_count_covers_the_whole_burst_window():
     """Summing components skipped the gaps between them while
-    burst_duration_s spanned them, so spike_count / burst_duration_s was not
+    burst_duration_s spanned them, so spikes_per_burst / burst_duration_s was not
     the burst's firing rate."""
     spikes = _twin_peak_bursts()
     result = pf_detect(spikes, duration_s=50.0)
@@ -162,7 +162,7 @@ def test_merged_spike_count_covers_the_whole_burst_window():
             (all_spikes >= event["start_time_s"]) & (all_spikes <= event["end_time_s"])
         )
         # Binned counts against exact spike times: within one bin's worth.
-        assert event["spike_count"] == pytest.approx(inside, rel=0.05, abs=10)
+        assert event["spikes_per_burst"] == pytest.approx(inside, rel=0.05, abs=10)
 
 
 def test_superburst_totals_are_not_below_their_components():
@@ -172,8 +172,8 @@ def test_superburst_totals_are_not_below_their_components():
         pytest.skip("no superburst in this synthetic well")
 
     for event in superbursts:
-        assert event["burst_area"] > 0
-        assert event["spike_count"] > 0
+        assert event["burst_area_spikes_per_unit"] > 0
+        assert event["spikes_per_burst"] > 0
         assert event["burst_duration_s"] >= 2.5
 
 
@@ -198,18 +198,18 @@ def test_peak_synchrony_is_available_under_an_accurate_name():
     fraction. The old key is kept so existing tables keep working."""
     for detect in (pf_detect, gauss_detect):
         for event in _events(detect(_bursting_network(), duration_s=50.0)):
-            assert event["peak_synchrony"] == event["peak_participation_fraction"]
-            assert event["peak_synchrony"] != event["participation_fraction"] or \
-                event["participation_fraction"] == pytest.approx(event["peak_synchrony"])
+            assert event["coactive_fraction_peak"] == event["coactive_fraction_peak"]
+            assert event["coactive_fraction_peak"] != event["participation_fraction"] or \
+                event["participation_fraction"] == pytest.approx(event["coactive_fraction_peak"])
 
 
-def test_peak_bin_synchrony_survives_merging():
+def test_coactive_fraction_max_survives_merging():
     """It existed only on fragments before, so the network burst and
     superburst summaries lost the one un-smoothed synchrony measure."""
     result = pf_detect(_clustered_bursts(), duration_s=50.0)
     for tier in ("burst_fragments", "network_bursts", "superbursts"):
         for event in _events(result, tier):
-            assert 0.0 <= event["peak_bin_synchrony"] <= 1.0
+            assert 0.0 <= event["coactive_fraction_max"] <= 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -218,11 +218,11 @@ def test_peak_bin_synchrony_survives_merging():
 
 @pytest.mark.parametrize("key", [
     "spikes_per_burst_per_unit",
-    "burst_density_hz",
-    "peak_population_firing_rate_hz",
-    "peak_population_firing_rate_total_hz",
-    "peak_synchrony",
-    "peak_bin_synchrony",
+    "intraburst_rate_hz",
+    "burst_peak_hz_per_unit",
+    "burst_peak_hz_array",
+    "coactive_fraction_peak",
+    "coactive_fraction_max",
 ])
 def test_level_metrics_summarises_every_intensity_field(key):
     metrics = pf_detect(_bursting_network(), duration_s=50.0)["network_bursts"]["metrics"]
@@ -243,3 +243,125 @@ def test_every_detector_stamps_the_schema_version():
 def test_schema_version_is_an_integer_that_can_be_compared():
     assert isinstance(burst_common.SCHEMA_VERSION, int)
     assert burst_common.SCHEMA_VERSION >= 3
+
+
+# ---------------------------------------------------------------------------
+# Schema 4: the published metric set
+# ---------------------------------------------------------------------------
+
+def test_rise_and_decay_split_the_burst_at_its_peak():
+    """RT and DT of Mossink et al. 2021. Together they must reconstruct the
+    duration, or one of the three is measured against a different window."""
+    for detect in (pf_detect, gauss_detect):
+        for event in _events(detect(_bursting_network(), duration_s=50.0)):
+            assert event["rise_time_s"] >= 0.0
+            assert event["decay_time_s"] >= 0.0
+            assert event["rise_time_s"] + event["decay_time_s"] == pytest.approx(
+                event["burst_duration_s"], abs=1e-9
+            )
+
+
+def test_an_asymmetric_burst_has_unequal_rise_and_decay():
+    """A symmetric synthetic burst would pass the identity above while the
+    two were silently swapped."""
+    rng = np.random.default_rng(11)
+    spikes = {}
+    for u in range(15):
+        trains = []
+        for center in (10.0, 20.0, 30.0, 40.0):
+            # Sharp recruitment, slow tail.
+            trains.append(center + np.abs(rng.normal(0, 0.01, 10)) * -1)
+            trains.append(center + np.abs(rng.normal(0, 0.25, 40)))
+        spikes[f"u{u}"] = np.sort(np.concatenate(trains))
+
+    events = _events(pf_detect(spikes, duration_s=50.0))
+    assert events
+    decays = np.mean([e["decay_time_s"] for e in events])
+    rises = np.mean([e["rise_time_s"] for e in events])
+    assert decays > rises
+
+
+def test_intraburst_isi_is_shorter_than_the_interval_between_bursts():
+    """bISI must describe the inside of the burst, not the whole train."""
+    result = pf_detect(_bursting_network(), duration_s=50.0)
+    metrics = result["network_bursts"]["metrics"]
+    assert metrics["intraburst_isi_mean_s"]["mean"] < metrics["ibi_s"]["mean"]
+
+
+def test_intraburst_isi_is_null_for_a_burst_with_one_spike():
+    assert burst_common.intraburst_isi_mean(np.array([1.0]), 0.0, 2.0) is None
+    assert burst_common.intraburst_isi_mean(np.array([1.0, 1.5]), 0.0, 2.0) == pytest.approx(0.5)
+
+
+def test_burst_rate_is_reported_in_both_hz_and_per_minute():
+    """Well quality gates in the literature are quoted per minute; a Hz value
+    compared against one of those thresholds is wrong by 60x."""
+    metrics = pf_detect(_bursting_network(), duration_s=50.0)["network_bursts"]["metrics"]
+    assert metrics["burst_rate_per_min"] == pytest.approx(metrics["burst_rate_hz"] * 60.0)
+
+
+def test_an_empty_tier_still_reports_both_rate_units():
+    empty = burst_common.level_metrics([], 100.0)
+    assert empty["burst_rate_hz"] == 0.0
+    assert empty["burst_rate_per_min"] == 0.0
+
+
+def test_duty_cycle_is_the_fraction_of_time_spent_bursting():
+    metrics = pf_detect(_bursting_network(), duration_s=50.0)["network_bursts"]["metrics"]
+    assert 0.0 < metrics["duty_cycle"] < 1.0
+
+
+def test_duty_cycle_is_omitted_when_there_is_no_gap_to_measure():
+    one_event = [{"start_time_s": 1.0, "end_time_s": 2.0, "burst_duration_s": 1.0}]
+    assert "duty_cycle" not in burst_common.level_metrics(one_event, 100.0)
+
+
+def test_percent_random_spikes_complements_the_fraction_inside_bursts():
+    """PRS (Mossink et al. 2021): a culture can hold its burst rate while its
+    neurons drift out of the bursts, and only this ratio shows it."""
+    for detect in (pf_detect, gauss_detect):
+        block = detect(_bursting_network(), duration_s=50.0)["spike_participation"]
+        assert block["percent_random_spikes"] == pytest.approx(
+            100.0 * (1.0 - block["fraction_spikes_in_network_bursts"])
+        )
+        assert block["n_spikes_in_network_bursts"] <= block["n_spikes_total"]
+
+
+def test_a_well_with_no_bursts_reports_every_spike_as_random():
+    rng = np.random.default_rng(1)
+    poisson = {f"u{u}": np.sort(rng.uniform(0, 50, 50)) for u in range(12)}
+    block = pf_detect(poisson, duration_s=50.0)["spike_participation"]
+    if block["n_spikes_in_network_bursts"] == 0:
+        assert block["percent_random_spikes"] == 100.0
+
+
+def test_both_detectors_emit_the_same_network_burst_schema():
+    """The two detectors drifted apart once already. Any key present in one
+    and not the other is how that happens again."""
+    spikes = _bursting_network()
+    pf_keys = set(_events(pf_detect(spikes, duration_s=50.0))[0])
+    gauss_keys = set(_events(gauss_detect(spikes, duration_s=50.0))[0])
+    # The adaptive detector merges, so only it carries the hierarchy fields.
+    assert pf_keys - gauss_keys == {"n_components", "n_fragments"}
+    assert gauss_keys - pf_keys == set()
+
+
+def test_the_old_schema_3_names_are_gone():
+    """A stale name left behind would be silently read as the new quantity."""
+    retired = {
+        "peak_participation_fraction", "peak_bin_synchrony", "peak_synchrony",
+        "peak_population_firing_rate_hz", "peak_population_firing_rate_total_hz",
+        "spike_count", "burst_area", "burst_density_hz", "component_count",
+    }
+    result = pf_detect(_clustered_bursts(), duration_s=50.0)
+    for tier in ("burst_fragments", "network_bursts", "superbursts"):
+        for event in _events(result, tier):
+            assert retired.isdisjoint(event)
+        assert retired.isdisjoint(result[tier]["metrics"])
+    assert retired.isdisjoint(result["diagnostics"])
+    for stats in result["unit_stats"].values():
+        assert {"cv_isi", "bimodality_coefficient", "is_bursty"}.isdisjoint(stats)
+
+
+def test_the_schema_version_records_the_rename():
+    assert burst_common.SCHEMA_VERSION == 4

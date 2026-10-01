@@ -6,15 +6,15 @@ Uses the canonical schema produced by parameter_free_burst_detector.py:
   - metrics keys: burst_count, burst_rate_hz, burst_duration_s,
                   burst_duration_p95_s / _max_s,
                   ifbi_s / ibi_s / isbi_s and their _gap_s counterparts,
-                  burst_area, participation_fraction, spike_count_per_burst,
-                  spikes_per_burst_per_unit, burst_density_hz,
-                  peak_population_firing_rate_hz (per unit),
-                  peak_population_firing_rate_total_hz (array-wide),
-                  peak_synchrony, peak_bin_synchrony,
-                  peak_participation_fraction (alias of peak_synchrony)
-  - diagnostics keys: bin_size_ms, reference_isi_s, participation_baseline,
+                  burst_area_spikes_per_unit, participation_fraction, spikes_per_burst,
+                  spikes_per_burst_per_unit, intraburst_rate_hz,
+                  burst_peak_hz_per_unit (per unit),
+                  burst_peak_hz_array (array-wide),
+                  coactive_fraction_peak, coactive_fraction_max,
+                  coactive_fraction_peak (alias of coactive_fraction_peak)
+  - diagnostics keys: bin_size_ms, reference_isi_s, coactive_fraction_baseline,
                       detection_threshold, fragment_merge_gap_s, nb_merge_gap_s,
-                      participation_bc, threshold_source, min_units_for_burst, …
+                      coactive_fraction_bimodality, threshold_source, min_units_for_burst, …
   - n_units at top level
 
 Usage
@@ -49,30 +49,34 @@ _SECTIONS = {
 
 # Diagnostics to extract (flat scalars / strings)
 _DIAG_KEYS = [
-    "n_units", "n_bursty_units",
+    "n_units", "n_bursty_units_by_isi_statistics",
     "bin_size_ms",
     "reference_isi_s", "reference_isi_source",
-    "participation_baseline", "participation_mad", "participation_bc",
+    "coactive_fraction_baseline", "coactive_fraction_mad", "coactive_fraction_bimodality",
     "burst_detection_valid",
     "detection_threshold", "threshold_source",
-    "min_peak_synchrony_adaptive", "min_units_for_burst",
+    "min_coactive_fraction", "min_units_for_burst",
     "fragment_merge_gap_s", "fragment_merge_gap_source",
     "nb_merge_gap_s", "nb_merge_gap_source",
-    "superburst_min_dur_s", "superburst_merge_gap_s",
-    "sigma_participation_bins", "sigma_firing_rate_bins",
+    "superburst_min_dur_s", "superburst_min_components", "superburst_merge_gap_s",
+    "duration_source", "recording_duration_s", "analysis_window_s",
+    "sigma_coactivity_bins", "sigma_firing_rate_bins",
 ]
 
 # Event fields for which to compute percentile distributions
 _EVT_DISTRIBUTION_FIELDS = {
     "burst_duration_s",
     "participation_fraction",
-    "spike_count",
+    "spikes_per_burst",
     "spikes_per_burst_per_unit",
-    "burst_density_hz",
-    "peak_population_firing_rate_hz",
-    "peak_synchrony",
-    "peak_bin_synchrony",
-    "burst_area",
+    "intraburst_rate_hz",
+    "burst_peak_hz_per_unit",
+    "coactive_fraction_peak",
+    "coactive_fraction_max",
+    "burst_area_spikes_per_unit",
+    "rise_time_s",
+    "decay_time_s",
+    "intraburst_isi_mean_s",
 }
 
 
@@ -156,6 +160,18 @@ _JSON_ID_KEYS = {
 }
 
 
+def _flatten_spike_participation(block: dict | None) -> dict:
+    """Share of spiking inside network bursts -> sp_* columns.
+
+    sp_percent_random_spikes is PRS in Mossink et al. 2021: a culture can
+    hold its burst rate while its neurons drift out of the bursts, and only
+    this ratio shows that.
+    """
+    if not isinstance(block, dict):
+        return {}
+    return {f"sp_{key}": value for key, value in block.items()}
+
+
 # ── Core extraction ───────────────────────────────────────────────────────────
 
 def extract_row(json_path: Path) -> dict:
@@ -175,6 +191,8 @@ def extract_row(json_path: Path) -> dict:
         value = raw.get(json_key)
         if value not in (None, ""):
             row[column] = value
+
+    row.update(_flatten_spike_participation(raw.get("spike_participation")))
 
     row["n_units"] = raw.get("n_units")
     row["schema_version"] = ((raw.get("diagnostics") or {}).get("schema_version"))

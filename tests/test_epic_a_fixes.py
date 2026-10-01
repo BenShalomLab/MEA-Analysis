@@ -227,7 +227,7 @@ def test_detected_burst_spans_the_width_at_the_edge_level():
     rate = np.asarray(result["plot_data"]["population_firing_rate_hz"])
     event = result["network_bursts"]["events"][0]
 
-    peak_value = event["peak_population_firing_rate_hz"]
+    peak_value = event["burst_peak_hz_per_unit"]
     inside = (time_s >= event["start_time_s"]) & (time_s <= event["end_time_s"])
     # Everything strictly inside the burst is above the edge level, i.e. the
     # burst extends down to 30% of its peak rather than stopping at 70%.

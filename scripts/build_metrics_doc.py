@@ -25,6 +25,8 @@ SCOPES = [
      "One entry per sorted unit, computed from its own inter-spike intervals."),
     ("event", "Per-burst fields (`<tier>.events[]`)",
      "One entry per detected event, at all three tiers unless noted."),
+    ("spike_participation", "Spike participation (`spike_participation`)",
+     "How much of the well's spiking is organised into network bursts."),
     ("tier_metrics", "Per-tier summaries (`<tier>.metrics`)",
      "Aggregated across the events of one tier. Fields not listed here are the "
      "per-event field of the same name, summarised as `{mean, std, cv}`."),
@@ -52,6 +54,13 @@ def render(data: dict) -> str:
     out.append("")
     out.append(data["description"])
     out.append("")
+    out.append("## Published vocabularies")
+    out.append("")
+    out.append("Abbreviations in the **Published name** column come from these sources.")
+    out.append("")
+    for source, terms in data.get("vocabularies", {}).items():
+        out.append(f"- **{source}** — {terms}")
+    out.append("")
 
     out.append("## Population signals")
     out.append("")
@@ -73,19 +82,25 @@ def render(data: dict) -> str:
         out.append("")
         out.append(blurb)
         out.append("")
-        out.append("| Key | Units | Definition | Formula | Literature | Since | Caveat |")
-        out.append("|---|---|---|---|---|---|---|")
+        out.append("| Key | Units | Published name | Definition | Formula | Reference | Since | Caveat |")
+        out.append("|---|---|---|---|---|---|---|---|")
         for key, entry in entries.items():
             detector = entry.get("detector")
             name = f"`{key}`" + (f" *({detector} only)*" if detector else "")
             definition = _cell(entry.get("definition"))
-            if entry.get("alias_of"):
-                definition = f"Alias of `{entry['alias_of']}`. " + definition
+            if entry.get("definition_biology"):
+                definition += " " + _cell(entry["definition_biology"])
+            if entry.get("renamed_from"):
+                definition += f" Renamed from `{entry['renamed_from']}`."
+            published = entry.get("literature_name") or ""
+            if entry.get("abbreviation"):
+                published = f"**{entry['abbreviation']}** — {published}" if published else f"**{entry['abbreviation']}**"
             formula = entry.get("formula") or entry.get("same_as_event_field") or entry.get("same_as")
             formula = f"`{formula}`" if formula else ""
-            out.append("| {} | {} | {} | {} | {} | {} | {} |".format(
+            out.append("| {} | {} | {} | {} | {} | {} | {} | {} |".format(
                 name,
                 _cell(entry.get("units")),
+                _cell(published),
                 definition,
                 _cell(formula),
                 _cell(entry.get("literature")),
@@ -115,6 +130,14 @@ def render(data: dict) -> str:
     for key, entry in keys.items():
         if entry.get("changed_in_schema"):
             out.append(f"| `{key}` | {entry['changed_in_schema']} | {_cell(entry.get('caveat'))} |")
+    out.append("")
+    out.append("## Keys renamed")
+    out.append("")
+    out.append("| Was | Is now | Schema |")
+    out.append("|---|---|---|")
+    for key, entry in keys.items():
+        if entry.get("renamed_from"):
+            out.append(f"| `{entry['renamed_from']}` | `{key}` | {entry.get('since_schema', '')} |")
     out.append("")
 
     return "\n".join(out) + "\n"

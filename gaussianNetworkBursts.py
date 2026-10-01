@@ -46,9 +46,12 @@ import numpy as np
 from scipy.signal import find_peaks, convolve
 
 try:
-    from burst_common import level_metrics, SCHEMA_VERSION
+    from burst_common import (level_metrics, SCHEMA_VERSION, spike_participation,
+                              intraburst_isi_mean as _intraburst_isi_mean)
 except ImportError:
-    from MEA_Analysis.IPNAnalysis.burst_common import level_metrics, SCHEMA_VERSION
+    from MEA_Analysis.IPNAnalysis.burst_common import (
+        level_metrics, SCHEMA_VERSION, spike_participation,
+        intraburst_isi_mean as _intraburst_isi_mean)
 
 
 def compute_network_bursts(
@@ -189,7 +192,7 @@ def compute_network_bursts(
             continue
         counts, _ = np.histogram(spk, bins=bins)
         active_unit_counts += counts > 0
-    participation_fraction_signal = active_unit_counts / max(1, n_units)
+    coactive_fraction_signal = active_unit_counts / max(1, n_units)
 
     # ---------------------------------------------------------
     # 3. Peak detection (on smoothed rate): height gate + prominence +
@@ -243,30 +246,35 @@ def compute_network_bursts(
                 continue
 
             in_burst = (all_spike_times >= start_time_s) & (all_spike_times <= end_time_s)
-            spike_count = int(np.sum(in_burst))
-            participating_units = len(np.unique(all_spike_units[in_burst])) if spike_count else 0
+            spikes_per_burst = int(np.sum(in_burst))
+            participating_units = len(np.unique(all_spike_units[in_burst])) if spikes_per_burst else 0
             participation_fraction = participating_units / n_units if n_units else 0.0
 
             denom = burst_duration_s * max(1, participating_units)
+            peak_time_s = float(t_centers[peak_idx])
             network_bursts.append({
                 "start_time_s": start_time_s,
                 "end_time_s": end_time_s,
                 "burst_duration_s": burst_duration_s,
-                "peak_time_s": float(t_centers[peak_idx]),
+                "peak_time_s": peak_time_s,
+                # RT and DT of Mossink et al. 2021.
+                "rise_time_s": max(0.0, peak_time_s - start_time_s),
+                "decay_time_s": max(0.0, end_time_s - peak_time_s),
                 # Per unit, as in the sibling detector: the signal this peak is
                 # read from is already divided by n_units.
-                "peak_population_firing_rate_hz": float(peak_val),
+                "burst_peak_hz_per_unit": float(peak_val),
                 # Array-wide equivalent, recovered by undoing that division.
                 # Kept so the key exists at the same meaning in both detectors.
-                "peak_population_firing_rate_total_hz": float(peak_val * max(1, n_units)),
-                "burst_area": float(np.sum(smoothed_rate_hz[i:j + 1]) * bin_size_s),
-                "spike_count": spike_count,
-                "spikes_per_burst_per_unit": float(spike_count / max(1, n_units)),
-                "burst_density_hz": float(spike_count / denom) if denom > 0 else 0.0,
+                "burst_peak_hz_array": float(peak_val * max(1, n_units)),
+                "burst_area_spikes_per_unit": float(np.sum(smoothed_rate_hz[i:j + 1]) * bin_size_s),
+                "spikes_per_burst": spikes_per_burst,
+                "spikes_per_burst_per_unit": float(spikes_per_burst / max(1, n_units)),
+                "intraburst_rate_hz": float(spikes_per_burst / denom) if denom > 0 else 0.0,
                 "participation_fraction": float(participation_fraction),
-                "peak_synchrony": float(participation_fraction_signal[peak_idx]),
-                "peak_participation_fraction": float(participation_fraction_signal[peak_idx]),
-                "peak_bin_synchrony": float(np.max(participation_fraction_signal[i:j + 1])),
+                "coactive_fraction_peak": float(coactive_fraction_signal[peak_idx]),
+                "coactive_fraction_max": float(np.max(coactive_fraction_signal[i:j + 1])),
+                "intraburst_isi_mean_s": _intraburst_isi_mean(
+                    all_spike_times, start_time_s, end_time_s),
             })
 
     # ---------------------------------------------------------
@@ -279,6 +287,8 @@ def compute_network_bursts(
             "metrics": level_metrics(network_bursts, total_dur, ibi_key="ibi_s"),
         },
         "superbursts": {"events": [], "metrics": {}},
+
+        "spike_participation": spike_participation(all_spike_times, network_bursts),
 
         "diagnostics": {
             "schema_version": SCHEMA_VERSION,
@@ -309,13 +319,13 @@ def compute_network_bursts(
 
         "plot_data": {
             "time_s": t_centers,
-            "participation_fraction_signal": participation_fraction_signal,
+            "coactive_fraction_signal": coactive_fraction_signal,
             "population_firing_rate_hz": smoothed_rate_hz,
             "nb_peak_times_s": np.array([b["peak_time_s"] for b in network_bursts]),
-            "nb_peak_participation_fraction": np.array([b["peak_synchrony"] for b in network_bursts]),
+            "nb_peak_coactive_fraction": np.array([b["coactive_fraction_peak"] for b in network_bursts]),
             "sb_start_times_s": np.array([]),
             "sb_end_times_s": np.array([]),
-            "participation_baseline": float(np.mean(participation_fraction_signal)),
+            "coactive_fraction_baseline": float(np.mean(coactive_fraction_signal)),
             "detection_threshold": None,  # threshold is in Hz, not participation-fraction space; see diagnostics.detection_threshold_hz
         },
     }

@@ -4,9 +4,13 @@ from scipy.signal import find_peaks
 from scipy.stats import skew, kurtosis as sp_kurtosis
 
 try:
-    from burst_common import stats, level_metrics as _level_metrics, SCHEMA_VERSION
+    from burst_common import (stats, level_metrics as _level_metrics, SCHEMA_VERSION,
+                              spike_participation,
+                              intraburst_isi_mean as _intraburst_isi_mean)
 except ImportError:
-    from MEA_Analysis.IPNAnalysis.burst_common import stats, level_metrics as _level_metrics, SCHEMA_VERSION
+    from MEA_Analysis.IPNAnalysis.burst_common import (
+        stats, level_metrics as _level_metrics, SCHEMA_VERSION,
+        spike_participation, intraburst_isi_mean as _intraburst_isi_mean)
 
 
 def compute_network_bursts(
@@ -97,7 +101,7 @@ def compute_network_bursts(
         all_log_isis.extend(log_isi)
 
         mean_fr = len(t) / total_dur
-        cv_isi  = float(np.std(isi) / np.mean(isi)) if np.mean(isi) > 0 else np.nan
+        isi_cv  = float(np.std(isi) / np.mean(isi)) if np.mean(isi) > 0 else np.nan
 
         # CV2 — local irregularity, robust to rate non-stationarity (Holt 1996)
         if len(isi) >= 2:
@@ -120,18 +124,18 @@ def compute_network_bursts(
         else:
             bc = np.nan
 
-        is_bursty = bool((not np.isnan(bc)) and bc > 0.555 and (np.isnan(lv) or lv > 1.0))
+        is_bursty_by_isi_statistics = bool((not np.isnan(bc)) and bc > 0.555 and (np.isnan(lv) or lv > 1.0))
 
         unit_stats[u] = {
             "mean_firing_rate_hz":    mean_fr,
-            "cv_isi":                 cv_isi,
+            "isi_cv":                 isi_cv,
             "cv2":                    cv2,
             "lv":                     lv,
-            "bimodality_coefficient": float(bc) if not np.isnan(bc) else None,
-            "is_bursty":              is_bursty,
+            "log_isi_bimodality": float(bc) if not np.isnan(bc) else None,
+            "is_bursty_by_isi_statistics":              is_bursty_by_isi_statistics,
         }
 
-        if is_bursty:
+        if is_bursty_by_isi_statistics:
             bursty_log_isis.extend(log_isi)
 
     if len(bursty_log_isis) > 50:
@@ -173,7 +177,7 @@ def compute_network_bursts(
         active_unit_counts += (counts > 0)
         spike_counts_total += counts
 
-    participation_fraction_signal_raw = active_unit_counts / max(1, n_units)
+    coactive_fraction_raw = active_unit_counts / max(1, n_units)
     rate_signal_raw                   = spike_counts_total / bin_size / max(1, n_units)
 
     population_firing_rate_hz = spike_counts_total / bin_size
@@ -183,10 +187,10 @@ def compute_network_bursts(
     # ---------------------------------------------------------
     isi_bins = reference_isi_s / bin_size
 
-    sigma_participation_bins = np.clip(isi_bins, 1, 2)
+    sigma_coactivity_bins = np.clip(isi_bins, 1, 2)
     sigma_firing_rate_bins   = np.clip(5.0 * isi_bins, 3, 8)
 
-    participation_fraction_signal = gaussian_filter1d(participation_fraction_signal_raw, sigma_participation_bins)
+    coactive_fraction_signal = gaussian_filter1d(coactive_fraction_raw, sigma_coactivity_bins)
     population_firing_rate_signal = gaussian_filter1d(rate_signal_raw, sigma_firing_rate_bins)
 
     # ---------------------------------------------------------
@@ -205,7 +209,7 @@ def compute_network_bursts(
 
     intra_burst_isis = []
     for u in units:
-        if not unit_stats[u].get("is_bursty"):
+        if not unit_stats[u].get("is_bursty_by_isi_statistics"):
             continue
         t = np.unique(np.sort(SpikeTimes[u]))
         isi = np.diff(t)
@@ -231,8 +235,8 @@ def compute_network_bursts(
     # ---------------------------------------------------------
     # 4. Detection thresholds
     # ---------------------------------------------------------
-    participation_baseline = np.median(participation_fraction_signal)
-    participation_mad      = np.median(np.abs(participation_fraction_signal - participation_baseline))
+    coactive_fraction_baseline = np.median(coactive_fraction_signal)
+    coactive_fraction_mad      = np.median(np.abs(coactive_fraction_signal - coactive_fraction_baseline))
 
     # Bimodality coefficient on participation signal (Sarle 1990).
     # BC selects threshold method — NOT used as a hard gate.
@@ -240,23 +244,23 @@ def compute_network_bursts(
     # structure because the burst population is too small relative to
     # the baseline to create a visible second mode. Hard gating on BC
     # causes false negatives in exactly these cases.
-    _pf = participation_fraction_signal
+    _pf = coactive_fraction_signal
     _n  = len(_pf)
     if _n >= 4:
         _g1 = skew(_pf)
         _g2 = sp_kurtosis(_pf, fisher=True)
-        participation_bc = float(
+        coactive_fraction_bimodality = float(
             (_g1**2 + 1) / (_g2 + 3 * ((_n - 1)**2 / ((_n - 2) * (_n - 3))))
         )
     else:
-        participation_bc = 0.0
+        coactive_fraction_bimodality = 0.0
 
-    if participation_bc > 0.555:
+    if coactive_fraction_bimodality > 0.555:
         # Signal is genuinely bimodal — MAD robustly captures the
         # burst/baseline separation.
         detection_threshold = max(
             0.03,
-            participation_baseline + threshold_mad_scale * participation_mad
+            coactive_fraction_baseline + threshold_mad_scale * coactive_fraction_mad
         )
         threshold_source = "baseline_mad"
     else:
@@ -273,13 +277,13 @@ def compute_network_bursts(
         pct = float(np.clip(95.0 + 5.0 * np.exp(-n_units / 50.0), 95.0, 99.5))
         detection_threshold = max(
             0.03,
-            float(np.percentile(participation_fraction_signal, pct))
+            float(np.percentile(coactive_fraction_signal, pct))
         )
         threshold_source = f"p{pct:.1f}"
 
     # Prominence: peaks must rise sharply above local surroundings.
     # 2*MAD filters broad low-amplitude elevations with no synchrony structure.
-    min_prominence = max(2.0 * participation_mad, 0.02)
+    min_prominence = max(2.0 * coactive_fraction_mad, 0.02)
 
     # Adaptive peak synchrony floor:
     # min_peak_synchrony as passed is interpreted as a fraction, but for
@@ -288,7 +292,7 @@ def compute_network_bursts(
     # Require at least max(3, 10% of n_units) units co-active in a single
     # bin — scales the absolute unit count floor with culture size.
     min_units_for_burst      = max(3, int(0.10 * n_units))
-    min_peak_synchrony_adaptive = max(
+    min_coactive_fraction = max(
         min_peak_synchrony,
         min_units_for_burst / max(1, n_units)
     )
@@ -297,7 +301,7 @@ def compute_network_bursts(
     # 5. Peak detection
     # ---------------------------------------------------------
     peaks, _ = find_peaks(
-        participation_fraction_signal,
+        coactive_fraction_signal,
         height=detection_threshold,
         prominence=min_prominence,
     )
@@ -309,17 +313,17 @@ def compute_network_bursts(
     # ---------------------------------------------------------
     for p in peaks:
 
-        peak_val         = participation_fraction_signal[p]
+        peak_val         = coactive_fraction_signal[p]
         extent_threshold = max(detection_threshold, extent_frac * peak_val)
 
         # LEFT boundary
         s = p
-        while s > 0 and participation_fraction_signal[s - 1] >= extent_threshold:
+        while s > 0 and coactive_fraction_signal[s - 1] >= extent_threshold:
             s -= 1
 
         # RIGHT boundary
         e = p
-        while e < n_bins - 1 and participation_fraction_signal[e + 1] >= extent_threshold:
+        while e < n_bins - 1 and coactive_fraction_signal[e + 1] >= extent_threshold:
             e += 1
 
         start_idx = s
@@ -332,14 +336,14 @@ def compute_network_bursts(
         if burst_duration_s <= 0:
             continue
 
-        # Peak synchrony validation: require min_peak_synchrony_adaptive
+        # Peak synchrony validation: require min_coactive_fraction
         # fraction of units co-active in a single bin within the fragment.
         # Adaptive floor prevents single-unit noise events from passing in
         # small cultures (n_units < 50) where 1/n_units jumps are large.
-        peak_bin_synchrony = float(
+        coactive_fraction_max = float(
             np.max(active_unit_counts[start_idx:end_idx + 1]) / max(1, n_units)
         )
-        if peak_bin_synchrony < min_peak_synchrony_adaptive:
+        if coactive_fraction_max < min_coactive_fraction:
             continue
 
         participating = sum(
@@ -352,10 +356,10 @@ def compute_network_bursts(
         if min_fragment_participation > 0 and participation_fraction < min_fragment_participation:
             continue
 
-        spike_count = int(np.sum(spike_counts_total[start_idx:end_idx + 1]))
+        spikes_per_burst = int(np.sum(spike_counts_total[start_idx:end_idx + 1]))
 
         denom         = burst_duration_s * max(1, participating)
-        burst_density = spike_count / denom if denom > 0 else 0
+        burst_density = spikes_per_burst / denom if denom > 0 else 0
 
         peak_drive_rate = np.max(rate_signal_raw[start_idx:end_idx + 1])
 
@@ -365,38 +369,43 @@ def compute_network_bursts(
         if min_absolute_rate_Hz > 0 and peak_drive_rate < min_absolute_rate_Hz:
             continue
 
+        peak_time_s = float(t_centers[p])
         burst_fragments.append({
-            "start_time_s":                   float(start_time_s),
-            "end_time_s":                     float(end_time_s),
-            "burst_duration_s":               float(burst_duration_s),
-            # Per-bin co-activity at the peak. "peak_synchrony" is the accurate
-            # name; "peak_participation_fraction" is kept because it is the key
-            # existing notebooks and collected tables read. Neither is the
-            # per-burst `participation_fraction` below — see docs/metrics.md.
-            "peak_synchrony":                 float(peak_val),
-            "peak_participation_fraction":    float(peak_val),
-            "peak_time_s":                    float(t_centers[p]),
+            "start_time_s":               float(start_time_s),
+            "end_time_s":                 float(end_time_s),
+            "burst_duration_s":           float(burst_duration_s),
+            "peak_time_s":                peak_time_s,
+            # Recruitment and termination, reported separately: Mossink et al.
+            # 2021 (RT, DT) find these dissociate in disease models where burst
+            # duration and rate do not.
+            "rise_time_s":                max(0.0, peak_time_s - float(start_time_s)),
+            "decay_time_s":               max(0.0, float(end_time_s) - peak_time_s),
+            # Co-activity within a single bin at the peak: simultaneity. NOT
+            # the maximum of participation_fraction, which is breadth over the
+            # whole burst. Smoothed; coactive_fraction_max is the raw value.
+            "coactive_fraction_peak":     float(peak_val),
+            "coactive_fraction_max":      coactive_fraction_max,
+            # Breadth of recruitment: "network burst participation" in the
+            # literature (Bakkum et al. 2013; Riccio et al. 2025).
+            "participation_fraction":     float(participation_fraction),
+            # Burst Peak (BP) of MaxLab Live and Axion, here per unit so it is
+            # comparable across wells with different yields.
+            "burst_peak_hz_per_unit":     float(np.max(population_firing_rate_signal[start_idx:end_idx + 1])),
+            # The same peak, array-wide. Rises with unit yield; kept only for
+            # comparison against platform software that reports it that way.
+            "burst_peak_hz_array":        float(np.max(population_firing_rate_hz[start_idx:end_idx + 1])),
             # Integral of the per-unit population rate: mean spikes per unit.
-            "burst_area":                     float(np.sum(population_firing_rate_signal[start_idx:end_idx + 1]) * bin_size),
-            "participation_fraction":         float(participation_fraction),
-            "spike_count":                    spike_count,
-            # Yield-normalised counterpart of spike_count, so wells with
-            # different unit yields are comparable.
-            "spikes_per_burst_per_unit":      float(spike_count / max(1, n_units)),
-            # Spikes per participating unit per second inside the burst. Used
-            # as a detection gate above and reported because it is the
-            # intensity measure that is free of both duration and yield.
-            "burst_density_hz":               float(burst_density),
-            "peak_bin_synchrony":             peak_bin_synchrony,
-            # Per unit, from the same smoothed signal as burst_area, so every
-            # reported intensity is in the same convention as MaxWell's
-            # mxw.networkActivity.computeNetworkAct and as the Gaussian
-            # detector's field of this name.
-            "peak_population_firing_rate_hz": float(np.max(population_firing_rate_signal[start_idx:end_idx + 1])),
-            # Array-wide sum, NOT divided by n_units. This is what the field
-            # above used to hold; it is kept under an explicit name because it
-            # rises with unit yield and must not be compared across wells.
-            "peak_population_firing_rate_total_hz": float(np.max(population_firing_rate_hz[start_idx:end_idx + 1])),
+            "burst_area_spikes_per_unit": float(np.sum(population_firing_rate_signal[start_idx:end_idx + 1]) * bin_size),
+            # Spikes per Burst (SPB). Yield-dependent; the _per_unit form is
+            # MaxLab Live's "spikes per burst per electrode".
+            "spikes_per_burst":           spikes_per_burst,
+            "spikes_per_burst_per_unit":  float(spikes_per_burst / max(1, n_units)),
+            # Burst spike rate (BSR, Mossink et al. 2021): firing rate of the
+            # units that took part, free of both duration and yield.
+            "intraburst_rate_hz":         float(burst_density),
+            # Mean interval between spikes inside the burst (bISI in MaxLab
+            # Live). Falls as a burst becomes internally denser.
+            "intraburst_isi_mean_s":      _intraburst_isi_mean(all_spikes, start_time_s, end_time_s),
         })
 
     # ---------------------------------------------------------
@@ -437,7 +446,7 @@ def compute_network_bursts(
     # ---------------------------------------------------------
     def finalize(evs, s, e):
 
-        best = max(evs, key=lambda x: x["peak_synchrony"])
+        best = max(evs, key=lambda x: x["coactive_fraction_peak"])
 
         participating_units = sum(
             1 for u in units
@@ -447,45 +456,50 @@ def compute_network_bursts(
         # Re-integrate over the whole merged window [s, e] instead of summing
         # the components. Summing skipped the gaps between components while
         # burst_duration_s and participation_fraction span them, so
-        # spike_count / burst_duration_s was not the burst's firing rate.
+        # spikes_per_burst / burst_duration_s was not the burst's firing rate.
         # The merged window's bounds are component bounds, which are bin
         # edges, so these indices are exact.
         i0 = int(np.clip(np.searchsorted(bins, s, side="left"), 0, n_bins - 1))
         i1 = int(np.clip(np.searchsorted(bins, e, side="left") - 1, i0, n_bins - 1))
 
         burst_duration_s = e - s
-        spike_count = int(np.sum(spike_counts_total[i0:i1 + 1]))
+        spikes_per_burst = int(np.sum(spike_counts_total[i0:i1 + 1]))
         denom = burst_duration_s * max(1, participating_units)
 
+        peak_time_s = best["peak_time_s"]
         return {
-            "start_time_s":                   s,
-            "end_time_s":                     e,
-            "burst_duration_s":               burst_duration_s,
-            "peak_synchrony":                 best["peak_synchrony"],
-            "peak_participation_fraction":    best["peak_synchrony"],
-            "peak_time_s":                    best["peak_time_s"],
-            "burst_area":                     float(np.sum(population_firing_rate_signal[i0:i1 + 1]) * bin_size),
+            "start_time_s":               s,
+            "end_time_s":                 e,
+            "burst_duration_s":           burst_duration_s,
+            "peak_time_s":                peak_time_s,
+            # Measured from the merged burst's own onset, so these grow when
+            # fragments merge. Compare them within a tier, not across tiers.
+            "rise_time_s":                max(0.0, peak_time_s - s),
+            "decay_time_s":               max(0.0, e - peak_time_s),
+            "coactive_fraction_peak":     best["coactive_fraction_peak"],
+            # Highest single-bin co-activity anywhere in the merged window,
+            # from the raw counts. Dropped at this tier before schema 3.
+            "coactive_fraction_max":      float(np.max(active_unit_counts[i0:i1 + 1]) / max(1, n_units)),
+            "participation_fraction":     participating_units / n_units,
+            "burst_peak_hz_per_unit":     float(np.max(population_firing_rate_signal[i0:i1 + 1])),
+            "burst_peak_hz_array":        float(np.max(population_firing_rate_hz[i0:i1 + 1])),
+            "burst_area_spikes_per_unit": float(np.sum(population_firing_rate_signal[i0:i1 + 1]) * bin_size),
+            "spikes_per_burst":           spikes_per_burst,
+            "spikes_per_burst_per_unit":  float(spikes_per_burst / max(1, n_units)),
+            "intraburst_rate_hz":         float(spikes_per_burst / denom) if denom > 0 else 0.0,
+            "intraburst_isi_mean_s":      _intraburst_isi_mean(all_spikes, s, e),
             # Fragments contained, transitively: at the superburst tier this
             # counts fragments, while n_components counts the network bursts
             # merged. The old name "component_count" was read as the latter.
-            "n_fragments":                    sum(ev.get("n_fragments", 1) for ev in evs),
-            "spike_count":                    spike_count,
-            "spikes_per_burst_per_unit":      float(spike_count / max(1, n_units)),
-            "burst_density_hz":               float(spike_count / denom) if denom > 0 else 0.0,
-            "participation_fraction":         participating_units / n_units,
-            # Highest single-bin co-activity anywhere in the merged window,
-            # from the raw counts. Previously dropped at this tier.
-            "peak_bin_synchrony":             float(np.max(active_unit_counts[i0:i1 + 1]) / max(1, n_units)),
-            "peak_population_firing_rate_hz": float(np.max(population_firing_rate_signal[i0:i1 + 1])),
-            "peak_population_firing_rate_total_hz": float(np.max(population_firing_rate_hz[i0:i1 + 1])),
-            "n_components":                   len(evs)
+            "n_fragments":                sum(ev.get("n_fragments", 1) for ev in evs),
+            "n_components":               len(evs),
         }
 
-    def get_valley_min(prev, nxt, participation_fraction_signal, t_centers):
+    def get_valley_min(prev, nxt, coactive_fraction_signal, t_centers):
         valley_mask = (t_centers >= prev["end_time_s"]) & (t_centers <= nxt["start_time_s"])
         if not np.any(valley_mask):
             return None
-        valley_vals = participation_fraction_signal[valley_mask]
+        valley_vals = coactive_fraction_signal[valley_mask]
         if valley_vals.size == 0:
             return None
         return float(np.min(valley_vals))
@@ -509,7 +523,7 @@ def compute_network_bursts(
         for nxt in events[1:]:
 
             valley_duration = nxt["start_time_s"] - e
-            valley_min      = get_valley_min(curr[-1], nxt, participation_fraction_signal, t_centers)
+            valley_min      = get_valley_min(curr[-1], nxt, coactive_fraction_signal, t_centers)
 
             if valley_min is None:
                 valley_ok = (valley_duration <= bin_size)
@@ -624,6 +638,12 @@ def compute_network_bursts(
             "metrics": level_metrics(superbursts, ibi_key="isbi_s")
         },
 
+        # Share of the well's spiking that happens inside network bursts.
+        # PRS (percent_random_spikes) is its complement, a core Mossink
+        # et al. 2021 parameter: a culture can hold its burst rate while
+        # its neurons drift out of the bursts, and only this ratio shows it.
+        "spike_participation": spike_participation(all_spikes, network_bursts),
+
         "diagnostics": {
             "schema_version":               SCHEMA_VERSION,
             "detector":                     "parameter_free",
@@ -633,13 +653,13 @@ def compute_network_bursts(
             "bin_size_ms":                  bin_size_ms,
             "reference_isi_s":              reference_isi_s,
             "reference_isi_source":         "bursty_peak" if len(bursty_log_isis) > 50 else ("all_percentile15" if all_log_isis else "default"),
-            "participation_baseline":       participation_baseline,
-            "participation_mad":            participation_mad,
-            "participation_bc":             participation_bc,
+            "coactive_fraction_baseline":       coactive_fraction_baseline,
+            "coactive_fraction_mad":            coactive_fraction_mad,
+            "coactive_fraction_bimodality":             coactive_fraction_bimodality,
             "burst_detection_valid":        True,
             "threshold_source":             threshold_source,
             "detection_threshold":          detection_threshold,
-            "min_peak_synchrony_adaptive":  min_peak_synchrony_adaptive,
+            "min_coactive_fraction":  min_coactive_fraction,
             "min_units_for_burst":          min_units_for_burst,
             "fragment_merge_gap_s":         fragment_merge_gap_s,
             "fragment_merge_gap_source":    fragment_merge_gap_source,
@@ -649,8 +669,8 @@ def compute_network_bursts(
             "superburst_min_components":    min_superburst_components,
             "superburst_merge_gap_s":       nb_merge_gap_s,
             "n_units":                      n_units,
-            "n_bursty_units":               sum(1 for s in unit_stats.values() if s.get("is_bursty")),
-            "sigma_participation_bins":     sigma_participation_bins,
+            "n_bursty_units_by_isi_statistics":               sum(1 for s in unit_stats.values() if s.get("is_bursty_by_isi_statistics")),
+            "sigma_coactivity_bins":     sigma_coactivity_bins,
             "sigma_firing_rate_bins":       sigma_firing_rate_bins,
         },
 
@@ -658,18 +678,18 @@ def compute_network_bursts(
 
         # plot_data is splatted into helper.plot_clean_network as **kwargs, so
         # these keys must match its signature exactly — no aliases. The trace
-        # named participation_fraction_signal is per-bin co-activity
+        # named coactive_fraction_signal is per-bin co-activity
         # (synchrony), not the per-burst participation_fraction, and
         # population_firing_rate_hz here is per unit. See docs/metrics.md.
         "plot_data": {
             "time_s":                          t_centers,
-            "participation_fraction_signal":   participation_fraction_signal,
+            "coactive_fraction_signal":   coactive_fraction_signal,
             "population_firing_rate_hz":       population_firing_rate_signal,
             "nb_peak_times_s":                 np.array([b["peak_time_s"] for b in network_bursts]),
-            "nb_peak_participation_fraction":  np.array([b["peak_synchrony"] for b in network_bursts]),
+            "nb_peak_coactive_fraction":  np.array([b["coactive_fraction_peak"] for b in network_bursts]),
             "sb_start_times_s":                np.array([b["start_time_s"] for b in superbursts]),
             "sb_end_times_s":                  np.array([b["end_time_s"] for b in superbursts]),
-            "participation_baseline":          participation_baseline,
+            "coactive_fraction_baseline":          coactive_fraction_baseline,
             "detection_threshold":             detection_threshold,
         }
     }

@@ -106,13 +106,13 @@ def _load_well(well_path):
     # ── detection diagnostics ────────────────────────────────────────────────
     diag_rows = [
         ("n_units",              nr.get("n_units")),
-        ("n_bursty_units",       diag.get("n_bursty_units")),
+        ("n_bursty_units_by_isi_statistics",       diag.get("n_bursty_units_by_isi_statistics")),
         ("bin_size_ms",          diag.get("bin_size_ms")),
         ("reference_isi_s",      diag.get("reference_isi_s")),
         ("isi_source",           diag.get("reference_isi_source")),
-        ("participation_baseline", diag.get("participation_baseline")),
-        ("participation_mad",    diag.get("participation_mad")),
-        ("participation_bc",     diag.get("participation_bc")),
+        ("coactive_fraction_baseline", diag.get("coactive_fraction_baseline")),
+        ("coactive_fraction_mad",    diag.get("coactive_fraction_mad")),
+        ("coactive_fraction_bimodality",     diag.get("coactive_fraction_bimodality")),
         ("detection_threshold",  diag.get("detection_threshold")),
         ("threshold_source",     diag.get("threshold_source")),
         ("min_units_for_burst",  diag.get("min_units_for_burst")),
@@ -131,17 +131,24 @@ def _load_well(well_path):
 
     # ── burst metrics ────────────────────────────────────────────────────────
     metric_rows = [
-        ("count",              bl_m.get("burst_count"),       nb_m.get("burst_count"),       sb_m.get("burst_count")),
-        ("rate (Hz)",          bl_m.get("burst_rate_hz"),     nb_m.get("burst_rate_hz"),     sb_m.get("burst_rate_hz")),
-        ("duration mean (s)",  _s(bl_m,"burst_duration_s","mean"),  _s(nb_m,"burst_duration_s","mean"),  _s(sb_m,"burst_duration_s","mean")),
-        ("duration CV",        _s(bl_m,"burst_duration_s","cv"),    _s(nb_m,"burst_duration_s","cv"),    _s(sb_m,"burst_duration_s","cv")),
-        ("IBI mean (s)",       _s(bl_m,"ifbi_s","mean"),            _s(nb_m,"ibi_s","mean"),             _s(sb_m,"isbi_s","mean")),
-        ("IBI CV",             _s(bl_m,"ifbi_s","cv"),              _s(nb_m,"ibi_s","cv"),               _s(sb_m,"isbi_s","cv")),
-        ("participation mean", _s(bl_m,"participation_fraction","mean"), _s(nb_m,"participation_fraction","mean"), _s(sb_m,"participation_fraction","mean")),
-        ("spikes/burst mean",  _s(bl_m,"spike_count_per_burst","mean"), _s(nb_m,"spike_count_per_burst","mean"),  _s(sb_m,"spike_count_per_burst","mean")),
-        ("peak rate mean (Hz)",_s(bl_m,"peak_population_firing_rate_hz","mean"), _s(nb_m,"peak_population_firing_rate_hz","mean"), _s(sb_m,"peak_population_firing_rate_hz","mean")),
-        ("burst area mean",    _s(bl_m,"burst_area","mean"),         _s(nb_m,"burst_area","mean"),        _s(sb_m,"burst_area","mean")),
-        ("peak participation", _s(bl_m,"peak_participation_fraction","mean"), _s(nb_m,"peak_participation_fraction","mean"), _s(sb_m,"peak_participation_fraction","mean")),
+        ("count",                    bl_m.get("burst_count"),        nb_m.get("burst_count"),        sb_m.get("burst_count")),
+        ("rate (bursts/min)",        bl_m.get("burst_rate_per_min"), nb_m.get("burst_rate_per_min"), sb_m.get("burst_rate_per_min")),
+        ("duration mean (s)",        _s(bl_m,"burst_duration_s","mean"),  _s(nb_m,"burst_duration_s","mean"),  _s(sb_m,"burst_duration_s","mean")),
+        ("duration CV",              _s(bl_m,"burst_duration_s","cv"),    _s(nb_m,"burst_duration_s","cv"),    _s(sb_m,"burst_duration_s","cv")),
+        ("rise time mean (s)",       _s(bl_m,"rise_time_s","mean"),       _s(nb_m,"rise_time_s","mean"),       _s(sb_m,"rise_time_s","mean")),
+        ("decay time mean (s)",      _s(bl_m,"decay_time_s","mean"),      _s(nb_m,"decay_time_s","mean"),      _s(sb_m,"decay_time_s","mean")),
+        ("IBI mean (s)",             _s(bl_m,"ifbi_s","mean"),            _s(nb_m,"ibi_s","mean"),             _s(sb_m,"isbi_s","mean")),
+        ("IBI CV",                   _s(bl_m,"ifbi_s","cv"),              _s(nb_m,"ibi_s","cv"),               _s(sb_m,"isbi_s","cv")),
+        ("duty cycle",               bl_m.get("duty_cycle"),              nb_m.get("duty_cycle"),              sb_m.get("duty_cycle")),
+        ("participation mean",       _s(bl_m,"participation_fraction","mean"), _s(nb_m,"participation_fraction","mean"), _s(sb_m,"participation_fraction","mean")),
+        ("peak co-activity",         _s(bl_m,"coactive_fraction_peak","mean"), _s(nb_m,"coactive_fraction_peak","mean"), _s(sb_m,"coactive_fraction_peak","mean")),
+        ("max co-activity (raw)",    _s(bl_m,"coactive_fraction_max","mean"),  _s(nb_m,"coactive_fraction_max","mean"),  _s(sb_m,"coactive_fraction_max","mean")),
+        ("burst peak (Hz/unit)",     _s(bl_m,"burst_peak_hz_per_unit","mean"), _s(nb_m,"burst_peak_hz_per_unit","mean"), _s(sb_m,"burst_peak_hz_per_unit","mean")),
+        ("spikes/burst/unit",        _s(bl_m,"spikes_per_burst_per_unit","mean"), _s(nb_m,"spikes_per_burst_per_unit","mean"), _s(sb_m,"spikes_per_burst_per_unit","mean")),
+        ("intraburst rate (Hz)",     _s(bl_m,"intraburst_rate_hz","mean"), _s(nb_m,"intraburst_rate_hz","mean"), _s(sb_m,"intraburst_rate_hz","mean")),
+        ("intraburst ISI mean (s)",  _s(bl_m,"intraburst_isi_mean_s","mean"), _s(nb_m,"intraburst_isi_mean_s","mean"), _s(sb_m,"intraburst_isi_mean_s","mean")),
+        ("burst area (spikes/unit)", _s(bl_m,"burst_area_spikes_per_unit","mean"), _s(nb_m,"burst_area_spikes_per_unit","mean"), _s(sb_m,"burst_area_spikes_per_unit","mean")),
+        ("spikes/burst (raw, yield-dependent)", _s(bl_m,"spikes_per_burst","mean"), _s(nb_m,"spikes_per_burst","mean"), _s(sb_m,"spikes_per_burst","mean")),
     ]
 
     metric_table = html.Table(
@@ -173,11 +180,11 @@ def _load_well(well_path):
         try:
             import numpy as np
             d = np.load(str(npz_file))
-            baseline  = float(d["participation_baseline"]) if "participation_baseline"        in d else None
+            baseline  = float(d["coactive_fraction_baseline"]) if "coactive_fraction_baseline"        in d else None
             threshold = float(d["detection_threshold"])    if "detection_threshold"           in d else None
             n_bins    = int(d["time_s"].shape[0])          if "time_s"                        in d else None
             duration  = float(d["time_s"][-1])             if "time_s"                        in d else None
-            sig_max   = float(d["participation_fraction_signal"].max()) if "participation_fraction_signal" in d else None
+            sig_max   = float(d["coactive_fraction_signal"].max()) if "coactive_fraction_signal" in d else None
             npz_rows = [
                 ("baseline",         baseline),
                 ("threshold",        threshold),

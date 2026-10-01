@@ -2,21 +2,21 @@
 
 # Metric dictionary
 
-Schema version **3**. `metrics.json` holds the same content in machine-readable form.
+Schema version **4**. `metrics.json` holds the same content in machine-readable form.
 
-Machine-readable dictionary for every key in network_results.json. Units, formula and caveats for each. Generated documentation lives in docs/metrics.md; regenerate it with scripts/build_metrics_doc.py. tests/test_metrics_dictionary.py fails if a detector emits a key that is missing here.
+Machine-readable dictionary for every key in network_results.json: units, formula, the published name and abbreviation, biological meaning and caveats. Rendered to docs/metrics.md by scripts/build_metrics_doc.py. tests/test_metrics_dictionary.py fails if a detector emits a key that is missing here.
+
+## Published vocabularies
+
+Abbreviations in the **Published name** column come from these sources.
+
+- **Mossink et al. 2021 Stem Cell Reports** — MFR, PRS, BR, BD, BSR, IBI, NBR, NBD, NIBI, CV_NIBI, RT, DT
+- **MaxLab Live (MaxWell)** — SPB, BD, BP, IBI, bISI, BF, each with a CV
+- **Axion / Multiwell** — burst peak, network burst participation, number of spikes per network burst
 
 ## Population signals
 
 Every network metric derives from one of three per-bin traces.
-
-### `synchrony` — fraction of units, 0-1
-
-```
-gaussian_filter1d(active_unit_counts / n_units, sigma=clip(reference_isi_s/bin_size, 1, 2))
-```
-
-Per-bin co-activity: how many units fired at least once in the bin, over the number of units active anywhere in the recording. Saturates at one spike per unit per bin, so firing harder cannot raise it. This is the detection signal, and it is the field's convention (QSpike >=30% of active electrodes, Bakkum 2013 >=25%, Kaufman & Ziv 40%, Axion 50%, le Feber 60%). Held in plot_data under the historical name participation_fraction_signal.
 
 ### `population_rate_per_unit` — Hz per unit
 
@@ -24,7 +24,7 @@ Per-bin co-activity: how many units fired at least once in the bin, over the num
 gaussian_filter1d(spike_counts_total / bin_size / n_units, sigma=clip(5*reference_isi_s/bin_size, 3, 8))
 ```
 
-Mean firing rate per active unit. Matches MaxWell's mxw.networkActivity.computeNetworkAct. Source of burst_area and peak_population_firing_rate_hz. Held in plot_data under the historical name population_firing_rate_hz.
+Mean firing rate per active unit. Matches MaxWell's mxw.networkActivity.computeNetworkAct. Source of burst_area_spikes_per_unit and burst_peak_hz_per_unit. Exposed in plot_data as population_firing_rate_hz, a name fixed by the plotting signature.
 
 ### `population_rate_total` — Hz, summed over the array
 
@@ -32,119 +32,141 @@ Mean firing rate per active unit. Matches MaxWell's mxw.networkActivity.computeN
 spike_counts_total / bin_size
 ```
 
-Unsmoothed array-wide spike rate. Rises with unit yield, so it is not comparable across wells. Source of peak_population_firing_rate_total_hz only.
+Unsmoothed array-wide spike rate. Rises with unit yield, so it is not comparable across wells. Source of burst_peak_hz_array only.
+
+### `coactivity` — fraction of units, 0-1
+
+```
+gaussian_filter1d(active_unit_counts / n_units, sigma=clip(reference_isi_s/bin_size, 1, 2))
+```
+
+Per-bin co-activity: how many units fired at least once in the bin, over the number of units active anywhere in the recording. Saturates at one spike per unit per bin, so firing harder cannot raise it. This is the detection signal, and it is the field's convention (QSpike >=30% of active electrodes, Bakkum 2013 >=25%, Kaufman & Ziv 40%, Axion 50%, le Feber 60%). Exposed as coactive_fraction_signal in plot_data.
 
 ## Per-unit statistics (`unit_stats`)
 
 One entry per sorted unit, computed from its own inter-spike intervals.
 
-| Key | Units | Definition | Formula | Literature | Since | Caveat |
-|---|---|---|---|---|---|---|
-| `mean_firing_rate_hz` | Hz | Firing rate of one unit over the whole recording. | `n_spikes / recording_duration_s` |  | 1 | Before schema 2 the denominator was the span between the first and last spike, which inflated the rate in a well quiet at either end. |
-| `cv_isi` | dimensionless | Global irregularity of a unit's inter-spike intervals. | `std(isi) / mean(isi)` | standard | 1 | Confounded by rate non-stationarity: a unit that speeds up across the recording scores high without being irregular. Prefer cv2 or lv. |
-| `cv2` | dimensionless | Local irregularity from adjacent interval pairs. 1.0 for a Poisson process. | `mean(2 * abs(isi[i] - isi[i+1]) / (isi[i] + isi[i+1]))` | Holt et al. 1996 J Neurophysiol 75:1806-1814 | 1 |  |
-| `lv` | dimensionless | Local variation. 1.0 Poisson, >1 bursty, <1 regular. | `3 * mean(((isi[i] - isi[i+1]) / (isi[i] + isi[i+1]))**2)` | Shinomoto et al. 2009 PLoS Comput Biol 5:e1000433 | 1 |  |
-| `bimodality_coefficient` | dimensionless | Sarle's bimodality coefficient of the log-ISI distribution. Above 0.555 suggests two interval populations, i.e. intra-burst and inter-burst. | `(skew**2 + 1) / (kurtosis + 3*(n-1)**2/((n-2)*(n-3))) on log10(isi)` | Sarle 1990 (SAS); cutoff 0.555 is the SAS convention | 1 |  |
-| `is_bursty` | boolean | Whether a unit's own interval statistics look bursty. | `bimodality_coefficient > 0.555 AND (lv is null OR lv > 1.0)` |  | 1 | Load-bearing and unvalidated: bursty units' pooled log-ISIs set reference_isi_s, which sets bin_size_ms and both merge gaps. A statistical criterion, distinct from any count of detected bursts. |
+| Key | Units | Published name | Definition | Formula | Reference | Since | Caveat |
+|---|---|---|---|---|---|---|---|
+| `mean_firing_rate_hz` | Hz | **MFR** — mean firing rate | Firing rate of one unit over the whole recording. | `n_spikes / recording_duration_s` | Mossink et al. 2021 Stem Cell Reports | 1 | Before schema 2 the denominator was the span between first and last spike, inflating the rate in a well quiet at either end. |
+| `isi_cv` | dimensionless | **ISI CoV** — ISI coefficient of variation | Global irregularity of a unit's inter-spike intervals. Renamed from `cv_isi`. | `std(isi) / mean(isi)` | Riccio et al. 2025; Gu et al. 2025 | 1 | Confounded by rate non-stationarity: a unit that speeds up across the recording scores high without being irregular. Prefer cv2 or lv. |
+| `cv2` | dimensionless | **CV2** — CV2 | Local irregularity from adjacent interval pairs; 1.0 for a Poisson process. | `mean(2*abs(isi[i]-isi[i+1]) / (isi[i]+isi[i+1]))` | Holt et al. 1996 J Neurophysiol 75:1806-1814 | 1 |  |
+| `lv` | dimensionless | **Lv** — local variation | Local variation. 1.0 Poisson, above 1 bursty, below 1 regular. | `3 * mean(((isi[i]-isi[i+1]) / (isi[i]+isi[i+1]))**2)` | Shinomoto et al. 2009 PLoS Comput Biol 5:e1000433 | 1 |  |
+| `log_isi_bimodality` | dimensionless | **BC** — bimodality coefficient | Sarle bimodality coefficient of the log-ISI distribution. Above 0.555 suggests separate intra-burst and inter-burst interval populations. Renamed from `bimodality_coefficient`. | `(skew**2 + 1) / (kurtosis + 3*(n-1)**2/((n-2)*(n-3))) on log10(isi)` | Sarle 1990 (SAS); cutoff 0.555 is the SAS convention; cf. peak of log(ISI) histogram in Riccio et al. 2025 | 1 |  |
+| `is_bursty_by_isi_statistics` | boolean |  | Whether a unit's own interval statistics look bursty. A statistical criterion, not a count of detected bursts. Renamed from `is_bursty`. | `log_isi_bimodality > 0.555 AND (lv is null OR lv > 1.0)` |  | 1 | Load-bearing and unvalidated: the pooled log-ISIs of these units set reference_isi_s, which sets bin_size_ms and both merge gaps. |
 
 ## Per-burst fields (`<tier>.events[]`)
 
 One entry per detected event, at all three tiers unless noted.
 
-| Key | Units | Definition | Formula | Literature | Since | Caveat |
-|---|---|---|---|---|---|---|
-| `start_time_s` | s | Burst onset. | `bin edge where the synchrony signal last rose above max(detection_threshold, extent_frac * peak)` |  | 1 |  |
-| `end_time_s` | s | Burst offset. | `bin edge where the synchrony signal fell below the same level` |  | 1 |  |
-| `burst_duration_s` | s | Burst width. At merged tiers this spans the gaps between components. | `end_time_s - start_time_s` | Mossink et al. 2021 Stem Cell Reports (NBD) | 1 | Edges sit at a fraction of each burst's own peak, so this is not time above an absolute synchrony level. Conventions differ: QSpike uses 80% of max, Kaufman & Ziv 10% of threshold, this detector 30% of peak. |
-| `peak_time_s` | s | Time of maximum synchrony. | `bin centre of the synchrony peak; at merged tiers, the peak of the highest component` |  | 1 |  |
-| `peak_synchrony` | fraction of units, 0-1 | Largest fraction of units co-active within one bin, from the smoothed trace. Simultaneity, not breadth. | `synchrony signal at peak_time_s` |  | 3 | Bin-resolution simultaneity (20-100 ms), not millisecond. Smoothed, so it is a local average rather than a literal count; peak_bin_synchrony is the raw number. |
-| `peak_participation_fraction` | fraction of units, 0-1 | Alias of `peak_synchrony`. Historical name for peak_synchrony, kept so existing notebooks and collected tables keep working. |  |  | 1 | Misnamed. It is per-bin synchrony, NOT the maximum of participation_fraction, which measures something different. |
-| `peak_bin_synchrony` | fraction of units, 0-1 | Highest single-bin co-activity, from the raw unsmoothed counts. | `max(active_unit_counts over the burst) / n_units` |  | 1 | Before schema 3 this existed only on fragments and was dropped when they were merged, so network burst and superburst summaries had no un-smoothed synchrony measure. |
-| `participation_fraction` | fraction of units, 0-1 | Breadth of recruitment over the whole burst. This is what the literature means by participation. | `units firing at least once in [start_time_s, end_time_s) / n_units, recounted from raw spike times` | Bakkum et al. 2013 Nat Commun (>=25% of electrodes); QSpike Tools (>=30%) | 1 | Not derived from the binned signal. Contrast with peak_bin_synchrony: a 2 s burst can reach 0.9 participation while never exceeding 0.15 in any single bin, which is sequential recruitment rather than synchrony. |
-| `burst_area` | spikes per unit | Integral of the per-unit population rate across the burst. | `sum(population_rate_per_unit over the burst) * bin_size` |  | 1 | Yield-normalised, so comparable across wells. Nearly independent of the smoothing sigma, because Gaussian convolution preserves the integral. Before schema 3 the merged tiers summed component areas, which skipped the gaps that burst_duration_s spans. |
-| `spike_count` | spikes | Spikes inside the burst, summed over all units. | `sum(spike_counts_total over the burst)` | Mossink et al. 2021 (spikes per network burst) | 1 | NOT divided by n_units, so it rises with unit yield. Use spikes_per_burst_per_unit to compare wells. Before schema 3 merged tiers summed components, excluding the inter-component gaps. |
-| `spikes_per_burst_per_unit` | spikes per unit | Yield-normalised spike count. | `spike_count / n_units` |  | 3 |  |
-| `burst_density_hz` | Hz per participating unit | Firing rate inside the burst, per unit that took part. Free of both duration and yield. | `spike_count / (burst_duration_s * participating_units)` |  | 3 | Computed since schema 1 to gate detection via min_burst_density_Hz, but discarded before being reported. |
-| `peak_population_firing_rate_hz` | Hz per unit | Peak firing rate per active unit during the burst. | `max(population_rate_per_unit over the burst)` |  | 1 | MEANING CHANGED IN SCHEMA 3. Before, the adaptive detector put the array-wide sum here while the Gaussian detector put the per-unit rate, so the same key differed between detectors by a factor of n_units and any table pooling both was meaningless. The array-wide value now lives in peak_population_firing_rate_total_hz. |
-| `peak_population_firing_rate_total_hz` | Hz, summed over the array | Peak array-wide spike rate during the burst. | `max(population_rate_total over the burst); in the Gaussian detector, peak_population_firing_rate_hz * n_units` |  | 3 | Rises with unit yield. Do not compare across wells without n_units as a covariate. |
-| `n_components` | count | Immediate children: fragments for a network burst, network bursts for a superburst. | `number of events merged at this tier` |  | 1 |  |
-| `n_fragments` | count | Burst fragments contained, at any depth. Equals n_components at the network burst tier; at the superburst tier it counts fragments while n_components counts network bursts. | `transitive sum of component fragment counts` |  | 3 | Called component_count before schema 3, a name that read as n_components. |
+| Key | Units | Published name | Definition | Formula | Reference | Since | Caveat |
+|---|---|---|---|---|---|---|---|
+| `start_time_s` | s |  | Burst onset. | `bin edge where the co-activity signal last rose above max(detection_threshold, extent_frac * peak)` |  | 1 |  |
+| `end_time_s` | s |  | Burst offset. | `bin edge where the co-activity signal fell back below that level` |  | 1 |  |
+| `burst_duration_s` | s | **NBD** — network burst duration | Burst width. At merged tiers this spans the gaps between components. Prolonged bursts indicate impaired termination: weakened inhibition, reduced adaptation or slower AHP. | `end_time_s - start_time_s` | Mossink et al. 2021; BD in MaxLab Live | 1 | Edges sit at a fraction of each burst's own peak, so this is not time above an absolute level. Conventions differ (QSpike 80% of max, Kaufman & Ziv 10% of threshold, here 30% of peak). |
+| `peak_time_s` | s |  | Time of maximum co-activity. | `bin centre of the co-activity peak; at merged tiers the peak of the highest component` |  | 1 |  |
+| `rise_time_s` | s | **RT** — rise time | Time from burst onset to its peak. Recruitment speed: how fast the network is drawn into the burst. Dissociates from duration in several disease models. | `peak_time_s - start_time_s` | Mossink et al. 2021 | 4 | At merged tiers this is measured from the merged onset, so it grows when fragments merge. Compare within a tier. |
+| `decay_time_s` | s | **DT** — decay time | Time from the peak to burst offset. Termination dynamics. Mossink found DT among the parameters most sensitive to batch, so it is informative but needs batch in the model. | `end_time_s - peak_time_s` | Mossink et al. 2021 | 4 | At merged tiers measured to the merged offset; see rise_time_s. |
+| `participation_fraction` | fraction of units, 0-1 | network burst participation | Breadth of recruitment across the whole burst. Falls when part of the network decouples from the burst while the rest keeps bursting. | `units firing at least once in [start_time_s, end_time_s) / n_units, recounted from raw spike times` | Bakkum et al. 2013 Nat Commun (>=25% of electrodes); Riccio et al. 2025; QSpike Tools (>=30%) | 1 | Not derived from the binned signal. A 2 s burst can reach 0.9 participation while never exceeding 0.15 co-activity in any single bin, which is sequential recruitment rather than synchrony. |
+| `coactive_fraction_peak` | fraction of units, 0-1 | synchrony ratio / fraction of active electrodes | Largest fraction of units co-active within one bin. Simultaneity, not breadth. Desynchronisation phenotypes move this while leaving participation_fraction flat. Renamed from `peak_participation_fraction`. | `smoothed co-activity signal at peak_time_s` | Kaufman et al. 2014 (Sync Ratio); Riccio et al. 2025 (smoothed active fraction) | 4 | Bin-resolution simultaneity (20-100 ms), not millisecond. Smoothed, so a local average rather than a literal count; coactive_fraction_max is raw. |
+| `coactive_fraction_max` | fraction of units, 0-1 |  | Highest single-bin co-activity anywhere in the burst, from raw counts. The honest simultaneity number; the detector also uses it to reject events that only look synchronous after smoothing. Renamed from `peak_bin_synchrony`. | `max(active_unit_counts over the burst) / n_units, unsmoothed` |  | 4 |  |
+| `burst_peak_hz_per_unit` | Hz per unit | **BP** — burst peak | Peak firing rate per active unit during the burst. Burst amplitude: how hard the participating neurons fire at the height of the burst. Renamed from `peak_population_firing_rate_hz`. | `max(population_rate_per_unit over the burst)` | MaxLab Live; Axion ('peak of the average network burst histogram divided by bin size') | 4 | MEANING CHANGED IN SCHEMA 3. Before, the adaptive detector put the array-wide sum under the old name while the Gaussian detector put the per-unit rate, so the same key differed between detectors by a factor of n_units. |
+| `burst_peak_hz_array` | Hz, summed over the array |  | Peak array-wide spike rate during the burst. Renamed from `peak_population_firing_rate_total_hz`. | `max(population_rate_total over the burst); in the Gaussian detector burst_peak_hz_per_unit * n_units` |  | 4 | Rises with unit yield. Kept only for comparison against platform software that reports the array-wide value; do not compare across wells without n_units as a covariate. |
+| `burst_area_spikes_per_unit` | spikes per unit | network burst area | Integral of the per-unit population rate across the burst: amplitude and width in one number. Renamed from `burst_area`. | `sum(population_rate_per_unit over the burst) * bin_size` | Axion (area under the normalised network burst) | 4 | Nearly independent of the smoothing sigma, because Gaussian convolution preserves the integral. Before schema 3 merged tiers summed component areas, skipping the gaps that burst_duration_s spans. |
+| `spikes_per_burst` | spikes | **SPB** — spikes per burst | Spikes inside the burst, summed over all units. Renamed from `spike_count / spike_count_per_burst`. | `sum(spike_counts_total over the burst)` | MaxLab Live; 'spikes per network burst' in Gu et al. 2025 | 4 | NOT divided by n_units, so it rises with unit yield. Use spikes_per_burst_per_unit across wells. Before schema 3 merged tiers summed components, excluding inter-component gaps. |
+| `spikes_per_burst_per_unit` | spikes per unit | spikes per burst per electrode | Yield-normalised spike count. Total output of the average neuron per burst; the comparable version of spikes_per_burst. | `spikes_per_burst / n_units` | MaxLab Live | 3 |  |
+| `intraburst_rate_hz` | Hz per participating unit | **BSR** — burst spike rate | Firing rate inside the burst, per unit that took part. Intensity free of both duration and yield: separates 'bursts got longer' from 'neurons fired harder within them'. Renamed from `burst_density_hz`. | `spikes_per_burst / (burst_duration_s * participating_units)` | Mossink et al. 2021; 'intra-burst firing frequency' in Fifield-Smith et al. 2025 | 4 | Computed since schema 1 to gate detection via min_burst_density_Hz, but discarded before being reported. |
+| `intraburst_isi_mean_s` | s | **bISI** — mean inter-spike interval within burst | Mean interval between consecutive spikes inside the burst. Falls as a burst becomes internally denser; a within-burst counterpart to the inter-burst interval. | `mean(diff(all spikes inside the burst window)), pooled across units` | MaxLab Live (Dirkx et al. 2026) | 4 |  |
+| `n_components` | count |  | Immediate children: fragments for a network burst, network bursts for a superburst. | `number of events merged at this tier` |  | 1 |  |
+| `n_fragments` | count |  | Burst fragments contained at any depth. Equals n_components at the network burst tier; at the superburst tier it counts fragments while n_components counts network bursts. Internal fragmentation: activity dipping below threshold mid-burst without reaching silence. Renamed from `component_count`. | `transitive sum of component fragment counts` |  | 3 |  |
+
+## Spike participation (`spike_participation`)
+
+How much of the well's spiking is organised into network bursts.
+
+| Key | Units | Published name | Definition | Formula | Reference | Since | Caveat |
+|---|---|---|---|---|---|---|---|
+| `n_spikes_total` | spikes |  | All spikes in the well. |  |  | 4 |  |
+| `n_spikes_in_network_bursts` | spikes |  | Spikes inside network bursts; overlapping windows merged first so none is double counted. | `spikes falling inside the merged union of network burst windows` |  | 4 |  |
+| `fraction_spikes_in_network_bursts` | fraction, 0-1 | fraction of spikes within a network burst | Share of spiking that is organised into network bursts. | `n_spikes_in_network_bursts / n_spikes_total` | Riccio et al. 2025; network burst proportion in Verboven et al. 2025 | 4 |  |
+| `percent_random_spikes` | percent | **PRS** — percentage of random spikes | Share of spiking that happens outside any network burst. A culture can hold its burst rate while its neurons drift out of the bursts; only this ratio shows that. | `100 * (1 - fraction_spikes_in_network_bursts)` | Mossink et al. 2021, one of their core parameters | 4 |  |
 
 ## Per-tier summaries (`<tier>.metrics`)
 
 Aggregated across the events of one tier. Fields not listed here are the per-event field of the same name, summarised as `{mean, std, cv}`.
 
-| Key | Units | Definition | Formula | Literature | Since | Caveat |
-|---|---|---|---|---|---|---|
-| `burst_count` | count | Number of events in this tier. Always a real number, so it distinguishes a well with no bursts from one with undefined metrics. | `len(events)` |  | 1 |  |
-| `burst_rate_hz` | Hz | Events per second of recording. | `burst_count / recording_duration_s` | Chiappalone et al. 2005 Brain Res (NBR) | 1 | Before schema 2 the denominator was the spike span, inflating the rate in wells quiet at either end. |
-| `burst_duration_p95_s` | s | Upper tail of burst duration. A culture shifting from many short bursts to a few long ones can leave the mean unchanged. | `percentile(durations, 95)` |  | 2 |  |
-| `burst_duration_max_s` | s | Longest burst in the tier. | `max(durations)` |  | 2 |  |
-| `ibi_s` | s | Inter-burst interval, ONSET TO ONSET: the burst cycle period, which includes the burst itself. Network burst tier. | `stats(diff(sorted starts))` | Wagenaar et al. 2006 BMC Neurosci; Chiappalone et al. 2005 | 1 |  |
-| `ifbi_s` | s | As ibi_s, for the burst fragment tier. | `ibi_s` |  | 1 |  |
-| `isbi_s` | s | As ibi_s, for the superburst tier. | `ibi_s` |  | 1 |  |
-| `ibi_gap_s` | s | Inter-burst interval, OFFSET TO ONSET: the silent gap. Diverges from ibi_s when bursts are long. | `stats(clip(starts[1:] - ends[:-1], 0, None))` | Mossink et al. 2021 (NIBI); Axion convention | 2 | Clipped at 0 so nested or overlapping tiers cannot contribute negative silences. |
-| `ifbi_gap_s` | s | As ibi_gap_s, for the burst fragment tier. | `ibi_gap_s` |  | 2 |  |
-| `isbi_gap_s` | s | As ibi_gap_s, for the superburst tier. | `ibi_gap_s` |  | 2 |  |
-| `spike_count_per_burst` | spikes | stats of the per-event spike_count. Renamed on aggregation only. | `spike_count` |  | 1 |  |
+| Key | Units | Published name | Definition | Formula | Reference | Since | Caveat |
+|---|---|---|---|---|---|---|---|
+| `burst_count` | count |  | Number of events in this tier. Always a real number, so a well with no bursts is distinguishable from one with undefined metrics. | `len(events)` |  | 1 |  |
+| `burst_rate_hz` | Hz | **NBR** — network burst rate | Events per second of recording. | `burst_count / recording_duration_s` | Chiappalone et al. 2005; Mossink et al. 2021 | 1 | Before schema 2 the denominator was the spike span, inflating the rate in wells quiet at either end. |
+| `burst_rate_per_min` | bursts per minute | **NBR** — network burst rate | The same rate in the unit the literature quotes. | `burst_count / recording_duration_s * 60` | Mossink et al. 2021 define NBR per minute; well gates are quoted as >0.4 bursts/min and >1 network burst/min | 4 | Added so a per-minute threshold is never compared against a Hz value. |
+| `burst_duration_p95_s` | s |  | Upper tail of burst duration. A culture shifting from many short bursts to a few long ones can leave the mean unchanged while this moves. | `percentile(durations, 95)` |  | 2 |  |
+| `burst_duration_max_s` | s |  | Longest burst in the tier. | `max(durations)` |  | 2 |  |
+| `duty_cycle` | fraction of time, 0-1 | effective excitability (parameter-free factor) | Fraction of recording time the network spends inside a burst. Rises both when bursts lengthen and when they come closer together, so it summarises excitability without committing to a model fit. | `mean(burst_duration_s) / (mean(burst_duration_s) + mean(gap))` | Vinogradov et al. 2024 | 4 |  |
+| `ibi_s` | s | **NIBI** — network inter-burst interval | Inter-burst interval, ONSET TO ONSET: the burst cycle period, which includes the burst itself. Network burst tier. Recovery between bursts. Its CV is the standard rhythmicity index and one of the strongest discriminators reported in ID/ASD models (Frega et al. 2020). | `stats(diff(sorted starts))` | Mossink et al. 2021; Wagenaar et al. 2006 | 1 |  |
+| `ifbi_s` | s |  | As ibi_s, for the burst fragment tier. | `ibi_s` |  | 1 |  |
+| `isbi_s` | s |  | As ibi_s, for the superburst tier. | `ibi_s` |  | 1 |  |
+| `ibi_gap_s` | s | **NIBI** — network inter-burst interval (silent) | Inter-burst interval, OFFSET TO ONSET: the silent gap. Diverges from ibi_s when bursts are long. | `stats(clip(starts[1:] - ends[:-1], 0, None))` | Mossink et al. 2021 compute NIBI offset-to-onset; Axion convention | 2 | Clipped at 0 so nested or overlapping tiers cannot contribute negative silences. |
+| `ifbi_gap_s` | s |  | As ibi_gap_s, for the burst fragment tier. | `ibi_gap_s` |  | 2 |  |
+| `isbi_gap_s` | s |  | As ibi_gap_s, for the superburst tier. | `ibi_gap_s` |  | 2 |  |
 
 ## Diagnostics (`diagnostics`)
 
 What the detector adapted to. Six of these change per well, so they must be audited against experimental group before any phenotype is reported.
 
-| Key | Units | Definition | Formula | Literature | Since | Caveat |
-|---|---|---|---|---|---|---|
-| `schema_version` | integer | Version of this metric schema. See burst_common.SCHEMA_VERSION for what each version changed. Absent means a file written before versioning, i.e. schema 1 or 2. |  |  | 3 |  |
-| `detector` | string | Which detector produced the result: parameter_free or gaussian. |  |  | 2 | Must be checked before pooling wells: the two detectors do not populate the same tiers, and before schema 3 they disagreed on the units of peak_population_firing_rate_hz. |
-| `recording_duration_s` | s | Denominator used for every rate. |  |  | 2 |  |
-| `analysis_window_s` | s | Span between the first and last spike. Sets the binning window; detection thresholds are estimated over this period. |  |  | 2 |  |
-| `duration_source` | string | "recording" if the true duration reached the detector, "spike_span" if it fell back to the active span and every rate is therefore inflated. |  |  | 2 |  |
-| `burst_detection_valid` | boolean | False means the numbers in this file are not meaningful. Filter on this first. |  |  | 1 |  |
-| `n_units` | count | Units with at least one spike anywhere in the recording, after curation. Denominator of the synchrony signal and of every per-unit metric. |  |  | 1 | Not a passive covariate: it sets min_units_for_burst and the threshold percentile. Plot it by group before interpreting any burst metric. |
-| `n_bursty_units` | count | Units with is_bursty true. |  |  | 1 |  |
-| `bin_size_ms` | ms | Bin width for every population signal; defines what "simultaneous" means. | `clip(reference_isi_s * 1000, 20, 100)` | bounds from Chiappalone et al. 2005 | 1 | Adapts per well. Two wells with different bin sizes were measured with different definitions of synchrony. |
-| `reference_isi_s` | s | Biological interval scale driving bin size and the fragment merge gap. |  |  | 1 |  |
-| `reference_isi_source` | string | bursty_peak, all_percentile15 or default, in descending order of evidence. |  |  | 1 |  |
-| `participation_baseline` | fraction of units | Baseline co-activity the threshold is built from. | `median(synchrony signal)` |  | 1 | Also echoed into plot_data for the baseline line on the trace. The Gaussian detector reports the mean rather than the median there. |
-| `participation_mad` | fraction of units | Robust spread of the synchrony signal. | `median(abs(signal - baseline))` |  | 1 |  |
-| `participation_bc` | dimensionless | Sarle bimodality coefficient of the synchrony signal. Selects the threshold method; not a hard gate, because sparse bursting gives low BC even when real. |  |  | 1 |  |
-| `detection_threshold` | fraction of units | Synchrony level a peak had to exceed. | `max(0.03, baseline + 0.75*MAD) if participation_bc > 0.555 else max(0.03, percentile(signal, 95 + 5*exp(-n_units/50)))` | adaptive thresholding per Valkki et al. 2017 Front Comput Neurosci 11:40 | 1 | Adapts per well. Audit it against experimental group before reporting any phenotype. Also echoed into plot_data as the horizontal line drawn on the trace; the Gaussian detector puts null there because its threshold is in Hz, not synchrony-fraction space (see detection_threshold_hz). |
-| `threshold_source` | string | baseline_mad, or pNN.N naming the percentile used instead. |  |  | 1 |  |
-| `min_peak_synchrony_adaptive` | fraction of units | Raw single-bin co-activity a fragment had to reach to be kept. | `max(min_peak_synchrony, max(3, 0.10*n_units) / n_units)` |  | 1 |  |
-| `min_units_for_burst` | count | Absolute co-active unit floor behind min_peak_synchrony_adaptive. | `max(3, int(0.10 * n_units))` |  | 1 |  |
-| `fragment_merge_gap_s` | s | Largest gap across which two fragments may join into one network burst. | `percentile(intra-burst ISIs of bursty units, 95), else 3 * reference_isi_s` | Bakkum et al. 2013 | 1 |  |
-| `fragment_merge_gap_source` | string | intra_burst_isi_p95 or fallback_3x_isi. |  |  | 1 |  |
-| `nb_merge_gap_s` | s | Largest gap across which network bursts may join into a superburst. | `antimode of log10(inter-fragment intervals), else max(network_merge_gap_min, 0.3)` | 0.3 s floor from Tsodyks & Markram 1997 PNAS (vesicle recovery) | 1 |  |
-| `nb_merge_gap_source` | string | inter_fragment_antimode or fallback_floor. |  |  | 1 |  |
-| `superburst_merge_gap_s` | s | Duplicate of nb_merge_gap_s, kept for call-site compatibility. |  |  | 1 |  |
-| `superburst_min_dur_s` | s | Minimum superburst duration, default 2.5 s. |  | Wagenaar et al. 2006 | 1 |  |
-| `superburst_min_components` | count | Minimum network bursts in a superburst, default 2. |  | Wagenaar et al. 2006 define a superburst as a cluster | 2 | Was effectively 1 before schema 2, so every network burst longer than superburst_min_dur_s was also reported as a superburst. Superburst counts from schema 1 files are not comparable. |
-| `sigma_participation_bins` | bins | Gaussian smoothing width applied to the synchrony signal, 1-2 bins. |  |  | 1 |  |
-| `sigma_firing_rate_bins` | bins | Gaussian smoothing width applied to the per-unit rate, 3-8 bins. Wider because the rate is an unbounded count while synchrony is bounded and pre-averaged. |  |  | 1 | Affects the drawn trace and little else: burst_area is an integral, which Gaussian convolution preserves. |
-| `method` *(gaussian only)* | string | gaussian_population_rate_mean_plus_sd, or ..._no_height_gate when min_height_sd is disabled. |  |  | 2 |  |
-| `gaussian_sigma_s` *(gaussian only)* | s | Smoothing kernel sigma, default 0.1 s. Mirrors MATLAB GaussianSigma. |  |  | 1 |  |
-| `baseline_mean_hz` *(gaussian only)* | Hz per unit | Height gate baseline. | `mean(smoothed rate over the whole trace)` |  | 2 | Taken over the whole trace including bursts, so it rises with burst load. The literature convention, deliberately kept, but not a pure baseline. |
-| `baseline_std_hz` *(gaussian only)* | Hz per unit | Standard deviation behind the height gate; same whole-trace caveat as baseline_mean_hz. |  |  | 2 |  |
-| `min_height_sd` *(gaussian only)* | standard deviations | Height gate in units of baseline_std_hz, default 2.0. None disables it. |  | Chiappalone et al. 2005 use mean + N*SD | 2 | Added in schema 2. Without it a silent well still yielded network bursts. |
-| `detection_threshold_hz` *(gaussian only)* | Hz per unit | Rate a peak had to exceed. | `baseline_mean_hz + min_height_sd * baseline_std_hz` |  | 2 |  |
-| `min_prominence_hz` *(gaussian only)* | Hz per unit | Peak prominence requirement; defaults to baseline_std_hz. |  |  | 1 |  |
-| `min_peak_distance_s` *(gaussian only)* | s | Refractory distance between accepted peaks. |  |  | 1 |  |
-| `onset_offset_peak_frac` *(gaussian only)* | fraction of peak | Burst edges sit where the smoothed rate falls to this fraction of the peak. |  | MATLAB thresholdStartStop | 1 | Before schema 2 the code used peak * (1 - frac) instead of peak * frac, making durations roughly three times too short. |
-| `edge_rule` *(gaussian only)* | string | fraction_of_peak. Records which edge convention produced the durations. |  |  | 2 |  |
+| Key | Units | Published name | Definition | Formula | Reference | Since | Caveat |
+|---|---|---|---|---|---|---|---|
+| `schema_version` | integer |  | Version of this metric schema; see burst_common.SCHEMA_VERSION. Absent means a file written before versioning. |  |  | 3 |  |
+| `detector` | string |  | parameter_free or gaussian. |  |  | 2 | Check before pooling wells: the two detectors do not populate the same tiers. |
+| `recording_duration_s` | s |  | Denominator used for every rate. |  |  | 2 |  |
+| `analysis_window_s` | s |  | Span between the first and last spike; sets the binning window. |  |  | 2 |  |
+| `duration_source` | string |  | 'recording' if the true duration reached the detector, 'spike_span' if it fell back to the active span and every rate is therefore inflated. |  |  | 2 |  |
+| `burst_detection_valid` | boolean |  | False means the numbers in this file are not meaningful. Filter on this first. |  |  | 1 |  |
+| `n_units` | count |  | Units with at least one spike anywhere in the recording, after curation. |  |  | 1 | Not a passive covariate: it is the denominator of the co-activity signal and it sets min_units_for_burst and the threshold percentile. Plot it by group before interpreting any burst metric. |
+| `n_bursty_units_by_isi_statistics` | count |  | Units with is_bursty_by_isi_statistics true. Renamed from `n_bursty_units`. |  |  | 1 |  |
+| `bin_size_ms` | ms |  | Bin width for every population signal; defines what 'simultaneous' means. | `clip(reference_isi_s * 1000, 20, 100)` | bounds from Chiappalone et al. 2005 | 1 | Adapts per well. Two wells with different bin sizes were measured with different definitions of synchrony. |
+| `reference_isi_s` | s |  | Biological interval scale driving bin size and the fragment merge gap. |  |  | 1 |  |
+| `reference_isi_source` | string |  | bursty_peak, all_percentile15 or default, in descending order of evidence. |  |  | 1 |  |
+| `coactive_fraction_baseline` | fraction of units |  | Baseline co-activity the threshold is built from. Renamed from `participation_baseline`. | `median(co-activity signal)` |  | 1 | Also echoed into plot_data for the baseline line on the trace; the Gaussian detector reports the mean rather than the median there. |
+| `coactive_fraction_mad` | fraction of units |  | Robust spread of the co-activity signal. Renamed from `participation_mad`. | `median(abs(signal - baseline))` |  | 1 |  |
+| `coactive_fraction_bimodality` | dimensionless |  | Sarle bimodality coefficient of the co-activity signal; selects the threshold method rather than gating detection, because sparse bursting gives a low value even when real. Renamed from `participation_bc`. |  |  | 1 |  |
+| `detection_threshold` | fraction of units |  | Co-activity level a peak had to exceed. | `max(0.03, baseline + 0.75*MAD) if coactive_fraction_bimodality > 0.555 else max(0.03, percentile(signal, 95 + 5*exp(-n_units/50)))` | adaptive thresholding per Valkki et al. 2017 Front Comput Neurosci 11:40 | 1 | Adapts per well; audit it against experimental group before reporting a phenotype. Also echoed into plot_data as the line drawn on the trace, where the Gaussian detector puts null because its threshold is in Hz (see detection_threshold_hz). |
+| `threshold_source` | string |  | baseline_mad, or pNN.N naming the percentile used instead. |  |  | 1 |  |
+| `min_coactive_fraction` | fraction of units |  | Raw single-bin co-activity a fragment had to reach to be kept. Renamed from `min_peak_synchrony_adaptive`. | `max(min_peak_synchrony, max(3, 0.10*n_units) / n_units)` |  | 1 |  |
+| `min_units_for_burst` | count |  | Absolute co-active unit floor behind min_coactive_fraction. | `max(3, int(0.10 * n_units))` |  | 1 |  |
+| `fragment_merge_gap_s` | s |  | Largest gap across which two fragments may join into one network burst. | `percentile(intra-burst ISIs of bursty units, 95), else 3 * reference_isi_s` | Bakkum et al. 2013 | 1 |  |
+| `fragment_merge_gap_source` | string |  | intra_burst_isi_p95 or fallback_3x_isi. |  |  | 1 |  |
+| `nb_merge_gap_s` | s |  | Largest gap across which network bursts may join into a superburst. | `antimode of log10(inter-fragment intervals), else max(network_merge_gap_min, 0.3)` | 0.3 s floor from Tsodyks & Markram 1997 PNAS (vesicle recovery) | 1 |  |
+| `nb_merge_gap_source` | string |  | inter_fragment_antimode or fallback_floor. |  |  | 1 |  |
+| `superburst_merge_gap_s` | s |  | Duplicate of nb_merge_gap_s, kept for call-site compatibility. |  |  | 1 |  |
+| `superburst_min_dur_s` | s |  | Minimum superburst duration, default 2.5 s. |  | Wagenaar et al. 2006 | 1 |  |
+| `superburst_min_components` | count |  | Minimum network bursts in a superburst, default 2. |  | Wagenaar et al. 2006 define a superburst as a cluster | 2 | Effectively 1 before schema 2, so every network burst longer than superburst_min_dur_s was also reported as a superburst. Superburst counts from schema 1 files are not comparable. |
+| `sigma_coactivity_bins` | bins |  | Gaussian smoothing width applied to the co-activity signal, 1-2 bins. Renamed from `sigma_participation_bins`. |  |  | 1 |  |
+| `sigma_firing_rate_bins` | bins |  | Gaussian smoothing width applied to the per-unit rate, 3-8 bins; wider because the rate is an unbounded count while co-activity is bounded and pre-averaged. |  |  | 1 | Affects the drawn trace and little else: burst_area_spikes_per_unit is an integral, which Gaussian convolution preserves. |
+| `method` *(gaussian only)* | string |  | gaussian_population_rate_mean_plus_sd, or ..._no_height_gate when the height gate is disabled. |  |  | 2 |  |
+| `gaussian_sigma_s` *(gaussian only)* | s |  | Smoothing kernel sigma, default 0.1 s. Mirrors MATLAB GaussianSigma. |  |  | 1 |  |
+| `baseline_mean_hz` *(gaussian only)* | Hz per unit |  | Height gate baseline. | `mean(smoothed rate over the whole trace)` |  | 2 | Taken over the whole trace including bursts, so it rises with burst load. The literature convention, deliberately kept, but not a pure baseline. |
+| `baseline_std_hz` *(gaussian only)* | Hz per unit |  | Standard deviation behind the height gate; same whole-trace caveat as baseline_mean_hz. |  |  | 2 |  |
+| `min_height_sd` *(gaussian only)* | standard deviations |  | Height gate in units of baseline_std_hz, default 2.0; None disables it. |  | Chiappalone et al. 2005 use mean + N*SD | 2 | Added in schema 2. Without it a silent well still yielded network bursts. |
+| `detection_threshold_hz` *(gaussian only)* | Hz per unit |  | Rate a peak had to exceed. | `baseline_mean_hz + min_height_sd * baseline_std_hz` |  | 2 |  |
+| `min_prominence_hz` *(gaussian only)* | Hz per unit |  | Peak prominence requirement; defaults to baseline_std_hz. |  |  | 1 |  |
+| `min_peak_distance_s` *(gaussian only)* | s |  | Refractory distance between accepted peaks. |  |  | 1 |  |
+| `onset_offset_peak_frac` *(gaussian only)* | fraction of peak |  | Burst edges sit where the smoothed rate falls to this fraction of the peak. |  | MATLAB thresholdStartStop | 1 | Before schema 2 the code used peak*(1-frac) instead of peak*frac, making durations roughly three times too short. |
+| `edge_rule` *(gaussian only)* | string |  | fraction_of_peak. Records which edge convention produced the durations. |  |  | 2 |  |
 
 ## Plotting payload (`plot_data`, saved as `network_plot_data.npz`)
 
 Per-bin traces and event markers. Not analysis output.
 
-| Key | Units | Definition | Formula | Literature | Since | Caveat |
-|---|---|---|---|---|---|---|
-| `time_s` | s | Bin centres for every trace in plot_data. |  |  | 1 |  |
-| `participation_fraction_signal` | fraction of units, 0-1 | The synchrony trace. Historical name. |  |  | 1 | Misnamed: per-bin synchrony, not the per-burst participation_fraction. plot_data keys are splatted into helper.plot_clean_network as keyword arguments, so they cannot be renamed or extended without changing that signature. |
-| `population_firing_rate_hz` | Hz per unit | The smoothed per-unit rate trace. Historical name. |  |  | 1 | Misnamed: this is per unit, not an array-wide sum, and so differs from the event field peak_population_firing_rate_total_hz. |
-| `nb_peak_times_s` | s | peak_time_s of every network burst. |  |  | 1 |  |
-| `nb_peak_participation_fraction` | fraction of units, 0-1 | peak_synchrony of every network burst. Historical name. |  |  | 1 |  |
-| `sb_start_times_s` | s | Superburst onsets; empty for the Gaussian detector. |  |  | 1 |  |
-| `sb_end_times_s` | s | Superburst offsets; empty for the Gaussian detector. |  |  | 1 |  |
+| Key | Units | Published name | Definition | Formula | Reference | Since | Caveat |
+|---|---|---|---|---|---|---|---|
+| `time_s` | s |  | Bin centres for every trace in plot_data. |  |  | 1 |  |
+| `coactive_fraction_signal` | fraction of units, 0-1 |  | The per-bin co-activity trace: the detection signal. Renamed from `participation_fraction_signal`. |  |  | 4 | plot_data keys are splatted into helper.plot_clean_network as keyword arguments, so they must match that signature exactly. |
+| `population_firing_rate_hz` | Hz per unit |  | The smoothed per-unit population rate trace. |  |  | 1 | Name kept to match helper.plot_clean_network's parameter. Per unit, not an array-wide sum. |
+| `nb_peak_times_s` | s |  | peak_time_s of every network burst. |  |  | 1 |  |
+| `nb_peak_coactive_fraction` | fraction of units, 0-1 |  | coactive_fraction_peak of every network burst. Renamed from `nb_peak_participation_fraction`. |  |  | 4 |  |
+| `sb_start_times_s` | s |  | Superburst onsets; empty for the Gaussian detector. |  |  | 1 |  |
+| `sb_end_times_s` | s |  | Superburst offsets; empty for the Gaussian detector. |  |  | 1 |  |
 
 ## Null convention
 
@@ -162,10 +184,33 @@ Read `diagnostics.schema_version` before comparing files. Its absence means sche
 
 | Key | Changed in schema | What changed |
 |---|---|---|
-| `mean_firing_rate_hz` | 2 | Before schema 2 the denominator was the span between the first and last spike, which inflated the rate in a well quiet at either end. |
-| `peak_bin_synchrony` | 3 | Before schema 3 this existed only on fragments and was dropped when they were merged, so network burst and superburst summaries had no un-smoothed synchrony measure. |
-| `burst_area` | 3 | Yield-normalised, so comparable across wells. Nearly independent of the smoothing sigma, because Gaussian convolution preserves the integral. Before schema 3 the merged tiers summed component areas, which skipped the gaps that burst_duration_s spans. |
-| `spike_count` | 3 | NOT divided by n_units, so it rises with unit yield. Use spikes_per_burst_per_unit to compare wells. Before schema 3 merged tiers summed components, excluding the inter-component gaps. |
-| `peak_population_firing_rate_hz` | 3 | MEANING CHANGED IN SCHEMA 3. Before, the adaptive detector put the array-wide sum here while the Gaussian detector put the per-unit rate, so the same key differed between detectors by a factor of n_units and any table pooling both was meaningless. The array-wide value now lives in peak_population_firing_rate_total_hz. |
+| `mean_firing_rate_hz` | 2 | Before schema 2 the denominator was the span between first and last spike, inflating the rate in a well quiet at either end. |
+| `burst_peak_hz_per_unit` | 3 | MEANING CHANGED IN SCHEMA 3. Before, the adaptive detector put the array-wide sum under the old name while the Gaussian detector put the per-unit rate, so the same key differed between detectors by a factor of n_units. |
+| `burst_area_spikes_per_unit` | 3 | Nearly independent of the smoothing sigma, because Gaussian convolution preserves the integral. Before schema 3 merged tiers summed component areas, skipping the gaps that burst_duration_s spans. |
+| `spikes_per_burst` | 3 | NOT divided by n_units, so it rises with unit yield. Use spikes_per_burst_per_unit across wells. Before schema 3 merged tiers summed components, excluding inter-component gaps. |
 | `burst_rate_hz` | 2 | Before schema 2 the denominator was the spike span, inflating the rate in wells quiet at either end. |
+
+## Keys renamed
+
+| Was | Is now | Schema |
+|---|---|---|
+| `cv_isi` | `isi_cv` | 1 |
+| `bimodality_coefficient` | `log_isi_bimodality` | 1 |
+| `is_bursty` | `is_bursty_by_isi_statistics` | 1 |
+| `peak_participation_fraction` | `coactive_fraction_peak` | 4 |
+| `peak_bin_synchrony` | `coactive_fraction_max` | 4 |
+| `peak_population_firing_rate_hz` | `burst_peak_hz_per_unit` | 4 |
+| `peak_population_firing_rate_total_hz` | `burst_peak_hz_array` | 4 |
+| `burst_area` | `burst_area_spikes_per_unit` | 4 |
+| `spike_count / spike_count_per_burst` | `spikes_per_burst` | 4 |
+| `burst_density_hz` | `intraburst_rate_hz` | 4 |
+| `component_count` | `n_fragments` | 3 |
+| `n_bursty_units` | `n_bursty_units_by_isi_statistics` | 1 |
+| `participation_baseline` | `coactive_fraction_baseline` | 1 |
+| `participation_mad` | `coactive_fraction_mad` | 1 |
+| `participation_bc` | `coactive_fraction_bimodality` | 1 |
+| `min_peak_synchrony_adaptive` | `min_coactive_fraction` | 1 |
+| `sigma_participation_bins` | `sigma_coactivity_bins` | 1 |
+| `participation_fraction_signal` | `coactive_fraction_signal` | 4 |
+| `nb_peak_participation_fraction` | `nb_peak_coactive_fraction` | 4 |
 

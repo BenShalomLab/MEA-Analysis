@@ -252,14 +252,14 @@ def plot_clean_raster(
 def plot_clean_network(
     ax,
     time_s,
-    participation_fraction_signal,
+    coactive_fraction_signal,
     *,
     population_firing_rate_hz=None,
     nb_peak_times_s=None,
-    nb_peak_participation_fraction=None,
+    nb_peak_coactive_fraction=None,
     sb_start_times_s=None,
     sb_end_times_s=None,
-    participation_baseline=None,
+    coactive_fraction_baseline=None,
     detection_threshold=None,
     ylim=None,
     use_twinx=True,
@@ -278,7 +278,7 @@ def plot_clean_network(
         Main axis for the primary signal.
     time_s : array-like
         Time vector (seconds).
-    participation_fraction_signal : array-like
+    coactive_fraction_signal : array-like
         Primary signal to plot on `ax` (dimensionless participation
         fraction by default; a detector may pass a different signal, e.g.
         population firing rate in Hz, using `primary_ylabel`/`primary_label`
@@ -290,10 +290,10 @@ def plot_clean_network(
     nb_peak_times_s : array-like, optional
         Times of network burst peaks — always marked on the primary axis
         regardless of whether population_firing_rate_hz is provided.
-    nb_peak_participation_fraction : array-like, optional
+    nb_peak_coactive_fraction : array-like, optional
         Unused by this function; accepted for call-site compatibility with
         detector plot_data dicts.
-    participation_baseline : float, optional
+    coactive_fraction_baseline : float, optional
         Baseline of the primary signal.
     detection_threshold : float, optional
         Detection threshold in the primary signal's units.
@@ -313,7 +313,7 @@ def plot_clean_network(
     # -------------------------------------------------
     part_line, = ax.plot(
         time_s,
-        participation_fraction_signal,
+        coactive_fraction_signal,
         color="#B22222",
         lw=1.5,
         zorder=3,
@@ -327,9 +327,9 @@ def plot_clean_network(
     if ylim is not None:
         ax.set_ylim(ylim)
 
-    if participation_baseline is not None:
+    if coactive_fraction_baseline is not None:
         ax.axhline(
-            participation_baseline,
+            coactive_fraction_baseline,
             color="#FF6600",
             ls="--",
             lw=1.0,
@@ -355,7 +355,7 @@ def plot_clean_network(
     # signal is plotted, so a single-signal detector (e.g. gaussian) still
     # gets its NB peak dots.
     if nb_peak_times_s is not None and len(nb_peak_times_s) > 0:
-        peak_y = np.interp(nb_peak_times_s, time_s, participation_fraction_signal)
+        peak_y = np.interp(nb_peak_times_s, time_s, coactive_fraction_signal)
         ax.plot(nb_peak_times_s, peak_y, 'o', color='#d63031', ms=4, zorder=6)
 
     # -------------------------------------------------

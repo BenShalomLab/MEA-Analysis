@@ -411,9 +411,9 @@ class ReportsMixin:
             if detector_name == "gaussian":
                 diagnostics = network_data.get("diagnostics", {})
                 network_plot_kwargs = dict(plot_data)
-                network_plot_kwargs["participation_fraction_signal"] = plot_data.get("population_firing_rate_hz")
+                network_plot_kwargs["coactive_fraction_signal"] = plot_data.get("population_firing_rate_hz")
                 network_plot_kwargs["population_firing_rate_hz"] = None
-                network_plot_kwargs["participation_baseline"] = diagnostics.get("baseline_mean_hz")
+                network_plot_kwargs["coactive_fraction_baseline"] = diagnostics.get("baseline_mean_hz")
                 network_plot_kwargs["detection_threshold"] = diagnostics.get("detection_threshold_hz")
                 network_plot_kwargs["primary_ylabel"] = "Population Firing Rate (Hz)"
                 network_plot_kwargs["primary_label"] = "Population firing rate"

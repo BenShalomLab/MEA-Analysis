@@ -111,7 +111,7 @@ def test_yield_dependent_keys_say_so(dictionary):
     """The two keys that rise with unit count must carry an explicit
     normalised_by of null and a caveat, so nobody compares them across wells
     by accident."""
-    for key in ("spike_count", "peak_population_firing_rate_total_hz"):
+    for key in ("spikes_per_burst", "burst_peak_hz_array"):
         entry = dictionary["keys"][key]
         assert "normalised_by" in entry and entry["normalised_by"] is None
         assert entry.get("caveat")
@@ -120,7 +120,7 @@ def test_yield_dependent_keys_say_so(dictionary):
 def test_keys_whose_meaning_changed_record_the_schema_they_changed_in(dictionary):
     changed = {key for key, entry in dictionary["keys"].items()
                if entry.get("changed_in_schema")}
-    assert "peak_population_firing_rate_hz" in changed
+    assert "burst_peak_hz_per_unit" in changed
     assert "burst_rate_hz" in changed
     for key in changed:
         assert dictionary["keys"][key].get("caveat"), f"{key} changed silently"
