@@ -32,7 +32,7 @@ if str(root_dir) not in sys.path:
 
 # Import your custom modules
 try:
-    from config_loader import load_config, resolve_args, build_extra_args
+    from config_loader import load_config, resolve_args, build_extra_args, BURST_DETECTOR_CHOICES
 except ImportError as e:
     print(f"CRITICAL ERROR: Could not import helper modules. {e}")
     print(f"Current sys.path: {sys.path}")
@@ -134,11 +134,11 @@ def main():
     sort_group.add_argument("--skip-spikesorting", action="store_true",
         help="Run spike detection only, skip full sorting")
     sort_group.add_argument("--burst-detector", type=str, default=None,
-        choices=["parameter_free", "gaussian"],
-        help="Network burst detector to use, passed to each well (default: parameter_free).\n"
-             "'gaussian' is a literature-standard Gaussian population-rate\n"
-             "detector (single-tier: network_bursts only, no fragment/\n"
-             "superburst merging).")
+        choices=list(BURST_DETECTOR_CHOICES),
+        help="Network burst detector, passed to each well (default: both).\n"
+             "'both' runs every detector: parameter_free keeps the canonical file\n"
+             "names, gaussian writes the same files with a _gaussian suffix.\n"
+             "'parameter_free' or 'gaussian' runs only that one.")
     sort_group.add_argument("--gaussian-bin-size-s", type=float, default=None,
         help="Gaussian detector: histogram bin width in seconds (default: 0.01)")
     sort_group.add_argument("--gaussian-sigma-s", type=float, default=None,

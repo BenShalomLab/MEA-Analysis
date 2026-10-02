@@ -74,10 +74,10 @@ There is no test suite or linter configured. The only CI hook strips Jupyter not
 | File | Purpose |
 |------|---------|
 | `helper_functions.py` | Peak detection, file discovery, raster/network plotting, burst statistics |
-| `parameter_free_burst_detector.py` | Default network burst detector (`burst_detector: "parameter_free"`) — ISI-based per-unit bursts, participation-fraction signal, adaptive thresholding, three-tier fragment → network burst → superburst merging |
+| `parameter_free_burst_detector.py` | Primary network burst detector (`burst_detector: "parameter_free"`; also runs under the default `both`) — ISI-based per-unit bursts, participation-fraction signal, adaptive thresholding, three-tier fragment → network burst → superburst merging |
 | `meaplotter.py` | Visualization utilities (rasters, waveforms, probe maps) |
 | `spikeMatrix.py` | Spike raster and matrix operations |
-| `gaussianNetworkBursts.py` | Alternate network burst detector (`burst_detector: "gaussian"`) — literature-standard Gaussian-smoothed population-rate detector (mean+N·SD threshold, percentage-of-peak onset/offset), single-tier only, no fragment/superburst merging |
+| `gaussianNetworkBursts.py` | Second network burst detector (`burst_detector: "gaussian"`; runs alongside `parameter_free` under the default `both`, files suffixed `_gaussian`) — literature-standard Gaussian-smoothed population-rate detector (mean+N·SD threshold, percentage-of-peak onset/offset), single-tier only, no fragment/superburst merging |
 | `burst_common.py` | Shared `stats()`/`level_metrics()` used by both burst detectors so metric schemas stay identical |
 | `UnitMatch/runner.py` | Recursive unit merging pipeline |
 | `UnitMatch/reporting.py` | Merge report generation |
@@ -98,7 +98,7 @@ Path convention used for metadata inference: `<project>/<date>/<chip>/<run_id>/N
   ├── sorter_output/       # kilosort4 outputs
   ├── analyzer_output/     # waveforms, templates, quality metrics
   ├── *_raster_burst_plot.svg
-  ├── network_results.json
+  ├── network_results.json       # parameter_free; with --burst-detector both, gaussian adds network_results_gaussian.json (and _gaussian plots/npz/csv)
   ├── spike_times.npy
   ├── metrics_curated.xlsx
   ├── rejection_log.xlsx

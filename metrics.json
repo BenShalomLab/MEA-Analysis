@@ -273,6 +273,14 @@
       "definition_biology": "Falls as a burst becomes internally denser; a within-burst counterpart to the inter-burst interval.",
       "requires": "at least 2 spikes in the window, else null"
     },
+    "superburst_type": {
+      "scope": "event",
+      "units": "string",
+      "formula": "'elongated' when a network burst lasts longer than elongated_min_dur_s; 'cluster' when several network bursts are grouped across superburst_gap_s",
+      "definition": "Kind of superburst. Elongated: one prolonged network burst, typically many merged fragments. Cluster: a train of separate network bursts. An elongated burst inside a cluster is reported only as part of the cluster.",
+      "literature": "Cluster definition from Wagenaar et al. 2006",
+      "since_schema": 5
+    },
     "n_components": {
       "scope": "event",
       "units": "count",
@@ -566,15 +574,15 @@
     "superburst_min_dur_s": {
       "scope": "diagnostics",
       "units": "s",
-      "definition": "Minimum superburst duration, default 2.5 s.",
-      "literature": "Wagenaar et al. 2006",
-      "since_schema": 1
+      "definition": "Minimum duration of a cluster superburst. 0 means no minimum.",
+      "since_schema": 1,
+      "caveat": "Defaulted to 2.5 s before schema 5 and was attributed to Wagenaar et al. 2006. That paper defines superbursts by interval contrast and states no duration, so the 2.5 s had no source and was removed."
     },
     "superburst_min_components": {
       "scope": "diagnostics",
       "units": "count",
-      "definition": "Minimum network bursts in a superburst, default 2.",
-      "literature": "Wagenaar et al. 2006 define a superburst as a cluster",
+      "definition": "Minimum network bursts in a cluster superburst, default 2.",
+      "literature": "Wagenaar et al. 2006 define superbursts as clusters of bursts; the minimum of 2 is this pipeline's convention",
       "since_schema": 2,
       "caveat": "Effectively 1 before schema 2, so every network burst longer than superburst_min_dur_s was also reported as a superburst. Superburst counts from schema 1 files are not comparable."
     },
@@ -721,6 +729,13 @@
       "definition": "How fragments were merged into network bursts: 'continuity' (default), 'gap' (proximity only, the comparison condition matching published detectors) or 'none'.",
       "since_schema": 5
     },
+    "merge_floor": {
+      "scope": "diagnostics",
+      "units": "fraction of units",
+      "definition": "Level of the co-activity signal that the network must stay at or above between two fragments for them to merge into one network burst: the 25th percentile of the co-activity signal.",
+      "since_schema": 5,
+      "caveat": "The 25th percentile rather than the median, because the median is lifted by the bursts themselves. A signal that is exactly zero never counts as continuous."
+    },
     "fragment_max_gap_s": {
       "scope": "diagnostics",
       "units": "s",
@@ -728,31 +743,37 @@
       "since_schema": 5,
       "caveat": "Earlier versions gated this tier on the 95th percentile of within-burst SPIKE intervals from single units, 2-16 ms, against sub-burst pauses of 80-500 ms. No two fragments were ever that close, so the tier merged nothing and n_fragments was 1 for every event."
     },
-    "nb_ibi_bimodality": {
+    "nb_gap_bimodality": {
       "scope": "diagnostics",
       "units": "dimensionless",
-      "formula": "Sarle bimodality coefficient of log10(network burst onset-to-onset intervals)",
-      "definition": "Whether this well's network bursts are clustered in time. Above 0.555 means two interval populations, i.e. within-cluster and between-cluster, and superbursts exist.",
-      "literature": "Sarle 1990; superburst definition from Wagenaar et al. 2006",
-      "since_schema": 5,
-      "definition_biology": "A regularly bursting culture is unimodal and has no superburst structure; a culture that bursts in trains is bimodal."
+      "formula": "Sarle bimodality coefficient of log10(gaps), each gap from the END of one network burst to the START of the next",
+      "definition": "Whether this well's network bursts are clustered in time. Above 0.555 means two gap populations, within-cluster and between-cluster. None when there are fewer than 8 gaps.",
+      "literature": "Sarle 1990; cluster definition from Wagenaar et al. 2006",
+      "since_schema": 5
     },
     "superburst_gap_s": {
       "scope": "diagnostics",
       "units": "s",
-      "formula": "10 ** otsu_threshold(log10(network burst IBIs)), when nb_ibi_bimodality > 0.555",
-      "definition": "Largest interval across which network bursts are grouped into a superburst, derived from the network bursts' own interval distribution. None when the distribution is unimodal, in which case no superbursts are reported.",
-      "literature": "Otsu 1979; Otsu thresholding of MEA activity per Verboven et al. 2025",
+      "formula": "10 ** otsu_threshold(log10(gaps)) when the gaps are bimodal, else the geometric midpoint of the largest sorted-gap jump when it is at least 10x, else None",
+      "definition": "Largest gap, from the end of one network burst to the start of the next, across which network bursts are grouped into a cluster superburst. None when there is no cluster structure; elongated superbursts are still reported.",
+      "literature": "Otsu 1979; Wagenaar et al. 2006 (inter-cluster intervals at least 10x the intra-cluster ones)",
       "since_schema": 5,
       "renamed_from": "nb_merge_gap_s",
-      "caveat": "Earlier versions derived this from INTER-FRAGMENT intervals, i.e. tier-1 statistics setting a tier-2 threshold, and fell back to a hardcoded 0.75 s when no valley was found, which manufactured superbursts in regularly bursting cultures."
+      "caveat": "Earlier versions measured the interval between fragment starts, tested it with a histogram antimode and fell back to a hardcoded 0.75 s, so superbursts appeared in regularly bursting cultures."
     },
     "superburst_gap_source": {
       "scope": "diagnostics",
       "units": "string",
-      "definition": "nb_ibi_otsu, nb_ibi_not_bimodal (no superbursts reported), too_few_network_bursts, or user_override.",
+      "definition": "nb_gap_otsu, wagenaar_10x_break, no_cluster_structure (no cluster superbursts), too_few_network_bursts, or user_override.",
       "since_schema": 5,
       "renamed_from": "nb_merge_gap_source"
+    },
+    "elongated_min_dur_s": {
+      "scope": "diagnostics",
+      "units": "s",
+      "definition": "Duration above which a network burst is reported as an elongated superburst.",
+      "since_schema": 5,
+      "caveat": "A convention of this pipeline; no standard value was found in the literature."
     }
   },
   "stats_fields": {

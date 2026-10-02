@@ -63,7 +63,7 @@ if not __package__:
 
 try:
     if __package__:
-        from .config_loader import load_config, resolve_args
+        from .config_loader import load_config, resolve_args, BURST_DETECTOR_CHOICES
         from .mea_checkpoint import ProcessingStage, CHECKPOINT_SCHEMA_VERSION
         from .mea_infra import InfraMixin
         from .mea_preprocessing import PreprocessingMixin
@@ -74,7 +74,7 @@ try:
         from .mea_reports import ReportsMixin
         from .mea_resume import _normalize_resume_from_stage, _apply_resume_from_stage
     else:
-        from config_loader import load_config, resolve_args
+        from config_loader import load_config, resolve_args, BURST_DETECTOR_CHOICES
         from mea_checkpoint import ProcessingStage, CHECKPOINT_SCHEMA_VERSION
         from mea_infra import InfraMixin
         from mea_preprocessing import PreprocessingMixin
@@ -86,7 +86,7 @@ try:
         from mea_resume import _normalize_resume_from_stage, _apply_resume_from_stage
 except ImportError:
     try:
-        from MEA_Analysis.IPNAnalysis.config_loader import load_config, resolve_args
+        from MEA_Analysis.IPNAnalysis.config_loader import load_config, resolve_args, BURST_DETECTOR_CHOICES
         from MEA_Analysis.IPNAnalysis.mea_checkpoint import ProcessingStage, CHECKPOINT_SCHEMA_VERSION
         from MEA_Analysis.IPNAnalysis.mea_infra import InfraMixin
         from MEA_Analysis.IPNAnalysis.mea_preprocessing import PreprocessingMixin
@@ -150,7 +150,7 @@ def _default_option_kwargs() -> dict[str, Any]:
         "skip_preprocessing": False,
         "cuda_visible_devices": None,
         "output_subdir_after_well": None,
-        "burst_detector": "parameter_free",
+        "burst_detector": "both",
         "gaussian_burst_kwargs": None,
         "parameter_free_burst_kwargs": None,
     }
@@ -240,7 +240,7 @@ class MEAPipeline(
         self.preprocessed_recording = self.option_kwargs.get("preprocessed_recording")
         self.skip_preprocessing = bool(self.option_kwargs.get("skip_preprocessing"))
         self.cuda_visible_devices = self.option_kwargs.get("cuda_visible_devices")
-        self.burst_detector = self.option_kwargs.get("burst_detector") or "parameter_free"
+        self.burst_detector = self.option_kwargs.get("burst_detector") or "both"
         # Only non-None values override compute_network_bursts()'s own defaults.
         gaussian_kwargs = self.option_kwargs.get("gaussian_burst_kwargs") or {}
         self.gaussian_burst_kwargs = {k: v for k, v in gaussian_kwargs.items() if v is not None}
@@ -545,11 +545,14 @@ def main():
     # --- Burst detection ---
     burst_group = parser.add_argument_group("burst detection")
     burst_group.add_argument("--burst-detector", type=str, default=None,
-        choices=["parameter_free", "gaussian"],
-        help="Network burst detector to use (default: parameter_free).\n"
-             "'gaussian' is a literature-standard Gaussian population-rate\n"
-             "detector (single-tier: network_bursts only, no fragment/\n"
-             "superburst merging).")
+        choices=list(BURST_DETECTOR_CHOICES),
+        help="Network burst detector (default: both).\n"
+             "'both' runs every detector on the same spikes: parameter_free keeps\n"
+             "the canonical file names, gaussian writes the same files with a\n"
+             "_gaussian suffix. 'parameter_free' or 'gaussian' runs only that one\n"
+             "under the canonical names. 'gaussian' is a literature-standard Gaussian\n"
+             "population-rate detector (single-tier: network_bursts only, no\n"
+             "fragment/superburst merging).")
     burst_group.add_argument("--gaussian-bin-size-s", type=float, default=None,
         help="Gaussian detector: histogram bin width in seconds (default: 0.01)")
     burst_group.add_argument("--gaussian-sigma-s", type=float, default=None,
@@ -567,7 +570,7 @@ def main():
              "reproduce the MATLAB ThresholdMethod='Adaptive' behaviour.")
     burst_group.add_argument("--pf-min-superburst-dur-s",
         dest="parameter_free_min_superburst_dur_s", type=float, default=None,
-        help="parameter_free detector: minimum superburst duration in seconds (default: 2.5)")
+        help="parameter_free detector: minimum duration of a cluster superburst in seconds (default: 0, no minimum)")
     burst_group.add_argument("--pf-min-superburst-components",
         dest="parameter_free_min_superburst_components", type=int, default=None,
         help="parameter_free detector: minimum component network bursts per\n"

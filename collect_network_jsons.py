@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Collect network_results.json files and export per-project CSVs.
+"""Collect network_results.json files (and network_results_<detector>.json when
+both burst detectors ran) and export per-project CSVs.
 
 Uses the canonical schema produced by parameter_free_burst_detector.py:
   - burst_fragments / network_bursts / superbursts
@@ -56,8 +57,8 @@ _DIAG_KEYS = [
     "burst_detection_valid",
     "detection_threshold", "threshold_source",
     "min_coactive_fraction", "min_units_for_burst",
-    "fragment_merge_rule", "fragment_max_gap_s",
-    "nb_ibi_bimodality", "superburst_gap_s", "superburst_gap_source",
+    "fragment_merge_rule", "merge_floor", "fragment_max_gap_s",
+    "nb_gap_bimodality", "superburst_gap_s", "superburst_gap_source", "elongated_min_dur_s",
     "superburst_min_dur_s", "superburst_min_components",
     "duration_source", "recording_duration_s", "analysis_window_s",
     "sigma_coactivity_bins", "sigma_firing_rate_bins",
@@ -177,7 +178,7 @@ def _flatten_spike_participation(block: dict | None) -> dict:
 def extract_row(json_path: Path) -> dict:
     """Flatten a single network_results.json into a row dict."""
     well_dir = json_path.parent
-    row: dict = {"output_dir": str(well_dir)}
+    row: dict = {"output_dir": str(well_dir), "result_file": json_path.name}
     row.update(_parse_path_metadata(well_dir))
 
     try:
@@ -215,8 +216,15 @@ def extract_row(json_path: Path) -> dict:
 
 # ── Collection ────────────────────────────────────────────────────────────────
 
+def _is_result_file(path: Path) -> bool:
+    """network_results.json, or network_results_<detector>.json when several
+    detectors ran. A leftover .tmp.json from an interrupted write is not a result."""
+    return path.suffix == ".json" and not path.name.endswith(".tmp.json")
+
+
 def collect(root: Path) -> list[dict]:
-    return [extract_row(f) for f in sorted(root.rglob("network_results.json"))]
+    files = [f for f in root.rglob("network_results*.json") if _is_result_file(f)]
+    return [extract_row(f) for f in sorted(files)]
 
 
 def collect_from_checkpoints(checkpoint_dir: Path) -> list[dict]:
@@ -230,8 +238,9 @@ def collect_from_checkpoints(checkpoint_dir: Path) -> list[dict]:
         out_dir = cp.get("output_dir") or cp.get("analyzer_folder")
         if not out_dir:
             continue
-        nf = Path(out_dir) / "network_results.json"
-        if nf.exists():
+        for nf in sorted(Path(out_dir).glob("network_results*.json")):
+            if not _is_result_file(nf):
+                continue
             row = extract_row(nf)
             for key in ("project", "date", "chip", "run", "well"):
                 cp_val = (cp.get(key) or cp.get(f"{key}_id")
@@ -256,6 +265,8 @@ def to_dataframes(rows: list[dict]) -> dict[str, pd.DataFrame]:
     if "data_dir" in df.columns:
         id_cols.append("data_dir")
     id_cols.append("output_dir")
+    if "result_file" in df.columns:
+        id_cols.append("result_file")
     metric_cols = [c for c in df.columns if c not in id_cols and c != "error"]
 
     def _col_sort_key(c: str) -> tuple:

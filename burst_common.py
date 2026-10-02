@@ -47,20 +47,27 @@ import numpy as np
 #      (PRS). participation_fraction keeps its name: it is the published term
 #      for breadth of recruitment.
 #
-#   5  Merging restructured so each tier's criterion comes from its own
-#      level. Fragment -> network burst is now gated on continuity of the
-#      population co-activity alone, with no gap: the previous gap came from
-#      within-burst SPIKE intervals of single units (2-16 ms) while sub-burst
-#      pauses are 80-500 ms, so that tier merged nothing and n_fragments was
-#      always 1. Network burst -> superburst is now derived from the network
-#      bursts' OWN inter-burst intervals, split by Otsu's method and gated on
-#      their bimodality, rather than from inter-fragment intervals with a
-#      hardcoded 0.75 s fallback; a culture whose intervals are unimodal is
-#      reported as having no superbursts instead of manufactured ones.
-#      Diagnostics renamed accordingly: nb_merge_gap_s -> superburst_gap_s,
-#      nb_merge_gap_source -> superburst_gap_source; fragment_merge_gap_s and
-#      superburst_merge_gap_s removed; fragment_merge_rule,
-#      fragment_max_gap_s and nb_ibi_bimodality added.
+#   5  Fragment -> network burst merging restructured. It is now gated on
+#      continuity of the population co-activity alone, with no gap: the
+#      previous gap came from within-burst SPIKE intervals of single units
+#      (2-16 ms in fixtures) while sub-burst pauses are 80-500 ms. A fragment
+#      pair merges when the lowest co-activity between them stays at or above
+#      the 25th percentile of the signal (merge_floor); a valley of exactly
+#      zero never counts as continuous. Superbursts have two types, carried
+#      in each event's superburst_type: "elongated", any network burst longer
+#      than elongated_min_dur_s (2 s), and "cluster", network bursts grouped
+#      across a gap. The gap is measured from the END of one network burst to
+#      the START of the next. If log10(gaps) is bimodal (Sarle > 0.555, two
+#      gaps in each mode, long mode at least 10x the short) the gap is the
+#      Otsu split; if not, the Wagenaar et al. 2006 contrast is the fallback
+#      (a 10x jump between sorted gaps); otherwise there are no cluster
+#      superbursts. The hardcoded 0.75 s fallback is gone. Diagnostics:
+#      fragment_merge_gap_s, fragment_merge_gap_source, nb_merge_gap_s,
+#      nb_merge_gap_source and superburst_merge_gap_s removed;
+#      fragment_merge_rule, merge_floor, fragment_max_gap_s, nb_gap_bimodality,
+#      superburst_gap_s, superburst_gap_source and elongated_min_dur_s added.
+#      The 2.5 s minimum superburst duration is removed (default 0): it was
+#      attributed to Wagenaar et al. 2006, which gives no duration.
 #
 # Units, formula and literature for every key are in metrics.json, rendered
 # to docs/metrics.md.

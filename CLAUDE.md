@@ -73,7 +73,7 @@ There is no test suite or linter configured.
 | `mea_merge.py` | `MergeMixin` | Optional UnitMatch or `auto_merge_units` phase |
 | `mea_analyzer.py` | `AnalyzerMixin` | Templates, quality metrics, unit locations |
 | `mea_waveform.py` | `WaveformMixin` | Per-unit raw mean template extraction |
-| `mea_reports.py` | `ReportsMixin` | Curation, waveform PDFs, probe maps, raster + burst plots; selects the network-burst detector via `self.burst_detector` (config `burst_detection.burst_detector` / `--burst-detector`) |
+| `mea_reports.py` | `ReportsMixin` | Curation, waveform PDFs, probe maps, raster + burst plots; runs the network-burst detector(s) selected via `self.burst_detector` (config `burst_detection.burst_detector` / `--burst-detector both|parameter_free|gaussian`, default `both`): `parameter_free` keeps the canonical output names, `gaussian` writes `*_gaussian` files alongside |
 | `mea_resume.py` | — | `--resume-from` stage rewind helpers |
 
 **`config_loader.py` — Shared Configuration**
@@ -86,11 +86,11 @@ There is no test suite or linter configured.
 | File | Purpose |
 |------|---------|
 | `helper_functions.py` | Peak detection, file discovery, raster/network plotting, burst statistics |
-| `parameter_free_burst_detector.py` | Default network burst detector (`burst_detector: "parameter_free"`). Adaptive: per-unit ISI bursts, participation-fraction signal, adaptive thresholding, three-tier fragment → network burst → superburst merging |
+| `parameter_free_burst_detector.py` | Primary network burst detector (`burst_detector: "parameter_free"`; also runs under the default `both`). Adaptive: per-unit ISI bursts, participation-fraction signal, adaptive thresholding, three-tier fragment → network burst → superburst merging |
 | `config_loader.py` | Three-level priority config (CLI → JSON → defaults); shared by driver and routine |
 | `meaplotter.py` | Advanced visualization utilities |
 | `spikeMatrix.py` | Spike raster representation and matrix operations |
-| `gaussianNetworkBursts.py` | Alternate network burst detector (`burst_detector: "gaussian"`). Literature-standard Gaussian-smoothed population-rate detector (Chiappalone 2005 / Wagenaar 2006 style): mean+N·SD threshold, percentage-of-peak onset/offset. Single-tier only — `network_bursts` populated directly, no fragment/superburst merging |
+| `gaussianNetworkBursts.py` | Second network burst detector (`burst_detector: "gaussian"`; runs alongside `parameter_free` under the default `both`, files suffixed `_gaussian`). Literature-standard Gaussian-smoothed population-rate detector (Chiappalone 2005 / Wagenaar 2006 style): mean+N·SD threshold, percentage-of-peak onset/offset. Single-tier only — `network_bursts` populated directly, no fragment/superburst merging |
 | `burst_common.py` | Shared `stats()`/`level_metrics()` used by both burst detectors so JSON/Excel metric schemas stay identical across detectors |
 | `UnitMatch/runner.py` | Recursive unit merging pipeline |
 | `UnitMatch/reporting.py` | Merge report generation |
@@ -111,7 +111,7 @@ Path convention for metadata inference: `<project>/<date>/<chip>/<run_id>/Networ
   ├── sorter_output/             # kilosort4 outputs
   ├── analyzer_output/           # waveforms, templates, quality metrics
   ├── *_raster_burst_plot.svg    # raster + burst overlays (full, 30s, 60s)
-  ├── network_results.json       # burst statistics
+  ├── network_results.json       # burst statistics (parameter_free; with `both`, gaussian is network_results_gaussian.json, same for plots/npz/csv)
   ├── spike_times.npy
   ├── metrics_curated.xlsx       # quality metrics post-curation
   ├── rejection_log.xlsx

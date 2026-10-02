@@ -149,27 +149,29 @@ def test_unit_firing_rate_uses_the_recording_duration():
 # A4: a superburst is a cluster of network bursts, not one long burst
 # ---------------------------------------------------------------------------
 
-def test_a_single_long_burst_is_not_a_superburst():
+def test_a_single_long_burst_is_an_elongated_superburst():
+    """Superbursts have two types: clusters of network bursts, and single
+    network bursts longer than 2 s (elongated)."""
     spikes = _clusters_and_one_long_burst()
     result = pf_detect(SpikeTimes=spikes, duration_s=70.0)
 
     assert result["diagnostics"]["superburst_min_components"] == 2
     events = result["superbursts"]["events"]
-    assert len(events) == 2, "expected only the two genuine burst clusters"
-    assert all(event["n_components"] >= 2 for event in events)
+    clusters = [e for e in events if e["superburst_type"] == "cluster"]
+    elongated = [e for e in events if e["superburst_type"] == "elongated"]
+    assert len(clusters) == 2, "the two genuine burst clusters"
+    assert all(e["n_components"] >= 2 for e in clusters)
+    assert len(elongated) == 1
+    assert elongated[0]["n_components"] == 1
+    assert elongated[0]["burst_duration_s"] > 2.0
 
-    # The long burst is still reported, as a long network burst.
-    assert result["network_bursts"]["metrics"]["burst_duration_max_s"] > 2.5
 
-
-def test_single_component_superbursts_can_be_re_enabled():
-    """The old behaviour stays reachable, it is just no longer the default."""
+def test_the_elongated_cutoff_is_adjustable():
     spikes = _clusters_and_one_long_burst()
-    strict = pf_detect(SpikeTimes=spikes, duration_s=70.0)
-    permissive = pf_detect(SpikeTimes=spikes, duration_s=70.0, min_superburst_components=1)
-
-    assert len(permissive["superbursts"]["events"]) == len(strict["superbursts"]["events"]) + 1
-    assert any(e["n_components"] == 1 for e in permissive["superbursts"]["events"])
+    strict = pf_detect(SpikeTimes=spikes, duration_s=70.0, elongated_burst_min_dur_s=10.0)
+    assert not [e for e in strict["superbursts"]["events"]
+                if e["superburst_type"] == "elongated"]
+    assert strict["diagnostics"]["elongated_min_dur_s"] == 10.0
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,41 @@ import json
 from pathlib import Path
 
 # ----------------------------------------------------------
+# Burst detectors
+# ----------------------------------------------------------
+# --burst-detector takes one detector or "both". "both" runs every detector in
+# BURST_DETECTORS_ALL on the same spike times. The primary detector keeps the
+# canonical output file names (network_results.json, raster_burst_plot*.svg,
+# ...) so everything that reads them keeps working; the other detector writes
+# the same files with its name as a suffix (network_results_gaussian.json).
+BURST_DETECTOR_CHOICES = ("both", "parameter_free", "gaussian")
+BURST_DETECTORS_ALL = ("parameter_free", "gaussian")
+PRIMARY_BURST_DETECTOR = "parameter_free"
+
+
+def resolve_burst_detectors(selection):
+    """Detectors to run for a --burst-detector value: "both" -> all, else one."""
+    name = (selection or "both")
+    name = name.strip().lower() if isinstance(name, str) else name
+    if name == "both":
+        return list(BURST_DETECTORS_ALL)
+    if name in BURST_DETECTORS_ALL:
+        return [name]
+    raise ValueError(
+        f"Unknown burst_detector {selection!r}; choose one of {list(BURST_DETECTOR_CHOICES)}"
+    )
+
+
+def burst_file_suffix(detector, selection):
+    """"" for canonical file names, "_<detector>" for the non-primary detector
+    when both are run. A single selected detector always uses the canonical names."""
+    names = resolve_burst_detectors(selection)
+    if len(names) > 1 and detector != PRIMARY_BURST_DETECTOR:
+        return f"_{detector}"
+    return ""
+
+
+# ----------------------------------------------------------
 # Hardcoded Defaults
 # ----------------------------------------------------------
 DEFAULTS = {
@@ -29,14 +64,14 @@ DEFAULTS = {
         "kilosort_params":  None,
     },
     "burst_detection": {
-        "burst_detector":   "parameter_free",
+        "burst_detector":   "both",
         "gaussian_bin_size_s":            0.01,
         "gaussian_sigma_s":               0.1,
         "gaussian_min_prominence":        None,
         "gaussian_min_peak_distance_s":   1.0,
         "gaussian_onset_offset_peak_frac": 0.3,
         "gaussian_min_height_sd":         2.0,
-        "parameter_free_min_superburst_dur_s":      2.5,
+        "parameter_free_min_superburst_dur_s":      0.0,
         "parameter_free_min_superburst_components": 2,
     },
     "merging": {
@@ -153,7 +188,7 @@ def _bool(args, attr):
 # Main resolver - works for both scripts
 # ----------------------------------------------------------
 def resolve_args(args, config):
-    return {
+    resolved = {
         # io
         "output_dir":                   _resolve(getattr(args, "output_dir", None),                 _cfg(config, "io", "output_dir"),               DEFAULTS["io"]["output_dir"]),
         "checkpoint_dir":               _resolve(getattr(args, "checkpoint_dir", None),             _cfg(config, "io", "checkpoint_dir"),           DEFAULTS["io"]["checkpoint_dir"]),
@@ -201,6 +236,10 @@ def resolve_args(args, config):
         "no_curation":          _resolve(_bool(args, "no_curation"),         _cfg(config, "curation", "no_curation"),     DEFAULTS["curation"]["no_curation"]),
         "quality_thresholds":   _resolve_thresholds(args, config),
     }
+    # Fail early on a bad value from the config file; the CLI already restricts it.
+    resolve_burst_detectors(resolved["burst_detector"])
+    return resolved
+
 
 
 # ----------------------------------------------------------

@@ -552,7 +552,7 @@ def mark_burst_hierarchy(
     show_burstlet_ticks=True,
     show_network_ticks=True,
     show_superburst_bars=True,
-    min_superburst_duration_s=2.5
+    min_superburst_duration_s=0.0
 ):
     burstlets = burstlets or []
     network_bursts = network_bursts or []

@@ -122,7 +122,7 @@ fallback picks it up automatically on every future run.
 
 ## Supporting Modules
 
-- **config_loader.py** — Config file loading, CLI/config/default resolution, subprocess arg builder
+- **config_loader.py** — Config file loading, CLI/config/default resolution, subprocess arg builder. `--burst-detector both|parameter_free|gaussian` (default `both`) selects the network burst detector(s)
 - **helper_functions.py** — Peak detection, file discovery, raster and network plotting utilities
 - **parameter_free_burst_detector.py** — Adaptive network burst detection with:
   - Per-unit ISI bursts (biological calibration)
@@ -148,7 +148,8 @@ Output organized as:
   ├── raster_burst_plot.svg      (full recording raster + network burst)
   ├── raster_burst_plot_30s.svg  (30s zoom)
   ├── raster_burst_plot_60s.svg  (60s zoom)
-  ├── network_results.json       (burst statistics)
+  ├── network_results.json       (burst statistics, parameter_free)
+  ├── network_results_gaussian.json (same files with a _gaussian suffix when the gaussian detector also ran)
   ├── spike_times.npy            (spike times per unit)
   ├── raw_mean_templates.npy     (optional per-unit raw mean templates on extremum channels)
   ├── processing_info.json       (records whether spike sorting was used)

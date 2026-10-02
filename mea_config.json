@@ -17,15 +17,15 @@
   },
 
   "burst_detection": {
-    "_comment": "burst_detector: parameter_free (default, adaptive fragment/network-burst/superburst hierarchy) | gaussian (literature-standard Gaussian population-rate detector, network_bursts tier only, no merging). gaussian_* fields apply only to the gaussian detector, parameter_free_* only to the parameter_free one. gaussian_min_prominence: null derives it from the signal (its SD, per-unit Hz). gaussian_min_height_sd: peak height gate at mean + N*SD of the smoothed rate; set 0 to disable it and reproduce the MATLAB ThresholdMethod='Adaptive' code as shipped, which applies no height gate and therefore reports bursts even in silent wells. gaussian_onset_offset_peak_frac: burst edges where the rate falls below peak * this fraction, so smaller means longer bursts. parameter_free_min_superburst_components: 2 makes a superburst a cluster of network bursts (Wagenaar 2006); 1 would additionally label every single network burst longer than the duration floor a superburst.",
-    "burst_detector": "parameter_free",
+    "_comment": "burst_detector: both (default; runs every detector, parameter_free under the canonical file names and gaussian with a _gaussian suffix) | parameter_free (adaptive fragment/network-burst/superburst hierarchy) | gaussian (literature-standard Gaussian population-rate detector, network_bursts tier only, no merging). gaussian_* fields apply only to the gaussian detector, parameter_free_* only to the parameter_free one. gaussian_min_prominence: null derives it from the signal (its SD, per-unit Hz). gaussian_min_height_sd: peak height gate at mean + N*SD of the smoothed rate; set 0 to disable it and reproduce the MATLAB ThresholdMethod='Adaptive' code as shipped, which applies no height gate and therefore reports bursts even in silent wells. gaussian_onset_offset_peak_frac: burst edges where the rate falls below peak * this fraction, so smaller means longer bursts. parameter_free_min_superburst_components: 2 makes a superburst a cluster of network bursts (Wagenaar 2006); 1 would additionally label every single network burst longer than the duration floor a superburst.",
+    "burst_detector": "both",
     "gaussian_bin_size_s": 0.01,
     "gaussian_sigma_s": 0.1,
     "gaussian_min_prominence": null,
     "gaussian_min_peak_distance_s": 1.0,
     "gaussian_onset_offset_peak_frac": 0.3,
     "gaussian_min_height_sd": 2.0,
-    "parameter_free_min_superburst_dur_s": 2.5,
+    "parameter_free_min_superburst_dur_s": 0.0,
     "parameter_free_min_superburst_components": 2
   },
 

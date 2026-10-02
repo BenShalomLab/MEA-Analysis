@@ -26,6 +26,7 @@ except ImportError:
 
 try:
     from burst_common import SCHEMA_VERSION as burst_schema_version
+    from config_loader import resolve_burst_detectors, burst_file_suffix
     from parameter_free_burst_detector import compute_network_bursts as compute_network_bursts_parameter_free
     from gaussianNetworkBursts import compute_network_bursts as compute_network_bursts_gaussian
     import helper_functions as helper
@@ -33,6 +34,7 @@ try:
 except ImportError:
     try:
         from MEA_Analysis.IPNAnalysis.burst_common import SCHEMA_VERSION as burst_schema_version
+        from MEA_Analysis.IPNAnalysis.config_loader import resolve_burst_detectors, burst_file_suffix
         from MEA_Analysis.IPNAnalysis.parameter_free_burst_detector import compute_network_bursts as compute_network_bursts_parameter_free
         from MEA_Analysis.IPNAnalysis.gaussianNetworkBursts import compute_network_bursts as compute_network_bursts_gaussian
         from MEA_Analysis.IPNAnalysis import helper_functions as helper
@@ -364,9 +366,40 @@ class ReportsMixin:
             self.logger.warning("Spike times dictionary is empty. Skipping burst analysis.")
             return
 
+        # "both" runs every detector on the same spikes. Each one writes its own
+        # files (the primary under the canonical names, the others with a
+        # _<detector> suffix), so no detector overwrites another. One detector
+        # failing does not stop the other; the failure is raised at the end so
+        # the stage is not marked complete.
+        selection = getattr(self, "burst_detector", "both")
+        failures = []
+        for detector_name in resolve_burst_detectors(selection):
+            suffix = burst_file_suffix(detector_name, selection)
+            self.logger.info("Burst detector '%s' (selection '%s')", detector_name, selection)
+            try:
+                self._run_single_burst_detector(
+                    detector_name, suffix, spike_times,
+                    plot_mode, plot_debug, raster_sort, fixed_y,
+                )
+            except Exception as e:
+                failures.append((detector_name, e))
+                self.logger.error("Burst detector '%s' failed: %s", detector_name, e)
+        if failures:
+            raise RuntimeError(
+                "Burst analysis failed for: " + ", ".join(name for name, _ in failures)
+            ) from failures[0][1]
+
+    def _y_max_summary_file(self, suffix):
+        """Project-level y-max summary used by --fixed-y. One file per detector,
+        because the primary signal's units differ (fraction of units vs Hz)."""
+        return self.output_root / self.project_name / f"{self.project_name}_y_max_summary{suffix}.json"
+
+    def _run_single_burst_detector(self, detector_name, suffix, spike_times,
+                                   plot_mode, plot_debug, raster_sort, fixed_y):
+        """Run one detector and write its results and plots. `suffix` is appended
+        to every file stem ("" for the canonical names)."""
         try:
             # A. Run network burst detector
-            detector_name = getattr(self, "burst_detector", "parameter_free")
             detector_fn = BURST_DETECTORS.get(detector_name)
             if detector_fn is None:
                 self.logger.error(
@@ -423,17 +456,17 @@ class ReportsMixin:
             # C. Save plot_data as npz — large float arrays, not suited for JSON
             if plot_data:
                 np.savez(
-                    self.output_dir / "network_plot_data.npz",
+                    self.output_dir / f"network_plot_data{suffix}.npz",
                     **{k: np.asarray(v) for k, v in plot_data.items()}
                 )
-                self.logger.info("Saved network_plot_data.npz")
+                self.logger.info("Saved network_plot_data%s.npz", suffix)
 
             # D. Save unit_stats as CSV
             if unit_stats:
                 df_units = pd.DataFrame.from_dict(unit_stats, orient="index")
                 df_units.index.name = "unit_id"
-                df_units.to_csv(self.output_dir / "unit_stats.csv")
-                self.logger.info("Saved unit_stats.csv")
+                df_units.to_csv(self.output_dir / f"unit_stats{suffix}.csv")
+                self.logger.info("Saved unit_stats%s.csv", suffix)
 
             # E. Save lean JSON
             network_data_clean = helper.recursive_clean(network_data)
@@ -454,8 +487,8 @@ class ReportsMixin:
             network_data_clean["run_id"] = self.run_id
             network_data_clean["well"] = self.well
 
-            temp_file = self.output_dir / "network_results.tmp.json"
-            final_file = self.output_dir / "network_results.json"
+            temp_file = self.output_dir / f"network_results{suffix}.tmp.json"
+            final_file = self.output_dir / f"network_results{suffix}.json"
 
             with open(temp_file, "w") as f:
                 json.dump(network_data_clean, f, indent=2)
@@ -528,7 +561,7 @@ class ReportsMixin:
                     show_burstlet_ticks=True,
                     show_network_ticks=True,
                     show_superburst_bars=True,
-                    min_superburst_duration_s=2.5
+                    min_superburst_duration_s=0.0
                 )
 
                 hierarchy_handles = [
@@ -544,12 +577,12 @@ class ReportsMixin:
                 if plot_mode == "separate":
                     plt.subplots_adjust(hspace=0.10)
 
-            full_svg   = self.output_dir / "raster_burst_plot.svg"
-            full_png   = self.output_dir / "raster_burst_plot.png"
-            zoom60_svg = self.output_dir / "raster_burst_plot_60s.svg"
-            zoom60_png = self.output_dir / "raster_burst_plot_60s.png"
-            zoom30_svg = self.output_dir / "raster_burst_plot_30s.svg"
-            zoom30_png = self.output_dir / "raster_burst_plot_30s.png"
+            full_svg   = self.output_dir / f"raster_burst_plot{suffix}.svg"
+            full_png   = self.output_dir / f"raster_burst_plot{suffix}.png"
+            zoom60_svg = self.output_dir / f"raster_burst_plot{suffix}_60s.svg"
+            zoom60_png = self.output_dir / f"raster_burst_plot{suffix}_60s.png"
+            zoom30_svg = self.output_dir / f"raster_burst_plot{suffix}_30s.svg"
+            zoom30_png = self.output_dir / f"raster_burst_plot{suffix}_30s.png"
 
             plt.savefig(full_svg)
             plt.savefig(full_png, dpi=300)
@@ -573,7 +606,7 @@ class ReportsMixin:
             # --fixed-y can compute a global max across all wells in a later run.
             try:
                 y_max = float(ax_network.get_ylim()[1])
-                summary_file = self.output_root / self.project_name / f"{self.project_name}_y_max_summary.json"
+                summary_file = self._y_max_summary_file(suffix)
                 summary_file.parent.mkdir(parents=True, exist_ok=True)
                 summary = {}
                 if summary_file.exists():
@@ -591,7 +624,7 @@ class ReportsMixin:
             self.logger.info("Burst analysis plots saved successfully.")
 
             if fixed_y:
-                summary_file = self.output_root / self.project_name / f"{self.project_name}_y_max_summary.json"
+                summary_file = self._y_max_summary_file(suffix)
                 if not summary_file.exists():
                     self.logger.error(f"No y-max summary found at {summary_file}. Run without --fixed-y first.")
                 else:
@@ -615,17 +648,17 @@ class ReportsMixin:
                     plt.subplots_adjust(hspace=0.05)
                     for start, end in [(sb["start_time_s"], sb["end_time_s"]) for sb in superburst_events]:
                         ax_network2.axvspan(start, end, color='gray', alpha=0.3)
-                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot.svg")
-                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot.png", dpi=300)
+                    plt.savefig(self.output_dir / f"fixed_y_raster_burst_plot{suffix}.svg")
+                    plt.savefig(self.output_dir / f"fixed_y_raster_burst_plot{suffix}.png", dpi=300)
                     ax_raster2.set_xlim(0, 60)
                     ax_network2.set_xlim(0, 60)
-                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_60s.svg")
-                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_60s.png", dpi=150)
+                    plt.savefig(self.output_dir / f"fixed_y_raster_burst_plot{suffix}_60s.svg")
+                    plt.savefig(self.output_dir / f"fixed_y_raster_burst_plot{suffix}_60s.png", dpi=150)
                     ax_raster2.set_xlim(0, 30)
                     ax_network2.set_xlim(0, 30)
                     ax_network2.set_xlabel("Time (s)")
-                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_30s.svg")
-                    plt.savefig(self.output_dir / "fixed_y_raster_burst_plot_30s.png", dpi=150)
+                    plt.savefig(self.output_dir / f"fixed_y_raster_burst_plot{suffix}_30s.svg")
+                    plt.savefig(self.output_dir / f"fixed_y_raster_burst_plot{suffix}_30s.png", dpi=150)
                     plt.close(fig2)
 
         except Exception as e:

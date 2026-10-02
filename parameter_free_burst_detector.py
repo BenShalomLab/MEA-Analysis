@@ -13,29 +13,32 @@ except ImportError:
         spike_participation, intraburst_isi_mean as _intraburst_isi_mean)
 
 
-# Minimum number of network burst intervals needed before testing their
-# distribution for the two modes that define superburst structure. Below this
-# the histogram is noise and the test would find spurious antimodes.
-MIN_IBIS_FOR_SUPERBURST_TEST = 8
-
 # Gap used by merge_rule="gap", the comparison condition that merges on
 # proximity alone. 2 s matches Parodi et al. 2026. Only reachable when the
 # caller asks for that rule; the default rule uses no gap at all.
 GAP_ONLY_DEFAULT_S = 2.0
 
+# Fewest gaps between network bursts for which bimodality is tested; below
+# this the histogram is noise.
+MIN_GAPS_FOR_SUPERBURST_TEST = 8
+
 # Sarle's bimodality coefficient above this is taken as two modes (SAS
-# convention; also used for the per-unit log-ISI test above).
+# convention; also used for the per-unit log-ISI test).
 BIMODALITY_THRESHOLD = 0.555
+
+# Wagenaar et al. 2006 define superbursts as tight clusters of bursts whose
+# inter-cluster intervals are at least 10x longer than the intra-cluster ones.
+WAGENAAR_CLUSTER_CONTRAST = 10.0
 
 
 def _otsu_split(values):
     """Threshold maximising between-class variance of a 1-D sample (Otsu 1979).
 
-    Used to split the log network-burst intervals into "within a cluster" and
-    "between clusters". Preferred over finding a valley in a histogram, which
-    needs a bin count and a prominence in raw counts and so fails on skewed
-    samples: fourteen intervals at 0.5 s against two at 20 s is unmistakably
-    two groups, but leaves no histogram valley prominent enough to detect.
+    Splits the log gaps between network bursts into "within a cluster" and
+    "between clusters". Preferred over a valley in a histogram, which needs a
+    bin count and a prominence in raw counts and so fails on skewed samples:
+    fourteen gaps at 0.5 s against two at 20 s is unmistakably two groups but
+    leaves no histogram valley prominent enough to detect.
 
     Returns None when there is no spread to split.
     """
@@ -54,18 +57,46 @@ def _otsu_split(values):
     return float((x[best] + x[best + 1]) / 2.0)
 
 
+def _wagenaar_break(gaps, floor, contrast=WAGENAAR_CLUSTER_CONTRAST, min_side=2):
+    """Gap that separates tight clusters, by the Wagenaar et al. 2006 contrast.
+
+    Used when the gaps are not bimodal by Sarle's coefficient. Sort the gaps
+    and look for the largest jump between neighbours; if the longer is at
+    least `contrast` times the shorter, the two groups are intra- and
+    inter-cluster intervals and the break is their geometric midpoint. At
+    least `min_side` gaps must lie on each side, so that one long pause in an
+    otherwise regular culture is not mistaken for cluster structure.
+
+    `floor` (the bin size) keeps near-zero gaps from inflating the ratio.
+    Returns None when no jump reaches the contrast.
+    """
+    g = np.sort(np.asarray(gaps, dtype=float))
+    if g.size < 2 * min_side:
+        return None
+    ratio = g[1:] / np.maximum(g[:-1], floor)
+    allowed = np.arange(g.size - 1)
+    allowed = allowed[(allowed + 1 >= min_side) & (g.size - (allowed + 1) >= min_side)]
+    if allowed.size == 0:
+        return None
+    best = allowed[int(np.argmax(ratio[allowed]))]
+    if ratio[best] < contrast:
+        return None
+    return float(np.sqrt(g[best] * g[best + 1]))
+
+
 def compute_network_bursts(
     SpikeTimes=None,
     duration_s=None,
     extent_frac=0.30,
     network_merge_gap_min=None,
+    elongated_burst_min_dur_s=2.0,
     fragment_max_gap_s=None,
     merge_rule="continuity",
     threshold_mad_scale=0.75,
     min_fragment_participation=0.0,
     min_burst_density_Hz=0.0,
     min_absolute_rate_Hz=0.0,
-    min_superburst_dur_s=2.5,
+    min_superburst_dur_s=0.0,
     min_superburst_components=2,
     min_peak_synchrony=0.05,
 ):
@@ -84,10 +115,17 @@ def compute_network_bursts(
         Detection itself still operates on the spike span, so passing this
         changes reported rates but not which bursts are found.
     min_superburst_components : int
-        Minimum number of component network bursts for a superburst.
-        Default 2: a superburst is a *cluster* of network bursts (Wagenaar
-        et al. 2006). A single long network burst is reported instead
-        through `network_bursts.metrics.burst_duration_p95_s`.
+        Minimum number of network bursts in a cluster superburst. Default 2,
+        this pipeline's convention: Wagenaar et al. 2006 define clusters of
+        bursts by interval contrast and set no minimum count. A single long
+        network burst is reported as an elongated superburst instead.
+    min_superburst_dur_s : float
+        Minimum duration of a cluster superburst. Default 0, no minimum:
+        Wagenaar et al. 2006 define clusters by interval contrast and give no
+        duration, and the 2.5 s used by earlier versions had no source.
+    elongated_burst_min_dur_s : float
+        Network bursts longer than this are elongated superbursts. Default
+        2 s, a convention; no standard value was found in the literature.
     """
 
     # ---------------------------------------------------------
@@ -241,6 +279,12 @@ def compute_network_bursts(
     # ---------------------------------------------------------
     coactive_fraction_baseline = np.median(coactive_fraction_signal)
     coactive_fraction_mad      = np.median(np.abs(coactive_fraction_signal - coactive_fraction_baseline))
+
+    # Level the network must stay above between two fragments for them to be
+    # one network burst: the 25th percentile of the co-activity signal. The
+    # median is lifted by the bursts themselves, so it overstates the resting
+    # level; the lower quartile sits in the quiet state.
+    merge_floor = float(np.percentile(coactive_fraction_signal, 25))
 
     # Bimodality coefficient on participation signal (Sarle 1990).
     # BC selects threshold method — NOT used as a hard gate.
@@ -480,10 +524,12 @@ def compute_network_bursts(
         """Fragment -> network burst merge, on continuity of network activity.
 
         Two fragments belong to one network burst when the network never fell
-        quiet between them. Fragments end where the co-activity signal drops to
-        `extent_frac` of their own peak, which is above `floor_val`, so a dip
-        that stays above the detection threshold is a within-burst trough and a
-        dip that crosses it is a real silence.
+        quiet between them: the lowest value of the co-activity signal between
+        the two fragments stays at or above `floor_val`, the 25th percentile
+        of the signal. A dip that stays above it is a within-burst trough and
+        a dip that reaches it is a return to the resting level. A signal that
+        is exactly zero is silence however low the floor is, so it never
+        counts as continuous.
 
         There is deliberately no gap parameter. The criterion is a property of
         the population signal at the level being merged. Earlier versions
@@ -516,7 +562,7 @@ def compute_network_bursts(
                 # Fragments touching to within one bin: no trough to measure.
                 continuous = (valley_duration <= bin_size)
             else:
-                continuous = (valley_min >= floor_val)
+                continuous = (valley_min >= floor_val and valley_min > 0)
 
             within_cap = (max_gap_s is None) or (valley_duration <= max_gap_s)
 
@@ -544,32 +590,31 @@ def compute_network_bursts(
 
         return [m for m in merged if m["burst_duration_s"] >= min_dur]
 
-    def merge_superbursts(events, gap, min_dur=2.5, min_components=2):
+    def merge_superbursts(events, gap, min_dur=0.0, min_components=2):
         """
-        Network burst -> superburst merge.
+        Network burst -> cluster superburst merge.
 
-        Superbursts are prolonged episodes of elevated network activity
-        containing several network bursts (Wagenaar et al. 2006: duration
-        > 2.5s). Detection is gap-only — no valley floor applied because
-        superbursts can contain full silences between component NBs.
+        A cluster superburst is a train of network bursts separated by gaps
+        shorter than `gap` (Wagenaar et al. 2006 define superbursts as tight
+        clusters of bursts, with inter-cluster intervals at least 10x the
+        intra-cluster ones). Detection is gap-only, with no valley floor,
+        because a cluster can contain full silences between its network
+        bursts.
 
         Parameters
         ----------
         gap : float
-            Maximum inter-NB gap (s) to merge. Derived from inter-fragment
-            interval antimode (section 6b).
+            Maximum gap (s), from the end of one network burst to the start of
+            the next, across which network bursts are grouped. Derived in
+            section 7b from the distribution of those gaps.
         min_dur : float
-            Minimum superburst duration in seconds. Default 2.5s per
-            Wagenaar et al. 2006 operational definition.
+            Minimum cluster duration in seconds. Default 0: the literature
+            definition is relative (interval contrast) and has no duration.
         min_components : int
-            Minimum number of component NBs. Default 2, so a superburst is a
-            *cluster* of network bursts as in Wagenaar et al. 2006. With
-            min_components=1 every network burst longer than min_dur is also
-            reported as a superburst, which conflates a single prolonged
-            burst (typical of organoids) with a superburst train (typical of
-            mature dissociated cultures) and double-counts it across tiers.
-            Long single bursts are captured by the network burst tier's
-            burst_duration_p95_s / burst_duration_max_s instead.
+            Minimum number of network bursts in a cluster. Default 2, this
+            pipeline's convention. A single prolonged network burst is not a
+            cluster; it is reported as an elongated superburst when it
+            exceeds `elongated_burst_min_dur_s`.
         """
         if not events:
             return []
@@ -602,68 +647,103 @@ def compute_network_bursts(
 
     network_bursts = merge_by_continuity(
         burst_fragments,
-        floor_val=detection_threshold,
+        floor_val=merge_floor,
         max_gap_s=fragment_max_gap_s,
         merge_rule=merge_rule,
     )
 
     # ---------------------------------------------------------
-    # 7b. Superburst gap, from the network bursts' own interval distribution
+    # 7b. Superbursts: two types.
     #
-    # A superburst is a cluster of network bursts, so the timescale that
-    # separates "within a cluster" from "between clusters" lives in the
-    # network burst inter-burst intervals — not in the inter-fragment
-    # intervals of the tier below, which is what earlier versions used.
+    # elongated: any network burst longer than elongated_burst_min_dur_s. A
+    #   prolonged burst built from many merged fragments is one event, not a
+    #   cluster, so it is typed separately.
+    # cluster: network bursts grouped across a gap taken from their own
+    #   intervals. The interval is measured from the END of one network burst
+    #   (merged or not) to the START of the next, the silent gap, and the same
+    #   interval is both tested and applied.
     #
-    # If that distribution has two modes, the antimode between them is the
-    # grouping timescale and the data has told us there is cluster structure.
-    # If it has one mode, the network bursts are not clustered and there are
-    # no superbursts to find; reporting none is the honest answer, and better
-    # than a constant fallback that manufactures superbursts in a regularly
-    # bursting culture.
+    #   1. If log10(gaps) is bimodal (Sarle BC > 0.555) the gap is the Otsu
+    #      split between the two modes, provided each mode holds at least two
+    #      gaps and the long one is at least 10x the short one.
+    #   2. If not, the fallback is the Wagenaar et al. 2006 contrast: the
+    #      largest jump between sorted gaps, if it is at least 10x, with two
+    #      gaps on each side.
+    #   3. Otherwise there is no cluster structure and no cluster superbursts
+    #      are reported. Elongated bursts are still reported.
     # ---------------------------------------------------------
-    nb_starts = np.array(sorted(b["start_time_s"] for b in network_bursts))
-    nb_ibis = np.diff(nb_starts) if nb_starts.size > 1 else np.asarray([])
-    nb_ibis = nb_ibis[nb_ibis > 0]
+    nb_ordered = sorted(network_bursts, key=lambda b: b["start_time_s"])
+    nb_gaps = np.array([nxt["start_time_s"] - cur["end_time_s"]
+                        for cur, nxt in zip(nb_ordered[:-1], nb_ordered[1:])])
+    nb_gaps = nb_gaps[nb_gaps > 0]
 
-    nb_ibi_bimodality = None
+    nb_gap_bimodality = None
     superburst_gap_s = None
     superburst_gap_source = "too_few_network_bursts"
 
-    if nb_ibis.size >= MIN_IBIS_FOR_SUPERBURST_TEST:
-        log_ibis = np.log10(nb_ibis)
-        n_ibi = log_ibis.size
-        if n_ibi >= 4:
-            _g1 = skew(log_ibis)
-            _g2 = sp_kurtosis(log_ibis, fisher=True)
-            nb_ibi_bimodality = float(
-                (_g1**2 + 1) / (_g2 + 3 * ((n_ibi - 1)**2 / ((n_ibi - 2) * (n_ibi - 3))))
-            )
+    if nb_gaps.size >= MIN_GAPS_FOR_SUPERBURST_TEST:
+        log_gaps = np.log10(nb_gaps)
+        n_gap = log_gaps.size
+        _g1 = skew(log_gaps)
+        _g2 = sp_kurtosis(log_gaps, fisher=True)
+        nb_gap_bimodality = float(
+            (_g1**2 + 1) / (_g2 + 3 * ((n_gap - 1)**2 / ((n_gap - 2) * (n_gap - 3))))
+        )
+        split = _otsu_split(log_gaps)
+        otsu_gap = None
+        if nb_gap_bimodality > BIMODALITY_THRESHOLD and split is not None:
+            candidate = float(10 ** split)
+            short, long_ = nb_gaps[nb_gaps <= candidate], nb_gaps[nb_gaps > candidate]
+            # A coefficient above 0.555 can come from one deviant gap among
+            # near-identical ones, so the two modes must also be real groups
+            # (two gaps each) with the Wagenaar contrast between them.
+            if (short.size >= 2 and long_.size >= 2
+                    and np.median(long_) >= WAGENAAR_CLUSTER_CONTRAST * np.median(short)):
+                otsu_gap = candidate
 
-        split = _otsu_split(log_ibis)
-
-        if (nb_ibi_bimodality is not None
-                and nb_ibi_bimodality > BIMODALITY_THRESHOLD
-                and split is not None):
-            superburst_gap_s = float(10 ** split)
-            superburst_gap_source = "nb_ibi_otsu"
+        if otsu_gap is not None:
+            superburst_gap_s = otsu_gap
+            superburst_gap_source = "nb_gap_otsu"
         else:
-            superburst_gap_source = "nb_ibi_not_bimodal"
+            contrast_gap = _wagenaar_break(nb_gaps, floor=bin_size)
+            if contrast_gap is not None:
+                superburst_gap_s = contrast_gap
+                superburst_gap_source = "wagenaar_10x_break"
+            else:
+                superburst_gap_source = "no_cluster_structure"
 
-    # A user-supplied gap overrides the test, for call-site compatibility.
+    # A caller-supplied gap is used only when none was derived.
     if network_merge_gap_min is not None and superburst_gap_s is None:
         superburst_gap_s = float(network_merge_gap_min)
         superburst_gap_source = "user_override"
 
-    if superburst_gap_s is None:
-        superbursts = []
-    else:
-        superbursts = merge_superbursts(
+    cluster_superbursts = []
+    if superburst_gap_s is not None:
+        cluster_superbursts = merge_superbursts(
             network_bursts,
             gap=superburst_gap_s,
             min_dur=min_superburst_dur_s,
             min_components=min_superburst_components,
         )
+    for ev in cluster_superbursts:
+        ev["superburst_type"] = "cluster"
+
+    # An elongated burst already inside a cluster is reported once, as part of
+    # the cluster.
+    elongated_superbursts = []
+    for nb in network_bursts:
+        if nb["burst_duration_s"] <= elongated_burst_min_dur_s:
+            continue
+        if any(c["start_time_s"] <= nb["start_time_s"] and nb["end_time_s"] <= c["end_time_s"]
+               for c in cluster_superbursts):
+            continue
+        ev = dict(nb)
+        ev["n_components"] = 1
+        ev["superburst_type"] = "elongated"
+        elongated_superbursts.append(ev)
+
+    superbursts = sorted(cluster_superbursts + elongated_superbursts,
+                         key=lambda e: e["start_time_s"])
 
     # ---------------------------------------------------------
     # 8. Metrics
@@ -715,11 +795,15 @@ def compute_network_bursts(
             # Fragment -> network burst: continuity of the population signal,
             # no gap threshold. The cap is None unless a caller sets one.
             "fragment_merge_rule":          merge_rule,
+            "merge_floor":                  merge_floor,
             "fragment_max_gap_s":           fragment_max_gap_s,
-            # Network burst -> superburst: from the network bursts' own IBIs.
-            "nb_ibi_bimodality":            nb_ibi_bimodality,
+            # Network burst -> superburst: gaps from end of one network burst
+            # to the start of the next, tested for bimodality; Wagenaar 10x
+            # contrast as the fallback.
+            "nb_gap_bimodality":            nb_gap_bimodality,
             "superburst_gap_s":             superburst_gap_s,
             "superburst_gap_source":        superburst_gap_source,
+            "elongated_min_dur_s":          elongated_burst_min_dur_s,
             "superburst_min_dur_s":         min_superburst_dur_s,
             "superburst_min_components":    min_superburst_components,
             "n_units":                      n_units,

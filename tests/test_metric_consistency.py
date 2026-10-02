@@ -425,41 +425,94 @@ def test_the_continuity_rule_separates_what_a_gap_rule_cannot():
     assert cont_rates[1] > 3.0 * cont_rates[0]
 
 
-def test_no_superbursts_when_network_burst_intervals_are_unimodal():
-    """A regularly bursting culture has no cluster structure. Reporting none is
-    the honest answer; the old fallback constant manufactured them."""
-    rng = np.random.default_rng(0)
+def _long_burst_spikes(duration_s=3.0, n_units=30, seed=1):
+    """One prolonged network burst of `duration_s` among short regular ones."""
+    rng = np.random.default_rng(seed)
     spikes = {}
-    for u in range(30):
-        trains = [c + rng.normal(0, 0.02, 25) for c in np.arange(10, 290, 10.0)]
-        trains.append(rng.uniform(0, 300, 20))
+    for u in range(n_units):
+        trains = [c + rng.normal(0, 0.03, 25) for c in np.arange(10, 200, 20.0)]
+        trains.append(110.0 + rng.uniform(0, duration_s, int(40 * duration_s)))
+        trains.append(rng.uniform(0, 220, 20))
         spikes[f"u{u}"] = np.sort(np.concatenate(trains))
-
-    result = pf_detect(spikes, duration_s=300.0)
-    assert result["diagnostics"]["superburst_gap_source"] == "nb_ibi_not_bimodal"
-    assert result["diagnostics"]["superburst_gap_s"] is None
-    assert result["superbursts"]["events"] == []
+    return spikes
 
 
-def test_the_superburst_gap_comes_from_network_burst_intervals():
+def test_a_network_burst_over_two_seconds_is_an_elongated_superburst():
+    result = pf_detect(_long_burst_spikes(duration_s=3.0), duration_s=220.0)
+    types = [e["superburst_type"] for e in result["superbursts"]["events"]]
+    assert "elongated" in types
+    long_nbs = [e for e in _events(result) if e["burst_duration_s"] > 2.0]
+    assert len(long_nbs) >= 1
+
+
+def test_short_network_bursts_are_not_elongated():
+    result = pf_detect(_long_burst_spikes(duration_s=0.3), duration_s=220.0)
+    assert all(e["superburst_type"] != "elongated" for e in result["superbursts"]["events"])
+
+
+def test_every_superburst_carries_a_type():
+    result = pf_detect(_clustered_bursts(), duration_s=50.0)
+    for event in result["superbursts"]["events"]:
+        assert event["superburst_type"] in ("cluster", "elongated")
+
+
+def test_the_gap_is_measured_from_the_end_of_one_burst_to_the_start_of_the_next():
+    """Both the bimodality test and the grouping use end-to-start gaps."""
     result = pf_detect(_clustered_bursts(), duration_s=50.0)
     diagnostics = result["diagnostics"]
-    if diagnostics["superburst_gap_source"] == "nb_ibi_otsu":
-        gap = diagnostics["superburst_gap_s"]
-        starts = np.array(sorted(e["start_time_s"] for e in _events(result)))
-        ibis = np.diff(starts)
-        # The split must lie inside the observed interval range, not outside it.
-        assert ibis.min() <= gap <= ibis.max()
+    assert diagnostics["superburst_gap_source"] in (
+        "nb_gap_otsu", "wagenaar_10x_break", "no_cluster_structure",
+        "too_few_network_bursts", "user_override")
+    if diagnostics["superburst_gap_s"] is not None and diagnostics["superburst_gap_source"] != "user_override":
+        ordered = sorted(_events(result), key=lambda e: e["start_time_s"])
+        gaps = np.array([b["start_time_s"] - a["end_time_s"]
+                         for a, b in zip(ordered[:-1], ordered[1:])])
+        assert gaps.min() <= diagnostics["superburst_gap_s"] <= gaps.max()
+
+
+def test_wagenaar_break_needs_a_ten_fold_jump():
+    import parameter_free_burst_detector as detector
+    tight = np.array([0.5] * 8 + [8.0, 9.0, 10.0])
+    assert detector._wagenaar_break(tight, floor=0.02) == pytest.approx(np.sqrt(0.5 * 8.0))
+    smooth = np.linspace(1.0, 4.0, 12)
+    assert detector._wagenaar_break(smooth, floor=0.02) is None
+
+
+def test_one_long_pause_is_not_cluster_structure():
+    import parameter_free_burst_detector as detector
+    gaps = np.array([10.0] * 15 + [300.0])
+    assert detector._wagenaar_break(gaps, floor=0.02) is None
 
 
 def test_otsu_split_separates_two_well_separated_groups():
     import parameter_free_burst_detector as detector
     values = np.concatenate([np.full(14, -0.3), [1.2, 1.33]])
-    split = detector._otsu_split(values)
-    assert -0.3 < split < 1.2
+    assert -0.3 < detector._otsu_split(values) < 1.2
 
 
 def test_otsu_split_is_none_without_spread():
     import parameter_free_burst_detector as detector
     assert detector._otsu_split(np.full(10, 2.0)) is None
     assert detector._otsu_split(np.array([1.0])) is None
+
+
+def _short_clusters(n_units=20, seed=2):
+    """Six clusters of four bursts 0.4 s apart: each cluster is well under 2.5 s."""
+    rng = np.random.default_rng(seed)
+    spikes = {}
+    for u in range(n_units):
+        trains = []
+        for start in np.arange(10.0, 190.0, 30.0):
+            for k in range(4):
+                trains.append(start + k * 0.4 + rng.normal(0, 0.02, 20))
+        trains.append(rng.uniform(0, 200, 10))
+        spikes[f"u{u}"] = np.sort(np.concatenate(trains))
+    return spikes
+
+
+def test_a_cluster_superburst_has_no_minimum_duration():
+    result = pf_detect(_short_clusters(), duration_s=200.0)
+    assert result["diagnostics"]["superburst_min_dur_s"] == 0.0
+    clusters = [e for e in result["superbursts"]["events"] if e["superburst_type"] == "cluster"]
+    assert clusters, "tight clusters are superbursts however short they are"
+    assert all(e["burst_duration_s"] < 2.5 for e in clusters)
