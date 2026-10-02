@@ -12,9 +12,8 @@ Uses the canonical schema produced by parameter_free_burst_detector.py:
                   burst_peak_hz_per_unit (per unit),
                   burst_peak_hz_array (array-wide),
                   coactive_fraction_peak, coactive_fraction_max,
-                  coactive_fraction_peak (alias of coactive_fraction_peak)
   - diagnostics keys: bin_size_ms, reference_isi_s, coactive_fraction_baseline,
-                      detection_threshold, fragment_merge_gap_s, nb_merge_gap_s,
+                      detection_threshold, merge_floor, superburst_gap_s,
                       coactive_fraction_bimodality, threshold_source, min_units_for_burst, …
   - n_units at top level
 

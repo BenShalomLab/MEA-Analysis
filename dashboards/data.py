@@ -269,7 +269,7 @@ def _parse_network_raw(raw: dict) -> dict:
 
     return {
         "n_units":              raw.get("n_units") or diag.get("n_units"),
-        "n_bursty_units":       diag.get("n_bursty_units"),
+        "n_bursty_units":       diag.get("n_bursty_units_by_isi_statistics", diag.get("n_bursty_units")),
         "burstlets_count":      bl.get("burst_count", 0),
         "network_bursts_count": nb.get("burst_count", 0),
         "superbursts_count":    sb.get("burst_count", 0),

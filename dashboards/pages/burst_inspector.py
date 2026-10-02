@@ -116,9 +116,10 @@ def _load_well(well_path):
         ("detection_threshold",  diag.get("detection_threshold")),
         ("threshold_source",     diag.get("threshold_source")),
         ("min_units_for_burst",  diag.get("min_units_for_burst")),
-        ("fragment_merge_gap_s", diag.get("fragment_merge_gap_s")),
-        ("frag_gap_source",      diag.get("fragment_merge_gap_source")),
-        ("nb_merge_gap_s",       diag.get("nb_merge_gap_s")),
+        ("merge_floor",          diag.get("merge_floor")),
+        ("nb_gap_bimodality",    diag.get("nb_gap_bimodality")),
+        ("superburst_gap_s",     diag.get("superburst_gap_s")),
+        ("superburst_gap_source", diag.get("superburst_gap_source")),
     ]
 
     diag_table = html.Table(
