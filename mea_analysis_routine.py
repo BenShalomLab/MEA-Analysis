@@ -72,7 +72,7 @@ try:
         from .mea_analyzer import AnalyzerMixin
         from .mea_waveform import WaveformMixin
         from .mea_reports import ReportsMixin
-        from .mea_resume import _normalize_resume_from_stage, _apply_resume_from_stage
+        from .mea_resume import _normalize_resume_from_stage, _apply_resume_from_stage, mark_spike_detection_complete, prepare_for_full_run
     else:
         from config_loader import load_config, resolve_args, BURST_DETECTOR_CHOICES
         from mea_checkpoint import ProcessingStage, CHECKPOINT_SCHEMA_VERSION
@@ -83,7 +83,7 @@ try:
         from mea_analyzer import AnalyzerMixin
         from mea_waveform import WaveformMixin
         from mea_reports import ReportsMixin
-        from mea_resume import _normalize_resume_from_stage, _apply_resume_from_stage
+        from mea_resume import _normalize_resume_from_stage, _apply_resume_from_stage, mark_spike_detection_complete, prepare_for_full_run
 except ImportError:
     try:
         from MEA_Analysis.IPNAnalysis.config_loader import load_config, resolve_args, BURST_DETECTOR_CHOICES
@@ -95,7 +95,7 @@ except ImportError:
         from MEA_Analysis.IPNAnalysis.mea_analyzer import AnalyzerMixin
         from MEA_Analysis.IPNAnalysis.mea_waveform import WaveformMixin
         from MEA_Analysis.IPNAnalysis.mea_reports import ReportsMixin
-        from MEA_Analysis.IPNAnalysis.mea_resume import _normalize_resume_from_stage, _apply_resume_from_stage
+        from MEA_Analysis.IPNAnalysis.mea_resume import _normalize_resume_from_stage, _apply_resume_from_stage, mark_spike_detection_complete, prepare_for_full_run
     except ImportError as e:
         raise ImportError(
             "Could not import MEA_Analysis.IPNAnalysis helper modules. "
@@ -448,6 +448,9 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
         )
         return MEARunResult(pipeline=pipeline, skipped=False, reanalyzed_bursts=True)
 
+    if not bool(options.skip_spikesorting):
+        prepare_for_full_run(pipeline)
+
     if pipeline.should_skip():
         return MEARunResult(pipeline=pipeline, skipped=True, reanalyzed_bursts=False)
 
@@ -490,6 +493,7 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
             raster_sort=options.raster_sort,
             fixed_y=bool(options.fixed_y),
         )
+        mark_spike_detection_complete(pipeline)
 
     if bool(options.cleanup):
         pipeline.cleanup()
