@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Collect network_results.json files (and network_results_<detector>.json when
-both burst detectors ran) and export per-project CSVs.
+both burst detectors ran) and export per-project CSVs, one row per result file.
+
+The bf_/nb_/sb_ columns hold each per-event field as a whole list in one cell
+(JSON, e.g. "[0.41, 0.77]"; parse with json.loads). Statistics of those lists (mean/std/cv,
+percentiles, duration max) are not written; the per-well scalars (burst_count, rates,
+duty cycle), inter-burst-interval stats, diagnostics and spike participation are.
 
 Uses the canonical schema produced by parameter_free_burst_detector.py:
   - burst_fragments / network_bursts / superbursts
@@ -27,6 +32,9 @@ python collect_network_jsons.py --checkpoint-dir /path/to/checkpoints --out-dir 
 
 # Single combined CSV instead of per-project files
 python collect_network_jsons.py --root /path/to/AnalyzedData --out-dir ./metrics --combined
+
+# One burst detector only (writes network_metrics_<project>_<detector>.csv)
+python collect_network_jsons.py --root /path/to/AnalyzedData --out-dir ./metrics --detector parameter_free
 """
 
 from __future__ import annotations
@@ -63,68 +71,47 @@ _DIAG_KEYS = [
     "sigma_coactivity_bins", "sigma_firing_rate_bins",
 ]
 
-# Event fields for which to compute percentile distributions
-_EVT_DISTRIBUTION_FIELDS = {
-    "burst_duration_s",
-    "participation_fraction",
-    "spikes_per_burst",
-    "spikes_per_burst_per_unit",
-    "intraburst_rate_hz",
-    "burst_peak_hz_per_unit",
-    "coactive_fraction_peak",
-    "coactive_fraction_max",
-    "burst_area_spikes_per_unit",
-    "rise_time_s",
-    "decay_time_s",
-    "intraburst_isi_mean_s",
-}
+# Scalar metrics that only summarise the per-event burst_duration_s list.
+_DURATION_SUMMARY_STATS = {"burst_duration_p95_s", "burst_duration_max_s"}
 
 
 # ── Section helpers ───────────────────────────────────────────────────────────
 
-def _flatten_section_metrics(metrics: dict, prefix: str) -> dict:
-    """Flatten a section's metrics dict into prefixed columns.
+def _flatten_section_metrics(metrics: dict, events: list[dict], prefix: str) -> dict:
+    """The section's own per-well metrics, minus statistics of the event lists.
 
-    Scalar values → single column.
-    Stats-dict values (mean/std/cv) → three columns.
+    Kept: scalars (count, rates, duty cycle) and stats of values that are not an
+    event field (inter-burst intervals). Dropped: mean/std/cv of a field that is
+    written as a list, and the duration p95/max that summarise burst_duration_s.
     """
+    listed = {k for ev in events for k, v in ev.items() if not isinstance(v, (dict, list))}
     row: dict = {}
     for key, val in metrics.items():
-        col = f"{prefix}_{key}"
-        if isinstance(val, dict):
-            row[f"{col}_mean"] = val.get("mean")
-            row[f"{col}_std"]  = val.get("std")
-            row[f"{col}_cv"]   = val.get("cv")
-        else:
-            row[col] = val
-    return row
-
-
-def _flatten_events_distributions(events: list[dict], prefix: str) -> dict:
-    """Compute per-event percentile distributions for key fields.
-
-    For each field in _EVT_DISTRIBUTION_FIELDS, outputs:
-      {prefix}_{field}_n, _min, _p25, _p50, _p75, _p95, _max
-    """
-    if not events:
-        return {}
-    row: dict = {}
-    present = {k for ev in events for k, v in ev.items()
-               if isinstance(v, (int, float)) and k in _EVT_DISTRIBUTION_FIELDS}
-    for field in sorted(present):
-        vals = [ev[field] for ev in events if isinstance(ev.get(field), (int, float))]
-        if not vals:
+        if key in _DURATION_SUMMARY_STATS or (isinstance(val, dict) and key in listed):
             continue
-        arr = np.asarray(vals, dtype=float)
-        col = f"{prefix}_{field}"
-        row[f"{col}_n"]   = len(arr)
-        row[f"{col}_min"] = float(np.min(arr))
-        row[f"{col}_p25"] = float(np.percentile(arr, 25))
-        row[f"{col}_p50"] = float(np.percentile(arr, 50))
-        row[f"{col}_p75"] = float(np.percentile(arr, 75))
-        row[f"{col}_p95"] = float(np.percentile(arr, 95))
-        row[f"{col}_max"] = float(np.max(arr))
+        if isinstance(val, dict):
+            for stat in ("mean", "std", "cv"):
+                row[f"{prefix}_{key}_{stat}"] = val.get(stat)
+        else:
+            row[f"{prefix}_{key}"] = val
     return row
+
+
+def _flatten_event_lists(events: list[dict], prefix: str) -> dict:
+    """One column per per-event field, holding that field's values for every event
+    of the well as a JSON list, e.g. nb_burst_duration_s = "[0.41, 0.77, 1.02]".
+
+    Position i in every list is the same event. Counts, rates, means, percentiles and
+    the like are not written here; compute them from the lists. A well with no events
+    has no such columns.
+    """
+    fields: dict[str, None] = {}
+    for ev in events:
+        for k, v in ev.items():
+            if not isinstance(v, (dict, list)):
+                fields.setdefault(k)
+    return {f"{prefix}_{field}": json.dumps([ev.get(field) for ev in events])
+            for field in fields}
 
 
 # ── Path metadata ─────────────────────────────────────────────────────────────
@@ -199,11 +186,10 @@ def extract_row(json_path: Path) -> dict:
     row["detector"] = raw.get("detector") or ((raw.get("diagnostics") or {}).get("detector"))
 
     for prefix, (section_key, _ibi_key) in _SECTIONS.items():
-        sec     = raw.get(section_key) or {}
-        metrics = sec.get("metrics") or {}
-        events  = sec.get("events") or []
-        row.update(_flatten_section_metrics(metrics, prefix))
-        row.update(_flatten_events_distributions(events, prefix))
+        sec = raw.get(section_key) or {}
+        events = sec.get("events") or []
+        row.update(_flatten_section_metrics(sec.get("metrics") or {}, events, prefix))
+        row.update(_flatten_event_lists(events, prefix))
 
     diag = raw.get("diagnostics") or {}
     for k in _DIAG_KEYS:
@@ -254,11 +240,23 @@ def collect_from_checkpoints(checkpoint_dir: Path) -> list[dict]:
 
 # ── DataFrame helpers ─────────────────────────────────────────────────────────
 
-def to_dataframes(rows: list[dict]) -> dict[str, pd.DataFrame]:
-    """Return {project_name: DataFrame}, plus an "ALL" key for the combined table."""
+def to_dataframes(rows: list[dict], detector: str | None = None) -> dict[str, pd.DataFrame]:
+    """Return {project_name: DataFrame}, plus an "ALL" key for the combined table.
+
+    With ``detector`` set, keep only rows from that burst detector (rows with no
+    detector, i.e. pre-schema-5 files, are dropped) and drop columns that are
+    entirely empty for it, so the table has no leftover columns of the other detector.
+    """
     if not rows:
         return {}
     df = pd.DataFrame(rows)
+    if detector is not None:
+        if "detector" not in df.columns:
+            return {}
+        df = df[df["detector"] == detector]
+        if df.empty:
+            return {}
+        df = df.dropna(axis=1, how="all").reset_index(drop=True)
 
     id_cols = ["project", "date", "chip", "run", "well", "n_units"]
     if "data_dir" in df.columns:
@@ -288,11 +286,12 @@ def to_dataframes(rows: list[dict]) -> dict[str, pd.DataFrame]:
 
 
 def write_csvs(dfs: dict[str, pd.DataFrame], out_dir: Path,
-               combined: bool = False) -> list[Path]:
+               combined: bool = False, detector: str | None = None) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
+    suffix = f"_{detector}" if detector else ""
     if combined:
-        p = out_dir / "network_metrics_all.csv"
+        p = out_dir / f"network_metrics_all{suffix}.csv"
         dfs["ALL"].to_csv(p, index=False)
         written.append(p)
     else:
@@ -300,7 +299,7 @@ def write_csvs(dfs: dict[str, pd.DataFrame], out_dir: Path,
             if name == "ALL":
                 continue
             safe = name.replace("/", "_").replace(" ", "_")
-            p = out_dir / f"network_metrics_{safe}.csv"
+            p = out_dir / f"network_metrics_{safe}{suffix}.csv"
             df.to_csv(p, index=False)
             written.append(p)
     return written
@@ -321,6 +320,10 @@ def main() -> int:
                         help="Directory to write CSVs (default: ./metrics)")
     parser.add_argument("--combined", action="store_true",
                         help="Write a single combined CSV instead of one per project")
+    parser.add_argument("--detector", choices=("parameter_free", "gaussian"),
+                        help="Collect only this burst detector's results (default: every "
+                             "result file, one row per detector per well). Rows without a "
+                             "detector and columns empty for it are dropped.")
     args = parser.parse_args()
 
     if args.root:
@@ -332,8 +335,11 @@ def main() -> int:
         print("No network_results.json files found.")
         return 1
 
-    dfs = to_dataframes(rows)
-    written = write_csvs(dfs, Path(args.out_dir), combined=args.combined)
+    dfs = to_dataframes(rows, detector=args.detector)
+    if not dfs:
+        print(f"No results for detector {args.detector!r}.")
+        return 1
+    written = write_csvs(dfs, Path(args.out_dir), combined=args.combined, detector=args.detector)
 
     total = len(dfs.get("ALL", pd.DataFrame()))
     print(f"Collected {total} wells across {len(dfs) - 1} project(s).")
