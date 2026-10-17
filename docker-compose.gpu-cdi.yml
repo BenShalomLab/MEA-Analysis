@@ -1,0 +1,21 @@
+# Explicit GPU reservation via Docker's CDI device-driver API.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu-cdi.yml up -d
+#
+# Only needed on hosts where the NVIDIA runtime is NOT the default and CDI is
+# available. On most NVIDIA Container Toolkit installs the base file already
+# grants GPU access through the nvidia runtime + NVIDIA_VISIBLE_DEVICES=all.
+#
+# If this fails with:
+#     could not select device driver "nvidia" with capabilities: [[gpu]]
+# then CDI is not wired up on this host — use the base file alone.
+
+services:
+  mea-orchestration:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -1,0 +1,22 @@
+# CPU-only override — forces the standard runc runtime.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+#
+# Two uses:
+#
+# 1. The NVIDIA Container Toolkit is not installed yet, and you want to verify
+#    the UI, mounts, and completion detection in the meantime.
+#
+# 2. The host has "default-runtime": "nvidia" in /etc/docker/daemon.json but the
+#    nvidia-container-runtime binary is missing, so every container fails with:
+#        exec: "nvidia-container-runtime": executable file not found in $PATH
+#    Forcing runc here bypasses that broken default. (Confirm with:
+#        docker run --rm --runtime=runc hello-world )
+#
+# NOTE: spike sorting (Kilosort4) REQUIRES a GPU and will fail in this mode.
+# Use it only to confirm the container starts, the UI serves, paths are mounted
+# correctly, and detection works with Dry run enabled.
+
+services:
+  mea-orchestration:
+    runtime: runc
