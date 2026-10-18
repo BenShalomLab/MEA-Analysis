@@ -4,11 +4,14 @@ import shutil
 import numpy as np
 import spikeinterface.full as si
 import spikeinterface.preprocessing as spre
+from spikeinterface.core import get_random_data_chunks
 
 try:
     from mea_checkpoint import ProcessingStage
+    from bad_channels import channel_noise_amplitude, flag_bad_channels
 except ImportError:
     from MEA_Analysis.IPNAnalysis.mea_checkpoint import ProcessingStage
+    from MEA_Analysis.IPNAnalysis.bad_channels import channel_noise_amplitude, flag_bad_channels
 
 # Seconds dropped from the end of every recording. Maxwell files can end on a
 # partially written chunk whose trailing samples are not valid signal.
@@ -197,33 +200,37 @@ class PreprocessingMixin:
         # 74-98% of channels). 'mad' is amplitude-only (robust to occasional large
         # spikes, unlike plain 'std') and doesn't depend on neighbor geometry, so it's
         # the correct method for this array, not just a fallback.
+        # Replaced SpikeInterface detect_bad_channels with per-channel noise
+        # (MAD) and amplitude (99.9th pct of |x - median|) outlier tests, see
+        # bad_channels.py. Sampled from random chunks of the filtered recording.
         MAX_BAD_FRACTION = 0.3
         n_total_channels = rec.get_num_channels()
 
-        def _try_detect(method):
-            try:
-                ids, _labels = spre.detect_bad_channels(rec, method=method)
-                ids = list(ids) if ids is not None else []
-                frac = (len(ids) / n_total_channels) if n_total_channels else 0.0
-                if frac > MAX_BAD_FRACTION:
-                    self.logger.warning(
-                        "detect_bad_channels(%s) flagged %d/%d channels (%.0f%%) as bad — "
-                        "implausible, treating as a failed detection rather than removing them.",
-                        method, len(ids), n_total_channels, frac * 100,
-                    )
-                    return None
-                return ids
-            except Exception as e:
-                self.logger.warning("detect_bad_channels(%s) failed (%s).", method, e)
-                return None
-
-        bad_channel_ids = _try_detect('mad')
-        if bad_channel_ids is None:
-            self.logger.warning("Falling back to 'std' method for bad-channel detection.")
-            bad_channel_ids = _try_detect('std')
-        if bad_channel_ids is None:
-            self.logger.warning("Bad-channel detection failed entirely; no channels removed.")
-            bad_channel_ids = []
+        bad_channel_ids = []
+        channel_stats = None
+        try:
+            chunk = int(0.5 * fs)
+            data = get_random_data_chunks(
+                rec, num_chunks_per_segment=20, chunk_size=chunk, seed=0
+            )
+            noise, amplitude = channel_noise_amplitude(data)
+            mask = flag_bad_channels(noise, amplitude)
+            ids = list(rec.channel_ids[mask])
+            frac = len(ids) / n_total_channels if n_total_channels else 0.0
+            channel_stats = {
+                str(c): {"noise": float(n), "amplitude": float(a)}
+                for c, n, a in zip(rec.channel_ids, noise, amplitude)
+            }
+            if frac > MAX_BAD_FRACTION:
+                self.logger.warning(
+                    "Noise/amplitude test flagged %d/%d channels (%.0f%%) as bad — "
+                    "implausible, treating as a failed detection; no channels removed.",
+                    len(ids), n_total_channels, frac * 100,
+                )
+            else:
+                bad_channel_ids = ids
+        except Exception as e:
+            self.logger.warning("Bad-channel detection failed (%s); no channels removed.", e)
 
         if bad_channel_ids:
             self.logger.warning(
@@ -261,6 +268,7 @@ class PreprocessingMixin:
 
         preprocessing_summary = {
             "bad_channel_ids": [str(c) for c in bad_channel_ids],
+            "channel_noise_amplitude": channel_stats,
             "n_channels_input": int(n_total_channels),
             "n_channels_kept": int(self.recording.get_num_channels()),
             "bad_channel_fraction": (
