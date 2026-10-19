@@ -35,6 +35,9 @@ python collect_network_jsons.py --root /path/to/AnalyzedData --out-dir ./metrics
 
 # One burst detector only (writes network_metrics_<project>_<detector>.csv)
 python collect_network_jsons.py --root /path/to/AnalyzedData --out-dir ./metrics --detector parameter_free
+
+# Summary table instead of per-event lists (writes network_summary_<project>[_<detector>].csv)
+python collect_network_jsons.py --root /path/to/AnalyzedData --out-dir ./metrics --summary --detector parameter_free
 """
 
 from __future__ import annotations
@@ -66,6 +69,7 @@ _DIAG_KEYS = [
     "min_coactive_fraction", "min_units_for_burst",
     "fragment_merge_rule", "merge_floor", "fragment_max_gap_s",
     "nb_gap_bimodality", "superburst_gap_s", "superburst_gap_source", "elongated_min_dur_s",
+    "elongated_min_coactive_fraction", "elongated_threshold_multiple", "min_units_abs", "low_yield",
     "superburst_min_dur_s", "superburst_min_components",
     "duration_source", "recording_duration_s", "analysis_window_s",
     "sigma_coactivity_bins", "sigma_firing_rate_bins",
@@ -161,8 +165,11 @@ def _flatten_spike_participation(block: dict | None) -> dict:
 
 # ── Core extraction ───────────────────────────────────────────────────────────
 
-def extract_row(json_path: Path) -> dict:
-    """Flatten a single network_results.json into a row dict."""
+def _load_base(json_path: Path):
+    """Ids, spike participation, n_units, schema and detector for one result file.
+
+    Returns (row, raw); raw is None when the file could not be read.
+    """
     well_dir = json_path.parent
     row: dict = {"output_dir": str(well_dir), "result_file": json_path.name}
     row.update(_parse_path_metadata(well_dir))
@@ -171,7 +178,7 @@ def extract_row(json_path: Path) -> dict:
         raw = json.loads(json_path.read_text())
     except Exception as exc:
         row["error"] = str(exc)
-        return row
+        return row, None
 
     # Ids recorded by the pipeline win over the ones guessed from the path.
     for column, json_key in _JSON_ID_KEYS.items():
@@ -184,6 +191,14 @@ def extract_row(json_path: Path) -> dict:
     row["n_units"] = raw.get("n_units")
     row["schema_version"] = ((raw.get("diagnostics") or {}).get("schema_version"))
     row["detector"] = raw.get("detector") or ((raw.get("diagnostics") or {}).get("detector"))
+    return row, raw
+
+
+def extract_row(json_path: Path) -> dict:
+    """Flatten a single network_results.json into a row dict."""
+    row, raw = _load_base(json_path)
+    if raw is None:
+        return row
 
     for prefix, (section_key, _ibi_key) in _SECTIONS.items():
         sec = raw.get(section_key) or {}
@@ -199,6 +214,79 @@ def extract_row(json_path: Path) -> dict:
     return row
 
 
+# ── Summary mode ──────────────────────────────────────────────────────────────
+
+# Per-event fields summarised as median / log_iqr / p90 (burst_feature_stats).
+SUMMARY_METRICS = (
+    "burst_duration_s",
+    "participation_fraction",
+    "coactive_fraction_peak",
+    "burst_area_spikes_per_unit",
+)
+# Per-well scalars kept per tier.
+_SUMMARY_SCALARS = ("burst_count", "burst_rate_hz", "burst_rate_per_min", "duty_cycle")
+# Inter-burst interval, end of one event to start of the next, per tier.
+_GAP_KEY = {"bf": "ifbi_gap_s", "nb": "ibi_gap_s", "sb": "isbi_gap_s"}
+
+
+def _summarise_section(sec: dict, prefix: str, metrics) -> dict:
+    import sys
+    # Works under `python -I`, which leaves the script's folder off sys.path.
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from burst_feature_stats import KEEP_STATS, compute_distribution_stats
+
+    block = sec.get("metrics") or {}
+    events = sec.get("events") or []
+    row: dict = {}
+
+    for key in _SUMMARY_SCALARS:
+        if key in block:
+            row[f"{prefix}_{key}"] = block[key]
+
+    gap = block.get(_GAP_KEY[prefix])
+    if isinstance(gap, dict):
+        for stat in ("mean", "std", "cv"):
+            row[f"{prefix}_{_GAP_KEY[prefix]}_{stat}"] = gap.get(stat)
+
+    # Fragments contained in the tier's events. The fragment tier's own count is
+    # bf_burst_count.
+    if prefix in ("nb", "sb"):
+        if events:
+            row[f"{prefix}_n_fragments_total"] = int(sum(ev.get("n_fragments") or 0 for ev in events))
+        elif block.get("burst_count") == 0:
+            row[f"{prefix}_n_fragments_total"] = 0
+
+    for metric in metrics:
+        values = [ev[metric] for ev in events if ev.get(metric) is not None]
+        stats = compute_distribution_stats(values)
+        for stat in KEEP_STATS:
+            row[f"{prefix}_{metric}_{stat}"] = stats[stat]
+    return row
+
+
+def extract_summary_row(json_path: Path, metrics=SUMMARY_METRICS) -> dict:
+    """One row per result file with no per-event lists.
+
+    Kept: ids, n_units, detector, scalars per tier (count, rates, duty cycle),
+    inter-burst interval (end to start) mean/std/cv, fragment totals, diagnostics
+    and spike participation. The per-event fields in `metrics` become median,
+    log_iqr and p90. Statistics undefined at small n are NaN, not 0.
+    """
+    row, raw = _load_base(json_path)
+    if raw is None:
+        return row
+
+    for prefix, (section_key, _ibi_key) in _SECTIONS.items():
+        row.update(_summarise_section(raw.get(section_key) or {}, prefix, metrics))
+
+    diag = raw.get("diagnostics") or {}
+    for k in _DIAG_KEYS:
+        if k != "n_units" and k in diag:
+            row[f"diag_{k}"] = diag[k]
+    return row
+
+
 # ── Collection ────────────────────────────────────────────────────────────────
 
 def _is_result_file(path: Path) -> bool:
@@ -207,12 +295,12 @@ def _is_result_file(path: Path) -> bool:
     return path.suffix == ".json" and not path.name.endswith(".tmp.json")
 
 
-def collect(root: Path) -> list[dict]:
+def collect(root: Path, extractor=extract_row) -> list[dict]:
     files = [f for f in root.rglob("network_results*.json") if _is_result_file(f)]
-    return [extract_row(f) for f in sorted(files)]
+    return [extractor(f) for f in sorted(files)]
 
 
-def collect_from_checkpoints(checkpoint_dir: Path) -> list[dict]:
+def collect_from_checkpoints(checkpoint_dir: Path, extractor=extract_row) -> list[dict]:
     """Use output_dir from checkpoint JSONs to locate network_results.json files."""
     rows = []
     for cp_file in sorted(checkpoint_dir.rglob("*.json")):
@@ -226,7 +314,7 @@ def collect_from_checkpoints(checkpoint_dir: Path) -> list[dict]:
         for nf in sorted(Path(out_dir).glob("network_results*.json")):
             if not _is_result_file(nf):
                 continue
-            row = extract_row(nf)
+            row = extractor(nf)
             for key in ("project", "date", "chip", "run", "well"):
                 cp_val = (cp.get(key) or cp.get(f"{key}_id")
                           or (cp.get("chip_id") if key == "chip" else None))
@@ -286,12 +374,13 @@ def to_dataframes(rows: list[dict], detector: str | None = None) -> dict[str, pd
 
 
 def write_csvs(dfs: dict[str, pd.DataFrame], out_dir: Path,
-               combined: bool = False, detector: str | None = None) -> list[Path]:
+               combined: bool = False, detector: str | None = None,
+               stem: str = "network_metrics") -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     suffix = f"_{detector}" if detector else ""
     if combined:
-        p = out_dir / f"network_metrics_all{suffix}.csv"
+        p = out_dir / f"{stem}_all{suffix}.csv"
         dfs["ALL"].to_csv(p, index=False)
         written.append(p)
     else:
@@ -299,7 +388,7 @@ def write_csvs(dfs: dict[str, pd.DataFrame], out_dir: Path,
             if name == "ALL":
                 continue
             safe = name.replace("/", "_").replace(" ", "_")
-            p = out_dir / f"network_metrics_{safe}{suffix}.csv"
+            p = out_dir / f"{stem}_{safe}{suffix}.csv"
             df.to_csv(p, index=False)
             written.append(p)
     return written
@@ -324,12 +413,18 @@ def main() -> int:
                         help="Collect only this burst detector's results (default: every "
                              "result file, one row per detector per well). Rows without a "
                              "detector and columns empty for it are dropped.")
+    parser.add_argument("--summary", action="store_true",
+                        help="Write network_summary_*.csv: no per-event lists. Scalars, "
+                             "end-to-start inter-burst interval, fragment totals, diagnostics "
+                             "and spike participation are kept; duration, participation, "
+                             "coactive fraction peak and burst area become median/log_iqr/p90.")
     args = parser.parse_args()
 
+    extractor = extract_summary_row if args.summary else extract_row
     if args.root:
-        rows = collect(Path(args.root))
+        rows = collect(Path(args.root), extractor)
     else:
-        rows = collect_from_checkpoints(Path(args.checkpoint_dir))
+        rows = collect_from_checkpoints(Path(args.checkpoint_dir), extractor)
 
     if not rows:
         print("No network_results.json files found.")
@@ -339,7 +434,8 @@ def main() -> int:
     if not dfs:
         print(f"No results for detector {args.detector!r}.")
         return 1
-    written = write_csvs(dfs, Path(args.out_dir), combined=args.combined, detector=args.detector)
+    written = write_csvs(dfs, Path(args.out_dir), combined=args.combined, detector=args.detector,
+                         stem="network_summary" if args.summary else "network_metrics")
 
     total = len(dfs.get("ALL", pd.DataFrame()))
     print(f"Collected {total} wells across {len(dfs) - 1} project(s).")

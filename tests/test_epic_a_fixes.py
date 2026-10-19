@@ -384,3 +384,59 @@ def test_coverage_is_none_without_channel_locations():
         get_channel_locations=lambda: (_ for _ in ()).throw(ValueError("no probe"))
     )
     assert harness._local_reference_coverage(recording, 30.0, 200.0) is None
+
+
+def test_a_long_but_weakly_synchronous_burst_is_not_an_elongated_superburst():
+    """Duration alone does not make an elongated superburst: the burst's raw
+    peak co-activity must also reach the gate (a multiple of the detection threshold)."""
+    spikes = _clusters_and_one_long_burst()
+    base = pf_detect(SpikeTimes=spikes, duration_s=70.0)
+    assert [e for e in base["superbursts"]["events"] if e["superburst_type"] == "elongated"]
+    d = base["diagnostics"]
+    assert d["elongated_threshold_multiple"] == 2.0
+    assert d["elongated_min_coactive_fraction"] == pytest.approx(2.0 * d["detection_threshold"]), "schema 7: no absolute floor by default"
+
+    gated = pf_detect(SpikeTimes=spikes, duration_s=70.0, elongated_min_coactive_fraction=1.01)
+    assert not [e for e in gated["superbursts"]["events"] if e["superburst_type"] == "elongated"]
+    # the network burst itself is still reported
+    assert gated["network_bursts"]["metrics"]["burst_count"] == base["network_bursts"]["metrics"]["burst_count"]
+
+
+def test_the_elongated_gate_is_relative_by_default_and_the_schema_6_floor_is_available():
+    """A long burst whose peak co-activity lies between multiple * threshold and 0.15 is an elongated superburst under the default
+    (schema 7) and is excluded when the schema 6 absolute floor of 0.15 is passed back in."""
+    spikes = _clusters_and_one_long_burst()
+    base = pf_detect(SpikeTimes=spikes, duration_s=70.0)
+    long_nb = max(base["network_bursts"]["events"], key=lambda e: e["burst_duration_s"])
+    thr = base["diagnostics"]["detection_threshold"]
+    peak = long_nb["coactive_fraction_max"]
+    assert peak >= 2.0 * thr
+    # a floor just above this burst's peak reproduces the old behaviour of a fixed number deciding the call
+    legacy = pf_detect(SpikeTimes=spikes, duration_s=70.0, elongated_min_coactive_fraction=peak + 0.01)
+    assert len([e for e in legacy["superbursts"]["events"] if e["superburst_type"] == "elongated"]) < \
+        len([e for e in base["superbursts"]["events"] if e["superburst_type"] == "elongated"])
+    # raising the multiple above peak / threshold removes it too
+    strict = pf_detect(SpikeTimes=spikes, duration_s=70.0, elongated_threshold_multiple=peak / thr + 0.5)
+    assert strict["diagnostics"]["elongated_threshold_multiple"] == pytest.approx(peak / thr + 0.5)
+    assert len([e for e in strict["superbursts"]["events"] if e["superburst_type"] == "elongated"]) < \
+        len([e for e in base["superbursts"]["events"] if e["superburst_type"] == "elongated"])
+
+
+def _poisson_units(n_units, rate_hz=2.0, dur_s=60.0, seed=1):
+    rng = np.random.default_rng(seed)
+    return {f"u{i}": np.sort(rng.uniform(0, dur_s, rng.poisson(rate_hz * dur_s))) for i in range(n_units)}
+
+
+def test_unit_floor_has_an_absolute_term_and_a_relative_term():
+    low = pf_detect(SpikeTimes=_poisson_units(20), duration_s=60.0)["diagnostics"]
+    high = pf_detect(SpikeTimes=_poisson_units(120), duration_s=60.0)["diagnostics"]
+    assert low["min_units_abs"] == 8
+    assert low["min_units_for_burst"] == 8, "10% of 20 is 2, so the absolute term sets it"
+    assert high["min_units_for_burst"] == 12, "10% of 120 exceeds the absolute term"
+    assert low["low_yield"] is False and high["low_yield"] is False
+
+
+def test_few_units_are_flagged_low_yield_and_report_no_bursts():
+    out = pf_detect(SpikeTimes=_poisson_units(6), duration_s=60.0)
+    assert out["diagnostics"]["low_yield"] is True
+    assert out["network_bursts"]["metrics"]["burst_count"] == 0

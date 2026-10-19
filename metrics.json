@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 7,
   "description": "Machine-readable dictionary for every key in network_results.json: units, formula, the published name and abbreviation, biological meaning and caveats. Rendered to docs/metrics.md by scripts/build_metrics_doc.py. tests/test_metrics_dictionary.py fails if a detector emits a key that is missing here.",
   "vocabularies": {
     "Mossink et al. 2021 Stem Cell Reports": "MFR, PRS, BR, BD, BSR, IBI, NBR, NBD, NIBI, CV_NIBI, RT, DT",
@@ -276,7 +276,7 @@
     "superburst_type": {
       "scope": "event",
       "units": "string",
-      "formula": "'elongated' when a network burst lasts longer than elongated_min_dur_s; 'cluster' when several network bursts are grouped across superburst_gap_s",
+      "formula": "'elongated' when a network burst lasts longer than elongated_min_dur_s and its coactive_fraction_max reaches elongated_threshold_multiple * detection_threshold (schema 6: max(0.15, 2 * detection_threshold)); 'cluster' when several network bursts are grouped across superburst_gap_s",
       "definition": "Kind of superburst. Elongated: one prolonged network burst, typically many merged fragments. Cluster: a train of separate network bursts. An elongated burst inside a cluster is reported only as part of the cluster.",
       "literature": "Cluster definition from Wagenaar et al. 2006",
       "since_schema": 5
@@ -567,9 +567,10 @@
     "min_units_for_burst": {
       "scope": "diagnostics",
       "units": "count",
-      "formula": "max(3, int(0.10 * n_units))",
+      "formula": "max(min_units_abs, int(0.10 * n_units))",
       "definition": "Absolute co-active unit floor behind min_coactive_fraction.",
-      "since_schema": 1
+      "since_schema": 1,
+      "caveat": "Before schema 6 the absolute term was 3, which let 3 to 4 coincident units count as a burst in low-yield wells."
     },
     "superburst_min_dur_s": {
       "scope": "diagnostics",
@@ -774,6 +775,34 @@
       "definition": "Duration above which a network burst is reported as an elongated superburst.",
       "since_schema": 5,
       "caveat": "A convention of this pipeline; no standard value was found in the literature."
+    },
+    "min_units_abs": {
+      "scope": "diagnostics",
+      "units": "count",
+      "definition": "Absolute minimum number of co-active units in one bin for a fragment to count, whatever the yield. Default 8.",
+      "since_schema": 6,
+      "caveat": "A convention of this pipeline. A well with fewer units than this reports no network bursts."
+    },
+    "low_yield": {
+      "scope": "diagnostics",
+      "units": "boolean",
+      "definition": "True when the well has fewer than 15 units. Bursts, if any, rest on few units; check before pooling.",
+      "since_schema": 6
+    },
+    "elongated_min_coactive_fraction": {
+      "scope": "diagnostics",
+      "units": "fraction of units",
+      "definition": "Raw peak co-activity (coactive_fraction_max) a long network burst had to reach to be reported as an elongated superburst: the effective gate for this recording. Keeps weakly synchronous stretches, which chain several fragments together, from qualifying on duration alone.",
+      "formula": "max(elongated_min_coactive_fraction parameter (default none), elongated_threshold_multiple * detection_threshold)",
+      "since_schema": 6,
+      "caveat": "A convention of this pipeline; no standard value was found in the literature. Schema 6 used max(0.15, 2 * detection_threshold); from schema 7 there is no absolute floor by default, so the gate follows the recording's own threshold."
+    },
+    "elongated_threshold_multiple": {
+      "scope": "diagnostics",
+      "units": "multiple of detection_threshold",
+      "definition": "Multiple of the detection threshold that coactive_fraction_max of a long network burst must reach to be an elongated superburst. Default 2.0.",
+      "since_schema": 7,
+      "caveat": "A convention of this pipeline. In a sensitivity analysis on CDKL5_T1 the spike-sorted superburst count depended on this multiple; report results for 2 to 5."
     }
   },
   "stats_fields": {

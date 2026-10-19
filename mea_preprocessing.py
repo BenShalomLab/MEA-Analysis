@@ -1,5 +1,7 @@
 import json
 import shutil
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import spikeinterface.full as si
@@ -15,7 +17,11 @@ except ImportError:
 
 # Seconds dropped from the end of every recording. Maxwell files can end on a
 # partially written chunk whose trailing samples are not valid signal.
-TRIM_TAIL_S = 1.0
+# MEA_TRIM_TAIL_S overrides it: 0 reproduces results made before the trim worked
+# (the old code computed floor(total_frames), so it removed nothing), which is what
+# a binary must match to be re-attached to an analyzer from that era.
+import os as _os
+TRIM_TAIL_S = float(_os.environ.get("MEA_TRIM_TAIL_S", "1.0"))
 
 # Local common median reference geometry, in microns.
 # Inner radius excludes the channels that share the reference channel's own
@@ -31,6 +37,56 @@ CMR_OUTER_RADIUS_UM = 200.0
 # the annulus, local referencing is not meaningful for this electrode layout
 # and global CMR is used instead.
 CMR_MIN_COVERAGE_FRAC = 0.5
+
+
+# Bump when a change to the steps below would make an older binary/ unsuitable
+# for sorting (trim, filter, bad-channel rule, referencing, dtype).
+PREPROCESSING_VERSION = 1
+
+BINARY_SENTINEL = "binary_complete.json"
+
+
+def write_binary_sentinel(binary_folder, **extra):
+    """Mark binary/ as completely written. Called only after rec.save returns.
+
+    SpikeInterface preallocates the output file, so a run killed mid-save
+    leaves a file of the right size full of zeros; size alone cannot tell it
+    from a finished one. This marker, written last, can.
+    """
+    binary_folder = Path(binary_folder)
+    raw_bytes = sum(f.stat().st_size for f in binary_folder.glob("*.raw"))
+    payload = {
+        "complete": True,
+        "preprocessing_version": PREPROCESSING_VERSION,
+        "raw_bytes": int(raw_bytes),
+        "written": datetime.now().isoformat(timespec="seconds"),
+        **extra,
+    }
+    tmp = binary_folder / (BINARY_SENTINEL + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(binary_folder / BINARY_SENTINEL)
+
+
+def binary_status(binary_folder):
+    """'missing', 'unmarked' (no marker: a legacy binary or one still being
+    written), 'invalid' (marker disagrees with the files or the preprocessing
+    version) or 'complete'."""
+    binary_folder = Path(binary_folder)
+    if not binary_folder.is_dir():
+        return "missing"
+    sentinel = binary_folder / BINARY_SENTINEL
+    if not sentinel.exists():
+        return "unmarked"
+    try:
+        info = json.loads(sentinel.read_text(encoding="utf-8"))
+    except Exception:
+        return "invalid"
+    raw_bytes = sum(f.stat().st_size for f in binary_folder.glob("*.raw"))
+    if (not info.get("complete")
+            or info.get("preprocessing_version") != PREPROCESSING_VERSION
+            or int(info.get("raw_bytes", -1)) != raw_bytes or raw_bytes == 0):
+        return "invalid"
+    return "complete"
 
 
 class PreprocessingMixin:
@@ -140,14 +196,37 @@ class PreprocessingMixin:
                 )
             return
 
-        if self.state['stage'] >= ProcessingStage.PREPROCESSING_COMPLETE.value and binary_folder.exists():
-            self.logger.info("Resuming: Loading preprocessed data from binary cache.")
+        # Reuse an existing binary when it is known to be complete: either the
+        # checkpoint says preprocessing finished, or the binary carries its own
+        # completion marker (so it can be written in one job and sorted in
+        # another, even with a different or missing checkpoint). A binary with
+        # a marker that disagrees with its files is never reused.
+        status = binary_status(binary_folder)
+        stage_done = self.state['stage'] >= ProcessingStage.PREPROCESSING_COMPLETE.value
+        reuse = (status == "complete" and not self.force_restart) or (
+            status == "unmarked" and stage_done and binary_folder.exists())
+        if status == "invalid":
+            self.logger.warning(
+                "binary/ at %s has a completion marker that does not match its "
+                "files or the preprocessing version; rewriting it.", binary_folder)
+        if reuse:
+            self.logger.info("Resuming: Loading preprocessed data from binary cache (%s).", status)
             try:
                 self.recording = si.load(binary_folder)
             except Exception as e:
                 self.logger.debug("si.load failed on %s (%s); trying load_extractor.",
                                   binary_folder, e)
                 self.recording = si.load_extractor(binary_folder)
+            fs = self.recording.get_sampling_frequency()
+            self.metadata['fs'] = fs
+            self.metadata['duration_s'] = self.recording.get_num_frames() / fs
+            if not stage_done:
+                self._save_checkpoint(
+                    ProcessingStage.PREPROCESSING_COMPLETE,
+                    failed_stage=None,
+                    error=None,
+                    preprocessing_source="existing_binary_with_marker",
+                )
             return
         self._save_checkpoint(ProcessingStage.PREPROCESSING)
         self.logger.info("--- [Phase 1] Preprocessing ---")
@@ -264,6 +343,12 @@ class PreprocessingMixin:
             progress_bar=self.verbose
         )
 
+        write_binary_sentinel(
+            binary_folder,
+            n_channels=int(rec.get_num_channels()),
+            n_frames=int(rec.get_num_frames()),
+            sampling_frequency_hz=float(fs),
+        )
         self.recording = si.load(binary_folder)
 
         preprocessing_summary = {

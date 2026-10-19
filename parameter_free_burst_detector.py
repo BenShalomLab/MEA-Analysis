@@ -31,6 +31,11 @@ BIMODALITY_THRESHOLD = 0.555
 WAGENAAR_CLUSTER_CONTRAST = 10.0
 
 
+# Wells with fewer units than this are flagged low_yield: bursts are reported but
+# rest on few units.
+LOW_YIELD_UNITS = 15
+
+
 def _otsu_split(values):
     """Threshold maximising between-class variance of a 1-D sample (Otsu 1979).
 
@@ -90,6 +95,8 @@ def compute_network_bursts(
     extent_frac=0.30,
     network_merge_gap_min=None,
     elongated_burst_min_dur_s=2.0,
+    elongated_min_coactive_fraction=None,
+    elongated_threshold_multiple=2.0,
     fragment_max_gap_s=None,
     merge_rule="continuity",
     threshold_mad_scale=0.75,
@@ -99,6 +106,7 @@ def compute_network_bursts(
     min_superburst_dur_s=0.0,
     min_superburst_components=2,
     min_peak_synchrony=0.05,
+    min_units_abs=8,
 ):
     """Adaptive, three-tier network burst detector.
 
@@ -126,6 +134,27 @@ def compute_network_bursts(
     elongated_burst_min_dur_s : float
         Network bursts longer than this are elongated superbursts. Default
         2 s, a convention; no standard value was found in the literature.
+    min_units_abs : int
+        Absolute floor on the number of units co-active in one bin for a
+        fragment to count, whatever the yield. The relative 10% rule alone
+        lets 3 to 4 units pass in a low-yield well, where that is chance
+        coincidence. Default 8, a convention; wells with fewer units than
+        this report no bursts and are flagged `low_yield`.
+    elongated_threshold_multiple : float
+        A long network burst is only an elongated superburst when its raw
+        peak co-activity (coactive_fraction_max) also reaches this multiple of
+        the recording's own detection_threshold. Without it a stretch of
+        weakly synchronous activity that chains fragments together passes on
+        duration alone. Default 2.0, a convention. The threshold is derived
+        from each recording's baseline and noise, so the gate follows the
+        yield: spike-sorted wells, where fewer units co-fire, need a lower
+        absolute co-activity than channel-level wells.
+    elongated_min_coactive_fraction : float or None
+        Optional absolute floor on coactive_fraction_max, applied on top of the
+        multiple (the gate is the larger of the two). Default None: no absolute
+        floor. Schema 6 used 0.15, which decided alone in spike-sorted data
+        (peak co-activity of 0.08 to 0.20) and made the call on superbursts
+        depend on a fixed number; pass 0.15 to reproduce schema 6.
     """
 
     # ---------------------------------------------------------
@@ -337,9 +366,10 @@ def compute_network_bursts(
     # min_peak_synchrony as passed is interpreted as a fraction, but for
     # small cultures a single unit firing creates a 1/n_units jump that
     # trivially clears any fixed fraction floor.
-    # Require at least max(3, 10% of n_units) units co-active in a single
-    # bin — scales the absolute unit count floor with culture size.
-    min_units_for_burst      = max(3, int(0.10 * n_units))
+    # Require at least max(min_units_abs, 10% of n_units) units co-active in a
+    # single bin: the 10% term scales with culture size, the absolute term
+    # keeps a low-yield well from calling 3 to 4 coincident units a burst.
+    min_units_for_burst      = max(min_units_abs, int(0.10 * n_units))
     min_coactive_fraction = max(
         min_peak_synchrony,
         min_units_for_burst / max(1, n_units)
@@ -730,9 +760,14 @@ def compute_network_bursts(
 
     # An elongated burst already inside a cluster is reported once, as part of
     # the cluster.
+    # Duration alone is not enough: the burst must also be strongly
+    # synchronous, so merged low-synchrony activity is not a superburst.
+    elongated_min_coactive = max(elongated_min_coactive_fraction or 0.0, elongated_threshold_multiple * detection_threshold)
     elongated_superbursts = []
     for nb in network_bursts:
         if nb["burst_duration_s"] <= elongated_burst_min_dur_s:
+            continue
+        if nb.get("coactive_fraction_max", 0.0) < elongated_min_coactive:
             continue
         if any(c["start_time_s"] <= nb["start_time_s"] and nb["end_time_s"] <= c["end_time_s"]
                for c in cluster_superbursts):
@@ -792,6 +827,8 @@ def compute_network_bursts(
             "detection_threshold":          detection_threshold,
             "min_coactive_fraction":        min_coactive_fraction,
             "min_units_for_burst":          min_units_for_burst,
+            "min_units_abs":                min_units_abs,
+            "low_yield":                    bool(n_units < LOW_YIELD_UNITS),
             # Fragment -> network burst: continuity of the population signal,
             # no gap threshold. The cap is None unless a caller sets one.
             "fragment_merge_rule":          merge_rule,
@@ -804,6 +841,8 @@ def compute_network_bursts(
             "superburst_gap_s":             superburst_gap_s,
             "superburst_gap_source":        superburst_gap_source,
             "elongated_min_dur_s":          elongated_burst_min_dur_s,
+            "elongated_min_coactive_fraction": elongated_min_coactive,
+            "elongated_threshold_multiple": elongated_threshold_multiple,
             "superburst_min_dur_s":         min_superburst_dur_s,
             "superburst_min_components":    min_superburst_components,
             "n_units":                      n_units,

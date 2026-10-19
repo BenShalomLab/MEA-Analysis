@@ -346,6 +346,10 @@ class MEARunOptions:
     fixed_y: bool = False
     auto_merge_template_diff_thresh: str = "0.05,0.15,0.25"
     extract_rawsortedspikes: bool = False
+    # Run the pipeline only up to this stage and stop, leaving the checkpoint
+    # and the stage's outputs for a later run to resume from. 'preprocessing'
+    # writes binary/ (CPU only); 'sorting' stops after Kilosort (GPU).
+    stop_after: str | None = None
 
 
 @dataclass(frozen=True)
@@ -356,6 +360,15 @@ class MEARunResult:
 
 
 def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
+    if options.stop_after not in (None, "preprocessing", "sorting"):
+        raise ValueError(
+            f"stop_after must be 'preprocessing' or 'sorting', got {options.stop_after!r}"
+        )
+    if options.stop_after and (options.skip_spikesorting or options.reanalyze_bursts):
+        raise ValueError(
+            "stop_after applies to a full sorting run; it cannot be combined with "
+            "skip_spikesorting or reanalyze_bursts."
+        )
     um_kwargs = _default_um_kwargs()
     if isinstance(options.um_kwargs, dict):
         um_kwargs.update(options.um_kwargs)
@@ -456,8 +469,19 @@ def run_mea_pipeline(options: MEARunOptions) -> MEARunResult:
 
     pipeline.run_preprocessing()
 
+    if options.stop_after == "preprocessing":
+        pipeline.logger.info(
+            "--stop-after preprocessing: binary/ written, stopping before spike sorting."
+        )
+        return MEARunResult(pipeline=pipeline, skipped=False, reanalyzed_bursts=False)
+
     if not bool(options.skip_spikesorting):
         pipeline.run_sorting()
+        if options.stop_after == "sorting":
+            pipeline.logger.info(
+                "--stop-after sorting: sorter output written, stopping before merge/analyzer."
+            )
+            return MEARunResult(pipeline=pipeline, skipped=False, reanalyzed_bursts=False)
         pipeline.run_optional_merge_phase()
 
         if bool(options.run_analyzer):
@@ -605,6 +629,9 @@ def main():
     ctrl_group.add_argument("--resume-from", "--resume_from", dest="resume_from", type=str, default=None,
         choices=["preprocessing", "sorting", "merge", "analyzer", "reports"],
         help="Resume by rewinding checkpoint to just before this stage and rerunning from there")
+    ctrl_group.add_argument("--stop-after", dest="stop_after", choices=["preprocessing", "sorting"], default=None,
+        help="Stop after this stage and leave its outputs for a later run. 'preprocessing' writes binary/ "
+             "and a completion marker (no GPU needed); a later run without this flag reuses it and sorts.")
     ctrl_group.add_argument("--reanalyze-bursts", action="store_true",
         help="Re-run burst analysis on existing spike times only")
     ctrl_group.add_argument("--extract-rawsortedspikes", action="store_true",
@@ -681,6 +708,7 @@ def main():
                 cleanup=bool(resolved["clean_up"]),
                 force_restart=bool(args.force_restart),
                 resume_from=args.resume_from,
+                stop_after=args.stop_after,
                 um_kwargs={
                     "merge_units": bool(args.unitmatch_merge_units),
                     "dry_run": bool(args.unitmatch_dry_run),

@@ -69,9 +69,34 @@ import numpy as np
 #      The 2.5 s minimum superburst duration is removed (default 0): it was
 #      attributed to Wagenaar et al. 2006, which gives no duration.
 #
+#   6  Elongated superbursts must also be strongly synchronous. A network
+#      burst longer than elongated_min_dur_s is an elongated superburst only
+#      when its coactive_fraction_max reaches elongated_min_coactive_fraction,
+#      max(0.15, 2 * detection_threshold). Before, duration alone qualified,
+#      so low-synchrony stretches that chained several fragments together were
+#      reported as superbursts. Superburst counts from schema 5 files are not
+#      comparable. Network burst floor: min_units_for_burst is now
+#      max(min_units_abs = 8, 10% of n_units); before it was max(3, 10%), which
+#      let 3 to 4 coincident units count as a burst in low-yield wells.
+#      Diagnostics elongated_min_coactive_fraction, min_units_abs and
+#      low_yield (n_units < 15) added.
+#
+#   7  The elongated-superburst synchrony gate is relative. It was
+#      max(0.15, 2 * detection_threshold); it is now
+#      elongated_threshold_multiple (2.0) * detection_threshold, with the
+#      absolute 0.15 gone (elongated_min_coactive_fraction defaults to None;
+#      pass 0.15 to reproduce schema 6). In spike-sorted wells the peak
+#      co-activity of long network bursts is 0.08 to 0.20, so the fixed 0.15
+#      decided alone and split what is one population of bursts; in
+#      channel-level wells (0.15 to 0.9) the change is below 5%. Cluster
+#      superbursts and everything else are unchanged. Superburst counts of
+#      spike-sorted schema 6 files are not comparable. Diagnostics:
+#      elongated_threshold_multiple added; elongated_min_coactive_fraction
+#      now records the effective gate.
+#
 # Units, formula and literature for every key are in metrics.json, rendered
 # to docs/metrics.md.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 
 
 def stats(x):
