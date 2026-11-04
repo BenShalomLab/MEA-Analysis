@@ -55,7 +55,8 @@ import numpy as np
 #      the 25th percentile of the signal (merge_floor); a valley of exactly
 #      zero never counts as continuous. Superbursts have two types, carried
 #      in each event's superburst_type: "elongated", any network burst longer
-#      than elongated_min_dur_s (2 s), and "cluster", network bursts grouped
+#      than elongated_min_dur_s (1.5 s since 2026-10-27, 2 s before; recorded
+#      per well in diagnostics.elongated_min_dur_s), and "cluster", network bursts grouped
 #      across a gap. The gap is measured from the END of one network burst to
 #      the START of the next. If log10(gaps) is bimodal (Sarle > 0.555, two
 #      gaps in each mode, long mode at least 10x the short) the gap is the
@@ -94,9 +95,24 @@ import numpy as np
 #      elongated_threshold_multiple added; elongated_min_coactive_fraction
 #      now records the effective gate.
 #
+#   8  A superburst must last longer than 1.5 s, whatever its type. Before, only
+#      the elongated type (one network burst) had a duration rule (2 s in
+#      schema 5 to 7, 1.5 s from 2026-10-27), while a cluster of two or more
+#      network bursts had none (min_superburst_dur_s = 0), so a pair of
+#      network bursts 0.3 s apart counted as a superburst; in CDKL5_T1 about
+#      60% of superbursts were such short pairs, 88% of those in wild type.
+#      Now elongated_burst_min_dur_s and min_superburst_dur_s both default to
+#      1.5 s: an event, single or combined, is a superburst only when its total
+#      duration exceeds that. Superburst counts, rates and duration statistics
+#      of schema 7 files are not comparable; network bursts and fragments are
+#      unchanged. Both values are recorded per well in diagnostics
+#      (elongated_min_dur_s, superburst_min_dur_s). The cutoff is a convention
+#      of this pipeline, not a literature value (Wagenaar et al. 2006 give no
+#      duration for superbursts).
+#
 # Units, formula and literature for every key are in metrics.json, rendered
 # to docs/metrics.md.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def stats(x):

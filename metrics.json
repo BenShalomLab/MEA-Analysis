@@ -1,5 +1,5 @@
 {
-  "schema_version": 7,
+  "schema_version": 8,
   "description": "Machine-readable dictionary for every key in network_results.json: units, formula, the published name and abbreviation, biological meaning and caveats. Rendered to docs/metrics.md by scripts/build_metrics_doc.py. tests/test_metrics_dictionary.py fails if a detector emits a key that is missing here.",
   "vocabularies": {
     "Mossink et al. 2021 Stem Cell Reports": "MFR, PRS, BR, BD, BSR, IBI, NBR, NBD, NIBI, CV_NIBI, RT, DT",
@@ -575,9 +575,9 @@
     "superburst_min_dur_s": {
       "scope": "diagnostics",
       "units": "s",
-      "definition": "Minimum duration of a cluster superburst. 0 means no minimum.",
+      "definition": "Minimum total duration of a cluster superburst (a group of network bursts). Default 1.5 s since schema 8; 0 means no minimum.",
       "since_schema": 1,
-      "caveat": "Defaulted to 2.5 s before schema 5 and was attributed to Wagenaar et al. 2006. That paper defines superbursts by interval contrast and states no duration, so the 2.5 s had no source and was removed."
+      "caveat": "Schema 8 raised the default from 0 to 1.5 s so that a short pair of network bursts is no longer a superburst; counts of schema 7 files include those pairs. Defaulted to 2.5 s before schema 5 and was attributed to Wagenaar et al. 2006. That paper defines superbursts by interval contrast and states no duration, so the 2.5 s had no source and was removed."
     },
     "superburst_min_components": {
       "scope": "diagnostics",
@@ -772,9 +772,9 @@
     "elongated_min_dur_s": {
       "scope": "diagnostics",
       "units": "s",
-      "definition": "Duration above which a network burst is reported as an elongated superburst.",
+      "definition": "Duration above which a network burst is reported as an elongated superburst (1.5 s from 2026-10-27, 2 s before).",
       "since_schema": 5,
-      "caveat": "A convention of this pipeline; no standard value was found in the literature."
+      "caveat": "A convention of this pipeline; no standard value was found in the literature. With min_superburst_dur_s it sets the single duration rule for every superburst from schema 8."
     },
     "min_units_abs": {
       "scope": "diagnostics",
