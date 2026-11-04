@@ -38,6 +38,10 @@ class SortingMixin:
                     sorter_folder, e,
                 )
                 self.sorting = si.read_kilosort(sorter_folder)
+            # Same cleanup as the first-pass path below. Kilosort pads its last batch, so the raw output can
+            # hold spikes past the (tail-trimmed) recording end, which breaks spike_amplitudes.
+            self.sorting = si.remove_excess_spikes(self.sorting, self.recording)
+            self.sorting = self.sorting.remove_empty_units()
             return
         self._save_checkpoint(ProcessingStage.SORTING)
         self.logger.info(f"--- [Phase 2] Spike Sorting ({self.sorter}) ---")
